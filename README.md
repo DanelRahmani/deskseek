@@ -43,6 +43,9 @@ Both sections are functional:
   always for that folder, or deny. Reads run freely
 - A **path sandbox** refuses anything outside the workspace, including `..` traversal and
   symlink escapes; the API key is stripped from every child process environment
+- A **live file tree** (`/files`, or the *Files* button) — the folder is watched, so files
+  the agent creates or edits appear as it works. Click any file to read it without
+  interrupting the run; if the agent writes to the file you are reading, it re-reads itself
 - Project context from `AGENTS.md`, else `.deskseek/context.md`
 
 **Approvals, permission modes and stopping a run**
@@ -171,6 +174,7 @@ src-tauri/src/
   tools/                 built-in tools, path sandbox, process runner, permission guard
   mcp/                   MCP client (rmcp) and server config
   runs.rs                in-flight run registry + cancel handles
+  fs_watch.rs            workspace watcher, refcounted roots, coalesced events
   commands.rs            the Tauri command surface
 ```
 
