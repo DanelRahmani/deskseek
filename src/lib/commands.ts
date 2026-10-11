@@ -31,6 +31,7 @@ export function buildPalette(
   // is also only true once a chat is open.
   if (hasChat) {
     items.push({ id: "export", label: "Export this chat to Markdown", hint: "Action" });
+    items.push({ id: "export-pdf", label: "Export this chat as a PDF", hint: "Action" });
     items.push({ id: "rewind", label: "Undo the agent's last file changes", hint: "Action" });
   }
   for (const chat of chats) {

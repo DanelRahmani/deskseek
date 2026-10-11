@@ -675,9 +675,9 @@ export default function App() {
 
   // Write the whole conversation to the documents folder. The file name comes
   // back so the notice can name it rather than say "somewhere".
-  const exportChat = useCallback(async (chatId: string) => {
+  const exportChat = useCallback(async (chatId: string, asPdf = false) => {
     try {
-      const path = await api.exportChat(chatId);
+      const path = asPdf ? await api.exportChatPdf(chatId) : await api.exportChat(chatId);
       const name = path.split(/[\\/]/).pop() ?? path;
       setNotice(`Exported to ${name} in your documents folder.`);
     } catch (e) {
@@ -777,6 +777,9 @@ export default function App() {
           return;
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
+          return;
+        case "export-pdf":
+          if (activeIdRef.current) void exportChat(activeIdRef.current, true);
           return;
         case "rewind":
           if (activeIdRef.current) void rewind(activeIdRef.current);

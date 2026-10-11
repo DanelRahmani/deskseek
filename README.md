@@ -62,7 +62,9 @@ Both sections are functional:
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
   both sections, so a chat can be found by what was said in it rather than by its name
-- `/export` — write the whole conversation to a Markdown file in your documents folder
+- `/export` — write the whole conversation to a Markdown file in your documents folder; the
+  palette also offers **Export this chat as a PDF**, printed by the browser on this machine
+  through the same pipeline `doc_create` uses rather than a second implementation of its own
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
   and the checklist is pinned above the composer, ticking over as steps start and finish. It is
   collapsible, and a step in progress pulses so a long job is visible at a glance

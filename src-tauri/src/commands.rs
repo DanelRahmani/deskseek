@@ -392,6 +392,35 @@ pub fn export_chat(state: State<'_, AppState>, chat_id: String) -> Result<String
     Ok(path.display().to_string())
 }
 
+/// Write a chat to a PDF in the documents folder.
+///
+/// Deliberately routed through the same `doc_create` tool the model uses rather
+/// than printing from a second implementation: one Markdown reader, one HTML
+/// template and one browser invocation to keep in step. The consequence is the
+/// same as for the tool — it needs a findable Chromium-family browser, and says
+/// so plainly when there is none instead of writing nothing.
+#[tauri::command]
+pub async fn export_chat_pdf(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> Result<String, String> {
+    let (chat, messages) = {
+        let conn = state.db.lock().unwrap();
+        let chat = db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?;
+        let messages = db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
+        (chat, messages)
+    };
+    let dir = documents_dir_path(&state);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let browser = state.settings.lock().unwrap().browser_path.clone();
+    let args = serde_json::json!({
+        "name": chat.title,
+        "format": "pdf",
+        "content": chat_markdown(&chat, &messages),
+    });
+    crate::tools::docs::execute("doc_create", &args, &dir, &browser).await
+}
+
 /// Render a conversation as Markdown.
 ///
 /// Only what a reader would want: the user's words and the assistant's written

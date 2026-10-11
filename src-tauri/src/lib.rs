@@ -176,6 +176,7 @@ pub fn run() {
             commands::compact_chat,
             commands::documents_dir,
             commands::export_chat,
+            commands::export_chat_pdf,
             commands::chatlog_dir,
             commands::open_document,
             commands::context_breakdown,
