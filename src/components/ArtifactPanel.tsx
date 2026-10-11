@@ -135,7 +135,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
               <button
                 onClick={save}
                 disabled={busy}
-                className="rounded bg-sky-700 px-2 py-0.5 text-[11px] text-white transition hover:bg-sky-600 disabled:opacity-50"
+                className="rounded bg-sky-700 px-2 py-0.5 text-[11px] text-accent-fg transition hover:bg-sky-600 disabled:opacity-50"
               >
                 {busy ? "Saving…" : "Save"}
               </button>

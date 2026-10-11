@@ -158,7 +158,7 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
                   <button
                     onClick={() => decide([p.id], true)}
                     disabled={busy}
-                    className="rounded bg-emerald-600/90 px-2 py-1 text-[11px] text-white hover:bg-emerald-500 disabled:opacity-50"
+                    className="rounded bg-emerald-600/90 px-2 py-1 text-[11px] text-ok-fg hover:bg-emerald-500 disabled:opacity-50"
                   >
                     Accept
                   </button>
@@ -235,7 +235,7 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
             <button
               onClick={addTyped}
               disabled={busy || !draft.trim()}
-              className="rounded-lg bg-sky-600 px-3 text-xs font-medium text-white hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
+              className="rounded-lg bg-sky-600 px-3 text-xs font-medium text-accent-fg hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
             >
               Add
             </button>

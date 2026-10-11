@@ -313,7 +313,23 @@ function status(
     [`--${prefix}-text`]: mix(solid, ramp.n100, TEXT_LIFT[mode]),
     [`--${prefix}-solid`]: solid,
     [`--${prefix}-hover`]: mix(solid, ramp.n100, 0.18),
+    // The label on a solid button is body-size text, so it is held to the same
+    // floor as any other: a bright fill takes a dark label, a dark fill a light
+    // one. Which of the two is chosen changes with a picked accent, which is
+    // why it is derived rather than written once as `text-white`.
+    [`--${prefix}-fg`]: readableOn(solid),
   };
+}
+
+/**
+ * Black or white, whichever reads better on a solid fill.
+ *
+ * "Whichever is better" cannot fail the 4.5:1 floor: the two ratios cross where
+ * both are ~4.58:1, so the winner is never below that. That is why there is no
+ * fallback branch — one of the two is always good enough.
+ */
+export function readableOn(solid: string): string {
+  return contrast("#ffffff", solid) >= contrast("#000000", solid) ? "#ffffff" : "#000000";
 }
 
 /** `#rgb` or `#rrggbb` to three 0-255 channels. */
@@ -376,6 +392,6 @@ export const COLOUR_TOKENS: readonly string[] = [
   "--n-200",
   "--n-100",
   ...["accent", "danger", "warn", "ok"].flatMap((p) =>
-    ["bg", "border", "text", "solid", "hover"].map((slot) => `--${p}-${slot}`),
+    ["bg", "border", "text", "solid", "hover", "fg"].map((slot) => `--${p}-${slot}`),
   ),
 ];

@@ -41,6 +41,14 @@
   --color-sky-900: var(--accent-border);
   --color-sky-950: var(--accent-bg);
 
+  /* The label on a solid status button. Derived in theme.ts (black or white,
+     whichever reads better on the fill) rather than hard-coded as text-white:
+     a bright accent needs a dark label, and a picked accent changes the answer. */
+  --color-accent-fg: var(--accent-fg);
+  --color-danger-fg: var(--danger-fg);
+  --color-warn-fg: var(--warn-fg);
+  --color-ok-fg: var(--ok-fg);
+
   --color-red-300: var(--danger-text);
   --color-red-400: var(--danger-text);
   --color-red-500: var(--danger-solid);
@@ -87,24 +95,28 @@
   --accent-text: #88c2e0;
   --accent-solid: #0284c7;
   --accent-hover: #2e98cf;
+  --accent-fg: #000000;
 
   --danger-bg: #381010;
   --danger-border: #5a1515;
   --danger-text: #ea9898;
   --danger-solid: #dc2626;
   --danger-hover: #e14b4b;
+  --danger-fg: #ffffff;
 
   --warn-bg: #382209;
   --warn-border: #593308;
   --warn-text: #e8bc89;
   --warn-solid: #d97706;
   --warn-hover: #de8e31;
+  --warn-fg: #000000;
 
   --ok-bg: #09291f;
   --ok-border: #083f2e;
   --ok-text: #89cab6;
   --ok-solid: #059669;
   --ok-hover: #30a782;
+  --ok-fg: #000000;
 
   --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-code: ui-monospace, "Cascadia Code", Consolas, monospace;

@@ -519,7 +519,7 @@ export function ChatView({
             <button
               onClick={submit}
               disabled={busy || (!draft.trim() && attachments.length === 0)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 ${
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium text-accent-fg transition disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 ${
                 busy ? "hidden" : "bg-sky-600 hover:bg-sky-500"
               }`}
             >

@@ -681,7 +681,7 @@ export function SettingsDialog({
                 <button
                   onClick={saveKey}
                   disabled={busy || !apiKey.trim()}
-                  className="shrink-0 rounded-lg bg-sky-600 px-3 text-sm font-medium text-white hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
+                  className="shrink-0 rounded-lg bg-sky-600 px-3 text-sm font-medium text-accent-fg hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
                 >
                   Save
                 </button>
@@ -1014,7 +1014,7 @@ export function SettingsDialog({
                         }
                       }}
                       disabled={busy}
-                      className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                      className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-accent-fg hover:bg-sky-500 disabled:opacity-50"
                     >
                       Start Docker Desktop
                     </button>

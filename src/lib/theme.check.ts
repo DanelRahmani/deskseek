@@ -116,6 +116,21 @@ for (const theme of THEMES) {
       );
       pairs++;
     }
+
+    // A solid button carries its label at body size, so the derived foreground
+    // is held to the same floor on the fill it actually sits on.
+    for (const status of STATUSES) {
+      const fg = tokens[`--${status}-fg`];
+      if (fg !== "#000000" && fg !== "#ffffff") {
+        failures.push(`${where} --${status}-fg: expected black or white, got ${fg}`);
+      }
+      atLeast(
+        contrast(fg, tokens[`--${status}-solid`]),
+        TEXT_FLOOR,
+        `${where} --${status}-fg on --${status}-solid`,
+      );
+      pairs++;
+    }
   }
 }
 
@@ -166,6 +181,7 @@ need(styled["--n-950"] === plain["--n-950"], "a font override leaves the ramp al
 const accented = resolveTheme({ theme: DEFAULT_THEME_ID, mode: "dark", accent: "#b45309" }, true);
 need(accented["--accent-solid"] === "#b45309", "an accent override replaces the solid");
 need(accented["--accent-text"] !== plain["--accent-text"], "the accent tint follows the override");
+need(accented["--accent-fg"] === "#ffffff", "a dark accent keeps a light label");
 need(accented["--danger-solid"] === plain["--danger-solid"], "other statuses do not follow it");
 
 // A malformed accent must be ignored rather than used: NaN in the derivation

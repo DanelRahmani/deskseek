@@ -313,7 +313,7 @@ const button =
 const quiet =
   "rounded-md px-2 py-1 text-xs text-neutral-500 transition hover:text-neutral-300 disabled:opacity-50";
 const primary =
-  "rounded-md bg-sky-600 px-3 py-1 text-xs font-medium text-white transition hover:bg-sky-500 disabled:opacity-50";
+  "rounded-md bg-sky-600 px-3 py-1 text-xs font-medium text-accent-fg transition hover:bg-sky-500 disabled:opacity-50";
 
 function Section({
   title,
