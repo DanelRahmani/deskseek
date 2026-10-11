@@ -72,6 +72,9 @@ Both sections are functional:
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
   ends a run between steps once its cost crosses the figure, and says so in the chat rather than
   going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
+- **Regenerate, and edit-and-resend** — *Regenerate* under the last answer asks again; *Edit &
+  resend* on the last thing you said changes it and asks again. Either way everything after that
+  turn is dropped first, so the model is never shown the answer it is replacing
 
 **Coding**
 

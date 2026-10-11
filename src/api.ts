@@ -61,6 +61,9 @@ export const api = {
   searchMessages: (query: string) => invoke<MessageHit[]>("search_messages", { query }),
   /** Undo the last agent run's file changes; returns the paths put back. */
   rewindLastRun: (chatId: string) => invoke<string[]>("rewind_last_run", { chatId }),
+  /** Ask again from the last user turn; `text` edits it first. */
+  resendLastTurn: (chatId: string, text: string | null) =>
+    invoke<void>("resend_last_turn", { chatId, text }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>

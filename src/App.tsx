@@ -686,6 +686,21 @@ export default function App() {
     }
   }, []);
 
+  // Ask again from the last turn: the same question (regenerate) or an edited
+  // one. The backend drops everything that followed it, so the model never sees
+  // the answer it is being asked to replace.
+  const resend = useCallback(async (chatId: string, text: string | null) => {
+    patch(chatId, () => ({ ...IDLE, busy: true, stream: { content: "", reasoning: "" } }));
+    try {
+      await api.resendLastTurn(chatId, text);
+      await loadMessages(chatId);
+    } catch (e) {
+      patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
+    } finally {
+      patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
+    }
+  }, [loadMessages]);
+
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
   // results.
@@ -950,6 +965,7 @@ export default function App() {
                     contextTokens={id ? tokensFor(id) : 0}
                     contextMax={max}
                     onSend={(text) => send(text, id, pane)}
+                    onResend={(text) => id && resend(id, text)}
                     onStop={() => id && stop(id)}
                     onFiles={() =>
                       setPanel((current) => (current === "files" ? "none" : "files"))

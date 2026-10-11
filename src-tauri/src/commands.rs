@@ -140,6 +140,41 @@ pub fn rewind_last_run(state: State<'_, AppState>, chat_id: String) -> Result<Ve
     db::rewind_last_run(&conn, &chat_id)
 }
 
+/// Re-run the conversation from its last user turn.
+///
+/// `text` is edited wording when the caller has some; None re-runs the turn as
+/// it stands, which is a regenerate. Everything after that turn is dropped
+/// first, so the model cannot see the answer it is being asked to replace.
+#[tauri::command]
+pub async fn resend_last_turn(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    chat_id: String,
+    text: Option<String>,
+) -> Result<(), String> {
+    keychain::get_api_key()?.ok_or("No API key set")?;
+    {
+        let conn = state.db.lock().unwrap();
+        let turn = db::last_user_message(&conn, &chat_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("There is nothing to re-send.")?;
+        if let Some(text) = text.as_deref() {
+            if text.trim().is_empty() {
+                return Err("A message cannot be emptied — delete the chat instead.".to_string());
+            }
+            db::set_message_content(&conn, &turn.id, text).map_err(|e| e.to_string())?;
+        }
+        db::delete_messages_after(&conn, &chat_id, turn.seq).map_err(|e| e.to_string())?;
+    }
+
+    // This replaces a turn, so it registers a run exactly as send_message does:
+    // one live run per chat, and it cancels any turn already in flight.
+    let (run_id, cancel) = state.runs.begin(&chat_id);
+    let result = agent::run(app, &state, &chat_id, cancel).await;
+    state.runs.finish(&chat_id, run_id);
+    result
+}
+
 #[tauri::command]
 pub fn rename_chat(state: State<'_, AppState>, chat_id: String, title: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();

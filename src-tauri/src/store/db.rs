@@ -410,6 +410,54 @@ pub fn delete_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<()>
     Ok(())
 }
 
+/// The newest user turn: where a regenerate or an edit starts from.
+pub fn last_user_message(
+    conn: &Connection,
+    chat_id: &str,
+) -> rusqlite::Result<Option<MessageRow>> {
+    conn.query_row(
+        "SELECT id, chat_id, seq, role, content, reasoning_content, tool_calls_json, tool_call_id, attachments_json, created_at
+         FROM messages WHERE chat_id = ?1 AND role = 'user' ORDER BY seq DESC LIMIT 1",
+        [chat_id],
+        |r| {
+            Ok(MessageRow {
+                id: r.get(0)?,
+                chat_id: r.get(1)?,
+                seq: r.get(2)?,
+                role: r.get(3)?,
+                content: r.get(4)?,
+                reasoning_content: r.get(5)?,
+                tool_calls_json: r.get(6)?,
+                tool_call_id: r.get(7)?,
+                attachments_json: r.get(8)?,
+                created_at: r.get(9)?,
+            })
+        },
+    )
+    .optional()
+}
+
+/// Drops every message after `seq`, so a re-run starts from that turn instead of
+/// stacking a second question on top of the first answer. Deleting the tail
+/// rather than screening it out is what keeps the request well-formed: an
+/// assistant turn whose tool calls have no results is a 400 waiting to happen.
+pub fn delete_messages_after(conn: &Connection, chat_id: &str, seq: i64) -> rusqlite::Result<()> {
+    conn.execute(
+        "DELETE FROM messages WHERE chat_id = ?1 AND seq > ?2",
+        params![chat_id, seq],
+    )?;
+    Ok(())
+}
+
+/// Rewrites a turn's text in place — the edit half of edit-and-resend.
+pub fn set_message_content(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE messages SET content = ?2 WHERE id = ?1",
+        params![id, content],
+    )?;
+    Ok(())
+}
+
 pub fn list_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<MessageRow>> {
     let mut stmt = conn.prepare(
         "SELECT id, chat_id, seq, role, content, reasoning_content, tool_calls_json, tool_call_id, attachments_json, created_at
@@ -1195,6 +1243,34 @@ mod tests {
             vec![a.to_string_lossy().to_string()]
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_resend_drops_the_tail_and_can_rewrite_the_turn() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        insert_message(&conn, &chat.id, "user", Some("older question"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &chat.id, "assistant", Some("older answer"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &chat.id, "user", Some("newer question"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &chat.id, "assistant", Some("newer answer"), None, None, None, None)
+            .unwrap();
+
+        let turn = last_user_message(&conn, &chat.id).unwrap().unwrap();
+        assert_eq!(turn.content.as_deref(), Some("newer question"));
+
+        set_message_content(&conn, &turn.id, "edited question").unwrap();
+        delete_messages_after(&conn, &chat.id, turn.seq).unwrap();
+
+        let left = list_messages(&conn, &chat.id).unwrap();
+        assert_eq!(left.len(), 3, "only what followed the turn is gone");
+        assert_eq!(left[2].content.as_deref(), Some("edited question"));
+        assert_eq!(left[1].content.as_deref(), Some("older answer"), "the older turn stays");
+        // Nothing to re-send when there is no user turn at all.
+        let empty = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        assert!(last_user_message(&conn, &empty.id).unwrap().is_none());
     }
 
     #[test]

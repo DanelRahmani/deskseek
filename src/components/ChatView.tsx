@@ -42,6 +42,8 @@ interface Props {
   /** Opens the context breakdown for this chat. */
   onContext: () => void;
   onSend: (text: string) => void;
+  /** Ask again from the last user turn; `text` edits it first, null repeats it. */
+  onResend: (text: string | null) => void;
   onStop: () => void;
   onFiles: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
@@ -99,6 +101,7 @@ export function ChatView({
   contextMax,
   onContext,
   onSend,
+  onResend,
   onStop,
   onFiles,
   onModelChange,
@@ -113,6 +116,14 @@ export function ChatView({
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.
   const tasks = useMemo(() => tasksFrom(tools), [tools]);
+  // Only the newest user turn is editable: an older one has answers after it
+  // that a re-run would silently discard, and offering that would be a surprise.
+  const lastUserId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i].role === "user") return messages[i].id;
+    }
+    return null;
+  }, [messages]);
 
   // "The agent is operating your desktop" is derived, not reported: if a
   // clicking tool is in flight, it is true, and it stops being true the moment
@@ -378,7 +389,11 @@ export function ChatView({
           )}
 
           {messages.map((m) => (
-            <Bubble key={m.id} message={m} />
+            <Bubble
+              key={m.id}
+              message={m}
+              onEdit={m.id === lastUserId ? onResend : undefined}
+            />
           ))}
 
           {tools.map((run) => (
@@ -394,6 +409,18 @@ export function ChatView({
               ) : (
                 <span className="text-neutral-600">…</span>
               )}
+            </div>
+          )}
+
+          {!busy && lastUserId && (
+            <div className="flex justify-center">
+              <button
+                onClick={() => onResend(null)}
+                className="rounded-md px-2 py-1 text-[11px] text-neutral-500 transition hover:text-neutral-300"
+                title="Ask the same question again, replacing the answer above"
+              >
+                ↻ Regenerate
+              </button>
             </div>
           )}
 
@@ -550,7 +577,15 @@ function Role({ role }: { role: string }) {
   );
 }
 
-function Bubble({ message }: { message: MessageRow }) {
+function Bubble({
+  message,
+  onEdit,
+}: {
+  message: MessageRow;
+  /** Set on the newest user turn, which can be edited and sent again. */
+  onEdit?: (text: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
   let attachments: Attachment[] = [];
   if (message.attachments_json) {
     try {
@@ -561,6 +596,39 @@ function Bubble({ message }: { message: MessageRow }) {
   }
 
   if (message.role === "user") {
+    if (draft !== null && onEdit) {
+      return (
+        <div className="flex flex-col items-end gap-2">
+          <textarea
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setDraft(null);
+              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onEdit(draft);
+            }}
+            rows={3}
+            className="w-[85%] resize-y rounded-2xl border border-neutral-700 bg-neutral-900 px-4 py-2.5 text-sm whitespace-pre-wrap text-neutral-100 outline-none"
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-neutral-600">Ctrl+Enter to resend</span>
+            <button
+              onClick={() => setDraft(null)}
+              className="rounded-md px-2 py-1 text-[11px] text-neutral-500 transition hover:text-neutral-300"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onEdit(draft)}
+              disabled={!draft.trim()}
+              className="rounded-md bg-sky-600 px-2 py-1 text-[11px] font-medium text-accent-fg transition hover:bg-sky-500 disabled:opacity-50"
+            >
+              Save &amp; resend
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col items-end gap-1">
         {attachments.length > 0 && (
@@ -588,6 +656,15 @@ function Bubble({ message }: { message: MessageRow }) {
           <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
             {message.content}
           </div>
+        )}
+        {onEdit && (
+          <button
+            onClick={() => setDraft(message.content ?? "")}
+            className="rounded px-2 py-0.5 text-[11px] text-neutral-600 transition hover:text-neutral-300"
+            title="Edit this message and ask again — the answers after it are replaced"
+          >
+            Edit &amp; resend
+          </button>
         )}
       </div>
     );
