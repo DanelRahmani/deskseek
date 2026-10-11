@@ -4,6 +4,7 @@
 pub mod browse;
 pub mod browser;
 pub mod desktop;
+pub mod docs;
 pub mod exec;
 pub mod guard;
 pub mod sandbox;
@@ -306,13 +307,72 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "doc_create",
+                "Write a document to a file the user can open. Use it when the user asks for a file rather than a message: a report, a letter, a summary to print or send. The content is Markdown — headings, bullets, numbered lists, tables and fenced code all carry through.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "File name without the extension, e.g. \"Q3 report\""},
+                        "format": {"type": "string", "enum": ["md", "docx", "pdf"], "description": "md: Markdown, written as given. docx: a Word document. pdf: printed by the browser already on this machine."},
+                        "content": {"type": "string", "description": "The whole document, in Markdown."}
+                    }),
+                    &["name", "format", "content"],
+                ),
+            ),
+            ToolClass::Write,
+        ),
+        (
+            Tool::function(
+                "sheet_create",
+                "Write a spreadsheet. Use it for tabular data the user will want to sort, sum or chart. Put headers in the first row. A cell whose text starts with = is stored as a formula and evaluated by Excel when the file is opened.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "File name without the extension"},
+                        "sheet": {"type": "string", "description": "Name of the first sheet. Default \"Sheet1\"."},
+                        "rows": {
+                            "type": "array",
+                            "description": "The rows, first row first. Each row is an array of cells.",
+                            "items": {"type": "array", "items": {"type": ["string", "number", "boolean", "null"]}}
+                        }
+                    }),
+                    &["name", "rows"],
+                ),
+            ),
+            ToolClass::Write,
+        ),
+        (
+            Tool::function(
+                "slides_create",
+                "Write a PowerPoint deck. Keep it to titles and bullets — layouts, images and animation are not supported, so a slide is a heading and a few points.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "File name without the extension"},
+                        "title": {"type": "string", "description": "Deck title shown in the file properties. Defaults to the name."},
+                        "slides": {
+                            "type": "array",
+                            "description": "The slides, in order. A bare string is a section title slide.",
+                            "items": {
+                                "type": ["object", "string"],
+                                "properties": {
+                                    "title": {"type": "string", "description": "The slide's heading"},
+                                    "bullets": {"type": "array", "items": {"type": "string"}, "description": "One short line per bullet"}
+                                },
+                                "required": ["title"]
+                            }
+                        }
+                    }),
+                    &["name", "slides"],
+                ),
+            ),
+            ToolClass::Write,
+        ),
+        (
+            Tool::function(
                 "fetch_url",
                 "Fetch a web page and read it as text. Use for documentation links and articles. Does not run JavaScript.",
                 params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
             ),
             ToolClass::Read,
-        ),
-        (
+        ),        (
             Tool::function(
                 "browser_read",
                 "Fetch a web page with a real browser so JavaScript runs first. Slower than fetch_url — use it when fetch_url comes back empty or the page is a single-page app.",
@@ -568,8 +628,25 @@ mod tests {
     }
 
     #[test]
-    fn artifact_create_is_internal_and_available_in_both_sections() {
-        // Stored in the database and rendered sandboxed, so it is not a
+    fn the_document_tools_write_files_so_they_ask_first() {
+        // Every one of these puts a file on disk outside the workspace, so the
+        // user sees it before it happens.
+        for name in ["doc_create", "sheet_create", "slides_create"] {
+            assert_eq!(class_of(name), ToolClass::Write, "{name}");
+            assert!(docs::is_document_tool(name), "{name}");
+            assert!(
+                tools_for("chat").iter().any(|(t, _)| t.function.name == name),
+                "{name} missing from chat mode"
+            );
+        }
+        // The gate must not claim anything else.
+        for name in ["read_file", "artifact_create", "run_command", "update_tasks"] {
+            assert!(!docs::is_document_tool(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn artifact_create_is_internal_and_available_in_both_sections() {        // Stored in the database and rendered sandboxed, so it is not a
         // workspace write and the model must not be stopped by a prompt every
         // time it publishes an update.
         assert_eq!(class_of("artifact_create"), ToolClass::Internal);

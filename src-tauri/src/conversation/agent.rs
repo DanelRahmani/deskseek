@@ -14,7 +14,7 @@ use crate::approvals::Decision;
 use crate::conversation::assemble::{build_messages, system_with_memory, Turn};
 use crate::runs::Cancel;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{self, browser, desktop, exec, guard, sandbox_exec, ToolClass};
+use crate::tools::{self, browser, desktop, docs, exec, guard, sandbox_exec, ToolClass};
 use crate::AppState;
 
 pub const EVENT_STARTED: &str = "chat-started";
@@ -157,7 +157,14 @@ in the side panel, where the user can read it, edit it, and go back to an earlie
 the kind that fits: `html` for a self-contained page (styles inline — there is no network access, \
 so no CDN links), `svg` or `mermaid` for a diagram, `markdown` for prose, `code` for source. \
 Calling it again with the same title publishes a new version of that document, so revising is \
-cheap and nothing is lost. Keep the chat reply short and put the substance in the artifact.",
+cheap and nothing is lost. Keep the chat reply short and put the substance in the artifact.\n\n\
+When the user wants a *file* — something to send, print or open in Excel — write one instead:\n\
+- `doc_create` — Markdown, Word (.docx) or PDF, from Markdown content.\n\
+- `sheet_create` — a spreadsheet, from rows. Headers in the first row; a cell starting with `=` is \
+a real formula Excel evaluates on open.\n\
+- `slides_create` — a PowerPoint deck of titles and bullets.\n\n\
+Each one returns the path it wrote. The files go to the user's documents folder. Every one is \
+approved before it runs, so say which file you are about to write first.",
     );
 
     // Where commands run changes what the model should reach for, so it is
@@ -543,6 +550,18 @@ async fn run_tool(
              document — the older versions are kept.",
             detail.artifact.title, detail.artifact.current_version, detail.artifact.kind
         ));
+    }
+
+    if tools::docs::is_document_tool(name) {
+        // Documents land in the user's documents folder rather than the
+        // workspace: they are the deliverable, not part of the project.
+        let settings = state.settings.lock().unwrap().clone();
+        let dir = if settings.documents_dir.trim().is_empty() {
+            state.paths.documents_dir()
+        } else {
+            std::path::PathBuf::from(settings.documents_dir.trim())
+        };
+        return docs::execute(name, args, &dir, &settings.browser_path).await;
     }
 
     exec::execute(name, args, ws, cancel, plan).await

@@ -80,6 +80,8 @@ export const api = {
     invoke<void>("revoke_tool_permission", { workspace, tool }),
 
   documentsDir: () => invoke<string>("documents_dir"),
+  /** Open a generated document in the app that owns its type. */
+  openDocument: (path: string) => invoke<void>("open_document", { path }),
 
   listArtifacts: (chatId: string) => invoke<Artifact[]>("list_artifacts", { chatId }),
   getArtifact: (artifactId: string, version?: number) =>

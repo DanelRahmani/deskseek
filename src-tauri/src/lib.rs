@@ -169,6 +169,7 @@ pub fn run() {
             commands::compact_chat,
             commands::documents_dir,
             commands::chatlog_dir,
+            commands::open_document,
             commands::list_artifacts,
             commands::get_artifact,
             commands::save_artifact_version,

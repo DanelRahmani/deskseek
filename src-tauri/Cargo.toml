@@ -37,6 +37,13 @@ tauri-plugin-dialog = "2.8.2"
 rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-child-process", "which-command"] }
 notify = "8.2.0"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
+docx-rs = { version = "0.4.22", default-features = false }
+# ponytail: default features on, though we only write .pptx. The crate's own
+# build is broken without `pdf-native` (it imports `pdfrs` unconditionally from
+# export/slide_render.rs), so `--no-default-features` does not compile. The PDF
+# path is never called from here.
+ppt-rs = "0.2.27"
+rust_xlsxwriter = "0.99.1"
 
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]

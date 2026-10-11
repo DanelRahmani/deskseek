@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { api } from "../api";
 import type { ToolRun } from "../types";
+import { savedPath } from "../lib/docs";
 import { tasksFrom } from "../lib/tasks";
 
 const ICONS: Record<string, string> = {
@@ -17,6 +19,9 @@ const ICONS: Record<string, string> = {
   git_push: "🌿",
   update_tasks: "☑",
   artifact_create: "📊",
+  doc_create: "📄",
+  sheet_create: "🧮",
+  slides_create: "📽",
   fetch_url: "🌐",
   browser_read: "🌐",
   browser_open: "🌐",
@@ -75,6 +80,11 @@ function describe(run: ToolRun): string {
     case "artifact_create":
       // The panel is already showing it, so the card only names it.
       return pick("title");
+    case "doc_create":
+      return `${pick("name")} (${pick("format") || "md"})`;
+    case "sheet_create":
+    case "slides_create":
+      return pick("name");
     default:
       return "";
   }
@@ -96,6 +106,10 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
         ? "border-neutral-800 bg-neutral-900/60 text-neutral-400"
         : "border-red-900/60 bg-red-950/30 text-red-300";
 
+  // A document has been written to disk; the path is the only useful thing to do
+  // with it, so the card offers it rather than making the user hunt for it.
+  const document = run.status === "ok" ? savedPath(run.tool, run.output) : null;
+
   return (
     <div className={`mb-2 rounded-lg border px-3 py-2 text-xs ${tone}`}>
       <button
@@ -115,6 +129,19 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
           alt="Screenshot of the page the agent was working on"
           className="mt-2 w-full rounded border border-white/10 bg-white"
         />
+      )}
+      {document && (
+        <div className="mt-2 flex items-center gap-2 border-t border-white/5 pt-2">
+          <button
+            onClick={() => api.openDocument(document).catch(() => {})}
+            className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-800"
+          >
+            Open
+          </button>
+          <span className="truncate text-[10px] text-neutral-600" title={document}>
+            {document}
+          </span>
+        </div>
       )}
       {open && run.output && (
         <pre

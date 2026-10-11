@@ -37,6 +37,8 @@ Both sections are functional:
   collapsible, and a step in progress pulses so a long job is visible at a glance
 - **Artifacts** — a document the model publishes with `artifact_create` opens in a panel beside
   the chat, rendered live and versioned, instead of scrolling away as a giant code block
+- **Documents** — `doc_create`, `sheet_create` and `slides_create` write real `.md`/`.docx`/`.pdf`,
+  `.xlsx` and `.pptx` files to your documents folder, with an *Open* button on the result
 - Approximate **context-window meter** in the header
 
 **Coding**
@@ -249,6 +251,37 @@ Two things worth saying plainly:
 - **An artifact is data, not a file.** It lives in the database, is never written into your
   workspace, and the model cannot read one back unless you paste it. It is a reading surface, not
   a second filesystem.
+
+**Documents** (both sections)
+
+When what you need is a *file* — something to send, print, or open in Excel — the agent writes
+one instead. Three tools, and every one of them asks before it runs:
+
+| Tool | Writes |
+| --- | --- |
+| `doc_create` | `.md`, `.docx` (Word) or `.pdf` |
+| `sheet_create` | `.xlsx`, from rows |
+| `slides_create` | `.pptx`, titles and bullets |
+
+They land in your **documents folder** (default `…/documents`, shown in `/setup` and changeable in
+Settings) and the tool card offers an **Open** button, so a generated report is one click from
+Word or Excel rather than a hunt through the filesystem.
+
+The content is Markdown — `#` headings, `-` and `1.` lists, `| tables |`, ```` ``` ```` code — and
+the same small reader turns it into blocks for every format, so the `.docx` and the `.pdf` cannot
+disagree about what the document says. Four things are worth saying plainly:
+
+- **The PDF is printed by the browser you already have.** `--print-to-pdf` on the same
+  Chromium-family binary `browser_read` uses — no bundled renderer, no second HTML engine, and the
+  best fidelity of the four. It needs a browser to be findable; if none is, the tool says so and
+  tells the agent to offer `md` or `docx` instead.
+- **Spreadsheet formulas are written, not evaluated.** A cell whose text starts with `=` is stored
+  as a formula and Excel calculates it when the file opens. There is no spreadsheet engine in this
+  app and the tool description does not pretend otherwise.
+- **PowerPoint is title-and-bullets only.** Layouts, images and animation are out of scope, and the
+  tool says so rather than producing a deck that looks wrong in the editor.
+- **Existing files are never overwritten.** A second document with the same name becomes
+  `name-2`, so a re-run costs nothing.
 
 **MCP servers**
 

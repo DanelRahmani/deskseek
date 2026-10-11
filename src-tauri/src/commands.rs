@@ -274,6 +274,30 @@ pub fn chatlog_dir(state: State<'_, AppState>) -> String {
     state.paths.chatlog_dir().display().to_string()
 }
 
+/// Open a generated document in whatever application owns its type.
+///
+/// Restricted to the extensions the document tools produce: the path comes back
+/// from a tool result, but "open any path the webview asks for" is a bigger door
+/// than this feature needs. The opener free function is used rather than the
+/// plugin command on purpose — it is the one that does not need a scope entry.
+#[tauri::command]
+pub fn open_document(path: String) -> Result<(), String> {
+    const OPENABLE: [&str; 5] = ["md", "docx", "xlsx", "pptx", "pdf"];
+    let file = std::path::Path::new(&path);
+    let ext = file
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if !OPENABLE.contains(&ext.as_str()) {
+        return Err(format!("DeskSeek will not open a .{ext} file."));
+    }
+    if !file.is_file() {
+        return Err(format!("{path} is not there any more."));
+    }
+    tauri_plugin_opener::open_path(file, None::<&str>).map_err(|e| e.to_string())
+}
+
 // --------------------------------------------------------------- artifacts
 
 #[tauri::command]
