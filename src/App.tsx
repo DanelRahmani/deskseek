@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import { api, onApproval, onDelta, onDone, onError, onGuard, onTool } from "./api";
 import { filesToAttachments } from "./lib/attachments";
 import type {
@@ -21,6 +22,9 @@ import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
+import { TabStrip } from "./components/TabStrip";
+import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
+import type { Shell } from "./lib/shell";
 
 type Panel = "none" | "memory" | "skills" | "mcp" | "files";
 
@@ -54,9 +58,14 @@ export default function App() {
   const [documentsDir, setDocumentsDir] = useState("");
   const [kind, setKind] = useState<SectionKind>("chat");
   const [chats, setChats] = useState<ChatRow[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // Every chat seen so far, by id: tabs and panes outlive the sidebar's current
+  // section, so they need rows of their own to render from.
+  const [chatsById, setChatsById] = useState<Record<string, ChatRow>>({});
+  const [shell, setShell] = useState<Shell>(loadShell);
+  // Transcripts and drafts are per chat, so two panes can show two
+  // conversations at once and switching back does not refetch.
+  const [messagesByChat, setMessagesByChat] = useState<Record<string, MessageRow[]>>({});
+  const [attachmentsByChat, setAttachmentsByChat] = useState<Record<string, Attachment[]>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
@@ -70,29 +79,67 @@ export default function App() {
     setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
   }, []);
 
+  const { tabs, panes, focus, splitAt } = shell;
+  const activeId = panes[focus] ?? null;
+
+  // Tab and pane bookkeeping lives in lib/shell.ts so its rules can be checked
+  // without a browser.
+  const showChat = useCallback((id: string) => setShell((s) => openChatIn(s, id)), []);
+  const pickPane = useCallback(
+    (pane: number, id: string | null) => setShell((s) => setPaneChat(s, pane, id)),
+    [],
+  );
+  const closeTab = useCallback((id: string) => setShell((s) => pruneShell(s, (t) => t === id)), []);
+  const toggleSplit = useCallback(() => setShell(toggleSplitPanes), []);
+
+  const loadMessages = useCallback(async (id: string) => {
+    const msgs = await api.getMessages(id);
+    setMessagesByChat((prev) => ({ ...prev, [id]: msgs }));
+  }, []);
+
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
   const kindRef = useRef<SectionKind>("chat");
   kindRef.current = kind;
 
+  // Startup only: load settings and every chat, then restore the saved shell.
   useEffect(() => {
     (async () => {
-      const [s, m, k, docs] = await Promise.all([
+      const [s, m, k, docs, chatList, codingList] = await Promise.all([
         api.getSettings(),
         api.listModels(),
         api.maskedApiKey(),
         api.documentsDir(),
+        api.listChats("chat"),
+        api.listChats("coding"),
       ]);
       setSettings(s);
       setModels(m);
       setKeyMask(k);
       setDocumentsDir(docs);
+
+      // Both sections, so a tab restored from the last session has a title even
+      // when it belongs to the other one.
+      const all = [...chatList, ...codingList];
+      setChatsById(Object.fromEntries(all.map((c) => [c.id, c])));
+      // Chats deleted while the app was closed must not come back as tabs.
+      const known = new Set(all.map((c) => c.id));
+      setShell((prev) => pruneShell(prev, (id) => !known.has(id)));
+      // A restored pane needs its transcript, which lives in the database.
+      await Promise.all(
+        panes.filter((p): p is string => p !== null && known.has(p)).map(loadMessages),
+      );
+
       // First run: show setup. It covers the API key too, so the settings
       // dialog is not stacked on top of it.
       if (!s.setupDone) setShowSetup(true);
       else if (!k) setShowSettings(true);
     })().catch((e) => setError(String(e)));
   }, []);
+
+  useEffect(() => {
+    saveShell(shell);
+  }, [shell]);
 
   useEffect(() => {
     if (!notice) return;
@@ -153,12 +200,14 @@ export default function App() {
         patch(e.chatId, (rt) => ({ ...rt, busy: false, error: e.message }));
       }),
       onGuard((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setNotice(
-          e.escalated
+        // Held on the chat, not shown as a global notice: with two panes open
+        // the refusal belongs to the conversation it happened in.
+        patch(e.chatId, (rt) => ({
+          ...rt,
+          error: e.escalated
             ? e.reason
             : `Safety guard refused ${e.tool ?? "a command"}: ${e.reason}`,
-        );
+        }));
       }),
     ]).then((fns) => {
       if (disposed) fns.forEach((f) => f());
@@ -172,7 +221,16 @@ export default function App() {
 
   const refreshChats = useCallback(async (which: SectionKind) => {
     const list = await api.listChats(which);
-    setChats(list);
+    if (kindRef.current === which) setChats(list);
+    setChatsById((prev) => {
+      const next = { ...prev };
+      // Drop this section's chats that are gone (deleted elsewhere), keep the rest.
+      for (const [id, chat] of Object.entries(next)) {
+        if (chat.kind === which && !list.some((c) => c.id === id)) delete next[id];
+      }
+      for (const chat of list) next[chat.id] = chat;
+      return next;
+    });
     return list;
   }, []);
 
@@ -180,14 +238,20 @@ export default function App() {
     refreshChats(kind).catch((e) => setError(String(e)));
   }, [kind, refreshChats]);
 
-  const selectChat = useCallback(async (id: string) => {
-    setActiveId(id);
-    setAttachments([]);
-    setError(null);
-    // The chat's own runtime is left alone: a run in a background chat keeps
-    // its stream, tools and pending approvals while the user reads another one.
-    setMessages(await api.getMessages(id));
-  }, []);
+  // The chat's own runtime is left alone: a run in a background chat keeps its
+  // stream, tools and pending approvals while the user reads another one.
+  const selectChat = useCallback(
+    async (id: string) => {
+      setError(null);
+      showChat(id);
+      try {
+        await loadMessages(id);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [showChat, loadMessages],
+  );
 
   const newChat = useCallback(async () => {
     const chat = await api.createChat(kindRef.current);
@@ -195,33 +259,35 @@ export default function App() {
     await selectChat(chat.id);
   }, [refreshChats, selectChat]);
 
-  const pickWorkspace = useCallback(async () => {
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const selected = await open({
-        directory: true,
-        multiple: false,
-        title: "Choose a folder DeskSeek may work in",
-      });
-      if (typeof selected !== "string") return;
-      let chatId = activeIdRef.current;
-      if (!chatId) {
-        const created = await api.createChat("coding", selected);
-        chatId = created.id;
-        setActiveId(chatId);
-      } else {
-        await api.setChatWorkspace(chatId, selected);
+  /** Pick the folder a coding chat works in; `pane` is the pane that asked. */
+  const pickWorkspace = useCallback(
+    async (chatId: string | null, pane: number) => {
+      try {
+        const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+        const selected = await openDialog({
+          directory: true,
+          multiple: false,
+          title: "Choose a folder DeskSeek may work in",
+        });
+        if (typeof selected !== "string") return;
+        if (chatId) {
+          await api.setChatWorkspace(chatId, selected);
+        } else {
+          chatId = (await api.createChat("coding", selected)).id;
+          pickPane(pane, chatId);
+        }
+        await refreshChats("coding");
+        await loadMessages(chatId);
+        setNotice(`Working in ${selected}`);
+      } catch (e) {
+        setError(String(e));
       }
-      await refreshChats("coding");
-      await selectChat(chatId);
-      setNotice(`Working in ${selected}`);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [refreshChats, selectChat]);
+    },
+    [pickPane, refreshChats, loadMessages],
+  );
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, chatId: string | null, pane: number) => {
       setError(null);
       setNotice(null);
 
@@ -250,27 +316,26 @@ export default function App() {
             setShowSettings(true);
             return;
           case "/folder":
-            await pickWorkspace();
+            await pickWorkspace(chatId, pane);
             return;
           case "/new":
             await newChat();
             return;
           case "/compact": {
-            const id = activeIdRef.current;
-            if (!id) {
+            if (!chatId) {
               setError("Nothing to compact yet.");
               return;
             }
-            patch(id, (rt) => ({ ...rt, busy: true }));
+            patch(chatId, (rt) => ({ ...rt, busy: true }));
             setNotice("Compacting the conversation…");
             try {
-              await api.compactChat(id);
-              setMessages(await api.getMessages(id));
+              await api.compactChat(chatId);
+              await loadMessages(chatId);
               setNotice("Conversation compacted into a summary.");
             } catch (e) {
               setError(String(e));
             } finally {
-              patch(id, (rt) => ({ ...rt, busy: false }));
+              patch(chatId, (rt) => ({ ...rt, busy: false }));
             }
             return;
           }
@@ -280,86 +345,101 @@ export default function App() {
         }
       }
 
-      let chatId = activeIdRef.current;
+      // The draft belongs to whatever the user was looking at, which is not
+      // necessarily a chat yet — send() is what creates one.
+      const draftKey = chatId ?? "";
+      const outgoing = attachmentsByChat[draftKey] ?? [];
+
       try {
         if (!chatId) {
-          const created = await api.createChat(kindRef.current);
-          chatId = created.id;
-          setActiveId(chatId);
+          chatId = (await api.createChat(kindRef.current)).id;
           await refreshChats(kindRef.current);
+          pickPane(pane, chatId);
         }
 
         const list = await api.listChats(kindRef.current);
         const chat = list.find((c) => c.id === chatId);
         if (chat?.kind === "coding" && !chat.workspace) {
           setError("Choose a folder for this coding task first.");
-          await pickWorkspace();
+          await pickWorkspace(chatId, pane);
           return;
         }
 
-        const outgoing = attachments;
-        setAttachments([]);
-        patch(chatId!, () => ({
+        setAttachmentsByChat((prev) => (prev[draftKey]?.length ? { ...prev, [draftKey]: [] } : prev));
+        patch(chatId, () => ({
           ...IDLE,
           busy: true,
           stream: { content: "", reasoning: "" },
         }));
-        setMessages((m) => [
-          ...m,
-          {
-            id: `tmp-${Date.now()}`,
-            chat_id: chatId!,
-            seq: Number.MAX_SAFE_INTEGER,
-            role: "user",
-            content: text,
-            reasoning_content: null,
-            tool_calls_json: null,
-            tool_call_id: null,
-            attachments_json: outgoing.length ? JSON.stringify(outgoing) : null,
-            created_at: Math.floor(Date.now() / 1000),
-          },
-        ]);
+        setMessagesByChat((prev) => ({
+          ...prev,
+          [chatId as string]: [
+            ...(prev[chatId as string] ?? []),
+            {
+              id: `tmp-${Date.now()}`,
+              chat_id: chatId as string,
+              seq: Number.MAX_SAFE_INTEGER,
+              role: "user",
+              content: text,
+              reasoning_content: null,
+              tool_calls_json: null,
+              tool_call_id: null,
+              attachments_json: outgoing.length ? JSON.stringify(outgoing) : null,
+              created_at: Math.floor(Date.now() / 1000),
+            },
+          ],
+        }));
         await api.sendMessage(chatId, text, outgoing);
 
         const [msgs] = await Promise.all([
           api.getMessages(chatId),
           refreshChats(kindRef.current),
         ]);
-        if (activeIdRef.current === chatId) setMessages(msgs);
+        if (chatId) setMessagesByChat((prev) => ({ ...prev, [chatId as string]: msgs }));
       } catch (e) {
         if (chatId) patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
       } finally {
         if (chatId) patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
       }
     },
-    [attachments, newChat, pickWorkspace, refreshChats],
+    [attachmentsByChat, loadMessages, newChat, pickPane, pickWorkspace, refreshChats],
   );
 
   const changeModel = useCallback(
-    async (model: string, thinking: boolean, effort: string) => {
-      const chat = activeIdRef.current;
-      if (!chat) return;
-      await api.setChatModel(chat, model, thinking, effort);
-      await refreshChats(kindRef.current);
+    async (chatId: string, model: string, thinking: boolean, effort: string) => {
+      // Patch the row first so the header updates without a round trip; the
+      // refresh below only exists to keep the sidebar list in step.
+      setChatsById((prev) =>
+        prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], model, thinking, effort } } : prev,
+      );
+      try {
+        await api.setChatModel(chatId, model, thinking, effort);
+        await refreshChats(kindRef.current);
+      } catch (e) {
+        setError(String(e));
+      }
     },
     [refreshChats],
   );
 
   const changeMode = useCallback(
-    async (mode: PermissionMode) => {
-      const chat = activeIdRef.current;
-      if (!chat) return;
-      await api.setChatPermissionMode(chat, mode);
-      await refreshChats(kindRef.current);
+    async (chatId: string, mode: PermissionMode) => {
+      setChatsById((prev) =>
+        prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], permission_mode: mode } } : prev,
+      );
+      try {
+        await api.setChatPermissionMode(chatId, mode);
+        await refreshChats(kindRef.current);
+      } catch (e) {
+        setError(String(e));
+      }
     },
     [refreshChats],
   );
 
-  const stop = useCallback(async () => {
-    const chat = activeIdRef.current;
-    if (!chat) return;
+  const stop = useCallback(async (chatId: string) => {
     try {
-      await api.stopChat(chat);
+      await api.stopChat(chatId);
     } catch (e) {
       setError(String(e));
     }
@@ -385,34 +465,67 @@ export default function App() {
     [],
   );
 
-  const attach = useCallback(async (files: FileList | File[]) => {
+  const attach = useCallback(async (chatId: string | null, files: FileList | File[]) => {
+    // Keyed by the draft, not the chat: files can be attached before a chat
+    // exists, and send() picks them up from the same empty-string slot.
+    const key = chatId ?? "";
     try {
       const added = await filesToAttachments(files);
-      setAttachments((prev) => [...prev, ...added].slice(0, 8));
+      setAttachmentsByChat((prev) => ({
+        ...prev,
+        [key]: [...(prev[key] ?? []), ...added].slice(0, 8),
+      }));
     } catch (e) {
       setError(String(e));
     }
   }, []);
 
-  const activeChat = chats.find((c) => c.id === activeId) ?? null;
-  const runtime = (activeId && sessions[activeId]) || IDLE;
+  const removeAttachment = useCallback((chatId: string | null, index: number) => {
+    const key = chatId ?? "";
+    setAttachmentsByChat((prev) => ({
+      ...prev,
+      [key]: (prev[key] ?? []).filter((_, i) => i !== index),
+    }));
+  }, []);
+
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),
     [sessions],
   );
 
-  const contextTokens = useMemo(() => {
-    const chars =
-      messages.reduce(
-        (total, m) => total + (m.content?.length ?? 0) + (m.reasoning_content?.length ?? 0),
-        0,
-      ) + (settings?.systemPrompt.length ?? 0);
-    // Rough English/code average: about 3.6 characters per token.
-    return Math.ceil(chars / 3.6);
-  }, [messages, settings]);
+  /** Rough context estimate for one chat: about 3.6 characters per token. */
+  const tokensFor = useCallback(
+    (id: string) => {
+      const chars =
+        (messagesByChat[id] ?? []).reduce(
+          (total, m) => total + (m.content?.length ?? 0) + (m.reasoning_content?.length ?? 0),
+          0,
+        ) + (settings?.systemPrompt.length ?? 0);
+      return Math.ceil(chars / 3.6);
+    },
+    [messagesByChat, settings],
+  );
 
-  const contextMax =
-    models.find((m) => m.id === activeChat?.model)?.context ?? 1_000_000;
+  const panesRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+
+  const startDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    dragging.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const dragDivider = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (!dragging.current || !panesRef.current) return;
+    const rect = panesRef.current.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setShell((s) => ({ ...s, splitAt: Math.min(80, Math.max(20, pct)) }));
+  };
+  const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    dragging.current = false;
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
 
   return (
     <div className="flex h-full">
@@ -425,12 +538,15 @@ export default function App() {
         onNew={newChat}
         onDelete={async (id) => {
           await api.deleteChat(id);
-          const list = await refreshChats(kind);
-          if (activeIdRef.current === id) {
-            setActiveId(null);
-            setMessages([]);
-            if (list[0]) await selectChat(list[0].id);
-          }
+          await refreshChats(kind);
+          setMessagesByChat((prev) => {
+            if (!(id in prev)) return prev;
+            const next = { ...prev };
+            delete next[id];
+            return next;
+          });
+          // The tab goes too; a pane showing it refills from the remaining tabs.
+          setShell((s) => pruneShell(s, (t) => t === id));
         }}
         onSettings={() => setShowSettings(true)}
         onMemory={() => setPanel("memory")}
@@ -450,41 +566,91 @@ export default function App() {
         />
       )}
 
-      <ChatView
-        chat={activeChat}
-        messages={messages}
-        stream={runtime.stream}
-        tools={runtime.tools}
-        approvals={runtime.approvals}
-        attachments={attachments}
-        busy={runtime.busy}
-        models={models}
-        error={runtime.error ?? error}
-        notice={notice}
-        usage={runtime.usage}
-        contextTokens={contextTokens}
-        contextMax={contextMax}
-        onSend={send}
-        onStop={stop}
-        onFiles={() => setPanel((current) => (current === "files" ? "none" : "files"))}
-        onModelChange={changeModel}
-        onModeChange={changeMode}
-        onPickWorkspace={pickWorkspace}
-        onAttach={attach}
-        onRemoveAttachment={(index) =>
-          setAttachments((prev) => prev.filter((_, i) => i !== index))
-        }
-        onDecideApproval={decideApproval}
-      />
+      <div className="flex min-w-0 flex-1 flex-col">
+        <TabStrip
+          tabs={tabs.map((id) => chatsById[id]).filter((c): c is ChatRow => !!c)}
+          panes={panes}
+          focus={focus}
+          split={panes.length > 1}
+          runningIds={runningIds}
+          onSelect={selectChat}
+          onClose={closeTab}
+          onToggleSplit={toggleSplit}
+        />
+
+        <div ref={panesRef} className="flex min-h-0 flex-1">
+          {panes.map((id, pane) => {
+            // Each pane reads its own chat's live turn, so a background run keeps
+            // streaming into the pane that is not focused.
+            const rt = (id && sessions[id]) || IDLE;
+            const row = id ? (chatsById[id] ?? null) : null;
+            const max = models.find((m) => m.id === row?.model)?.context ?? 1_000_000;
+            return (
+              <Fragment key={pane}>
+                {pane > 0 && (
+                  <div
+                    onPointerDown={startDrag}
+                    onPointerMove={dragDivider}
+                    onPointerUp={endDrag}
+                    onPointerCancel={endDrag}
+                    className="w-1 shrink-0 cursor-col-resize bg-neutral-800 transition hover:bg-sky-600"
+                    title="Drag to resize"
+                  />
+                )}
+                <div
+                  // Clicking anywhere in a pane aims the sidebar, the tab strip
+                  // and the file tree at it.
+                  onPointerDownCapture={() =>
+                    setShell((s) => (s.focus === pane ? s : { ...s, focus: pane }))
+                  }
+                  className="flex min-h-0 min-w-0 overflow-hidden"
+                  style={
+                    panes.length > 1
+                      ? { flexGrow: pane === 0 ? splitAt : 100 - splitAt, flexBasis: 0 }
+                      : { flexGrow: 1, flexBasis: 0 }
+                  }
+                >
+                  <ChatView
+                    chat={row}
+                    messages={id ? (messagesByChat[id] ?? []) : []}
+                    stream={rt.stream}
+                    tools={rt.tools}
+                    approvals={rt.approvals}
+                    attachments={attachmentsByChat[id ?? ""] ?? []}
+                    busy={rt.busy}
+                    models={models}
+                    error={rt.error ?? (pane === focus ? error : null)}
+                    notice={pane === focus ? notice : null}
+                    usage={rt.usage}
+                    contextTokens={id ? tokensFor(id) : 0}
+                    contextMax={max}
+                    onSend={(text) => send(text, id, pane)}
+                    onStop={() => id && stop(id)}
+                    onFiles={() =>
+                      setPanel((current) => (current === "files" ? "none" : "files"))
+                    }
+                    onModelChange={(model, thinking, effort) =>
+                      id && changeModel(id, model, thinking, effort)
+                    }
+                    onModeChange={(mode) => id && changeMode(id, mode)}
+                    onPickWorkspace={() => pickWorkspace(id, pane)}
+                    onAttach={(files) => attach(id, files)}
+                    onRemoveAttachment={(index) => removeAttachment(id, index)}
+                    onDecideApproval={decideApproval}
+                  />
+                </div>
+              </Fragment>
+            );
+          })}
+        </div>
+      </div>
 
       {panel === "memory" && (
         <MemoryPanel
           chatId={activeId}
           onClose={() => setPanel("none")}
           onChanged={() => {
-            if (activeIdRef.current) {
-              api.getMessages(activeIdRef.current).then(setMessages).catch(() => {});
-            }
+            if (activeIdRef.current) loadMessages(activeIdRef.current).catch(() => {});
           }}
         />
       )}

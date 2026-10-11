@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
+    "check": "node src/lib/shell.check.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

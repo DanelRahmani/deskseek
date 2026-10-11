@@ -72,6 +72,25 @@ Switching to another conversation does **not** interrupt a run. Each conversatio
 live turn — stream, tool cards and pending approvals — so a long job keeps going while you read
 something else. Its entry in the sidebar shows a small pulse until it finishes.
 
+**Tabs and two panes**
+
+Opening a conversation puts it in the tab strip along the top; the strip is the list of what you
+are working on, and the sidebar is the list of everything that exists. A tab shows which pane it
+is on and a pulse while it is working.
+
+*Split* turns the window into two panes, each showing a different conversation. The badge on a
+tab says which pane it is in, and the divider between them drags to resize. Clicking anywhere in
+a pane aims the sidebar, the tab strip and the file tree at it — so *Files* shows the folder of
+the pane you clicked, not the other one. Closing a tab refills its pane from another open tab
+rather than leaving a hole.
+
+The layout is remembered, so reopening the app brings back the same tabs, the same split and
+the same divider position. A conversation deleted while the app was closed does not come back
+as a tab.
+
+Guard refusals and errors belong to their chat, so a refusal in the pane you are not looking at
+is still there when you look at it.
+
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
@@ -167,8 +186,13 @@ Run the checks:
 
 ```bash
 npm run typecheck
+npm run check
 cd src-tauri && cargo test
 ```
+
+`npm run check` is the frontend's one hand-rolled check (plain Node, no test framework): it
+pins the tab/pane rules in `src/lib/shell.ts` — the panes must never show the same chat twice,
+and closing a tab must never leave a pane blank while another tab is still open.
 
 ## Architecture
 
