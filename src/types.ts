@@ -231,22 +231,28 @@ export interface MemoryProposal {
   chat_id: string;
   text: string;
   status: string;
-  /** `profile` (MEMORY.md) or `fact` (the retrieved tier). */
+  /** `profile` (MEMORY.md) or a category name — `work`, `interests`, and so on. */
   target: string;
   created_at: number;
 }
 
-/** One remembered fact, outside the always-injected MEMORY.md. */
-export interface FactRow {
-  id: string;
-  /** `global` or `project:<workspace>`. */
-  scope: string;
-  kind: string;
+/** One remembered line, as it is written into a category file. */
+export interface MemoryEntryView {
+  /** `YYYY-MM-DD`, as recorded in the file. */
+  date: string;
   text: string;
-  importance: number;
-  source_chat_id: string | null;
-  created_at: number;
-  updated_at: number;
+}
+
+/**
+ * One memory file: the category, what it is for, and what is in it. The profile is
+ * not one of these — `MEMORY.md` has its own editor, because it is sent with every
+ * request rather than looked up.
+ */
+export interface MemoryCategoryView {
+  /** A category id, or `project-<name>` for a file a project folder added. */
+  category: string;
+  about: string;
+  entries: MemoryEntryView[];
 }
 
 export interface SkillView {

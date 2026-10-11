@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / tasks / artifact / docs / shortcuts)
+- [ ] `npm run check` passes (shell / tasks / artifact / docs / shortcuts / commands / theme)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 
@@ -102,12 +102,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 ## Memory
 
-- [ ] *Summarise chat* proposes entries tagged *always sent* or *facts*
+- [ ] *Summarise chat* proposes entries, each tagged with the file it would go to
 - [ ] Accepting an *always sent* entry writes it to `MEMORY.md`
-- [ ] Accepting a *facts* entry lists it under *Kept facts*
-- [ ] A fact learned in one chat is recalled by keyword in a *different* chat
-- [ ] A fact scoped to one project does not surface in another project's chat
-- [ ] Forgetting a fact removes it and it stops being injected
+- [ ] Accepting an entry tagged `work` / `interests` / … writes it to `memory/<category>.md`
+- [ ] A memory learned in one chat is recalled by keyword in a *different* chat
+- [ ] A memory learned inside a project folder does not surface in another project's chat
+- [ ] Forgetting a line removes it from its file and it stops being injected
+- [ ] A memory saved by the assistant with `save_memory` lands in the category it names
+- [ ] `save_memory` with no category (or an invented one) lands under *other*
 - [ ] The panel warns when `MEMORY.md` has grown large
 
 ## MCP

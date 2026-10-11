@@ -117,22 +117,23 @@ pub fn parse_artifact(args: &serde_json::Value) -> Result<ArtifactDraft, String>
     })
 }
 
-/// A validated `save_memory` call: what to remember and which tier it belongs in.
+/// A validated `save_memory` call: what to remember and where it belongs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryDraft {
     pub entries: Vec<String>,
-    /// `"profile"` (the always-injected MEMORY.md) or `"fact"` (looked up when
-    /// relevant). Only an explicit `profile` may reach the injected file.
+    /// `"profile"` for the always-injected `MEMORY.md`, otherwise a category id
+    /// from `memory_files::CATEGORIES`. Anything unrecognised becomes `other`.
     pub target: &'static str,
 }
 
 /// Validates `save_memory`.
 ///
-/// The default is deliberately `fact`: the profile file is injected into every
-/// request, so it must not grow by accident. This is the same rule the
-/// summariser applies to its own proposals — a blank, misspelled or absent
-/// target is a fact, and only `profile` is allowed to reach the always-sent
-/// tier.
+/// The default is deliberately the fallback category rather than the profile: the
+/// profile file is injected into every request, so it must not grow by accident.
+/// Only an explicit `profile` reaches it, and only a name that matches a real
+/// category lands in that category — a model inventing one gets `other` rather
+/// than a new file per conversation. The summariser applies the same rule to its
+/// own proposals, so the two paths cannot disagree.
 pub fn parse_memory(args: &serde_json::Value) -> Result<MemoryDraft, String> {
     let entries: Vec<String> = args
         .get("entries")
@@ -149,9 +150,12 @@ pub fn parse_memory(args: &serde_json::Value) -> Result<MemoryDraft, String> {
     if entries.is_empty() {
         return Err("save_memory needs at least one non-empty entry".to_string());
     }
-    let target = match args.get("target").and_then(serde_json::Value::as_str) {
-        Some(t) if t.trim().eq_ignore_ascii_case("profile") => "profile",
-        _ => "fact",
+    let target = match args.get("category").and_then(serde_json::Value::as_str) {
+        Some(c) if c.trim().eq_ignore_ascii_case(crate::memory_files::PROFILE) => {
+            crate::memory_files::PROFILE
+        }
+        Some(c) => crate::memory_files::canonical(c).unwrap_or(crate::memory_files::FALLBACK),
+        None => crate::memory_files::FALLBACK,
     };
     Ok(MemoryDraft { entries, target })
 }
@@ -290,7 +294,7 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "save_memory",
-                "Remember something durable across chats. `target: \"profile\"` writes to MEMORY.md, which is sent with every request, so use it only for who the user is and how they want replies — their name, language, and standing preferences. `target: \"fact\"` (the default) is stored individually and looked up only when it is relevant, so it can hold anything else. Never create or rename files for memory.",
+                "Remember something durable across chats. `category: \"profile\"` writes to MEMORY.md, which is sent with every request, so use it only for who the user is and how they want replies — their name, language, and standing preferences. Every other category is one file looked up only when it is relevant, so those can hold anything else. Never create or rename files for memory.",
                 params(
                     json!({
                         "entries": {
@@ -298,10 +302,10 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                             "description": "One self-contained sentence per fact. No bullets, no dates.",
                             "items": { "type": "string" }
                         },
-                        "target": {
+                        "category": {
                             "type": "string",
-                            "enum": ["profile", "fact"],
-                            "description": "\"profile\" is injected into every request (identity and standing preferences only); \"fact\" is looked up only when relevant. Defaults to \"fact\"."
+                            "enum": crate::memory_files::category_names(),
+                            "description": "Which part of the user's life this belongs to. \"profile\" is injected into every request (identity and standing preferences only); every other value is looked up only when relevant. Defaults to \"other\"."
                         }
                     }),
                     &["entries"],
@@ -738,22 +742,30 @@ mod tests {
 
     #[test]
     fn save_memory_only_sends_an_explicit_profile_to_the_injected_file() {
-        // The default, and anything unrecognised, must land in tier 2.
+        // The default, and anything unrecognised, must stay out of the
+        // always-injected file. A made-up category is not a new file either.
         assert_eq!(
             parse_memory(&json!({"entries": ["Likes brevity"]}))
                 .unwrap()
                 .target,
-            "fact"
+            "other"
         );
         assert_eq!(
-            parse_memory(&json!({"entries": ["x"], "target": "nonsense"}))
+            parse_memory(&json!({"entries": ["x"], "category": "nonsense"}))
                 .unwrap()
                 .target,
-            "fact"
+            "other"
+        );
+        // A real category is honoured, in any case.
+        assert_eq!(
+            parse_memory(&json!({"entries": ["x"], "category": "Education"}))
+                .unwrap()
+                .target,
+            "education"
         );
         // Only `profile`, in any case, reaches the always-injected file.
         assert_eq!(
-            parse_memory(&json!({"entries": ["x"], "target": "PROFILE"}))
+            parse_memory(&json!({"entries": ["x"], "category": "PROFILE"}))
                 .unwrap()
                 .target,
             "profile"

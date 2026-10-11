@@ -6,7 +6,8 @@ A lightweight desktop client for the DeepSeek API — built with **Tauri v2** (R
 Two sections share one core:
 
 - **Chat** — a general assistant with streaming replies, a collapsible *thinking* pane, and a
-  global `MEMORY.md` that is always injected into the system prompt.
+  `MEMORY.md` profile that is always injected into the system prompt, backed by a folder of
+  per-category memory files.
 - **Coding** — an agent that works inside a folder you trust.
 
 Bring your own API key: it is stored in the **OS keychain** (Credential Manager / Keychain /
@@ -31,25 +32,27 @@ Both sections are functional:
   and save it rather than only printing it. The **Tools** button in the header turns that off for
   a chat: the next request carries no tools at all, so it becomes a plain conversation with no
   file access, no browsing and no MCP. The choice is per chat and remembered
-- **Memory** — two tiers, because one file has to be either short or cheap and it cannot be
-  both:
+- **Memory** — two kinds of file, because one file has to be either short or cheap and it cannot
+  be both. Both are plain markdown you can read and edit by hand: the files *are* the store.
   - `MEMORY.md` is the **profile**: who the user is and how they want replies — name, language,
     standing preferences. It is short on purpose, sent with *every* request, and editable in-app.
-  - Everything else is a **kept fact**, stored individually and looked up by keyword (SQLite
-    FTS5) against what you just asked. Only the matching ones are sent, so the store can grow
-    without slowing anything down. Facts are scoped to a project when they were learned inside
-    one, so a note about one client does not turn up in another's chat.
-  - *Summarise chat* proposes entries and tags each one *always sent* or *facts*, so you can see
-    where an Accept will put it. A proposal only reaches `MEMORY.md` when you accept it there.
-  - When the assistant remembers something itself — with `save_memory` — it files it the same
-    way: only an explicit `profile` argument goes to `MEMORY.md`; everything else is kept as a
-    fact, which is the default. A fact the model recalls mid-run therefore cannot quietly grow
-    the always-sent file.
-  - The panel lists kept facts and lets you forget any of them, and warns when `MEMORY.md` has
-    grown past what is worth sending every time.
-  - Honest limit: keyword search matches words, not meaning. Asking about "the car" will not
-    surface a fact stored as "vehicle". Embeddings would fix that; this trades it for requiring
-    no model download and no network.
+  - Everything else lives in `memory/<category>.md`, one file per part of life — `work`,
+    `education`, `projects`, `interests`, `people`, and `other` — looked up by keyword against
+    what you just asked. Only the matching entries are sent, so the store can grow without
+    slowing anything down. Inside a project folder, memory is filed with that project instead
+    (`project-<name>.md`), so a note about one client does not turn up in another's chat.
+  - *Summarise chat* proposes entries and tags each one with the file it would go to, so you can
+    see where an Accept will put it. A proposal only reaches `MEMORY.md` when it says so.
+  - When the assistant remembers something itself — with `save_memory` — it does the same: only an
+    explicit `profile` category goes to `MEMORY.md`, anything else goes to the category it names,
+    and a name it invents falls back to `other` rather than creating a file. Memory saved
+    mid-run therefore cannot quietly grow the always-sent file.
+  - The panel shows every category with its entries and lets you forget any line, and warns when
+    `MEMORY.md` has grown past what is worth sending every time.
+  - Honest limits: the lookup ranks by shared words, not meaning, so asking about "the car" will
+    not surface a memory stored as "vehicle" — embeddings would fix that, at the cost of a model
+    download and network at query time. Every category file is also scanned in full on a lookup,
+    which is fine for thousands of lines and not for millions.
 - **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
 - **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat; install one from
   the panel's file picker and remove one from the same list (the panel also opens the folder)

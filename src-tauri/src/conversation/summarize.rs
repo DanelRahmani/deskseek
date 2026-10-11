@@ -45,13 +45,14 @@ impl ProposedMemory {
             ProposedMemory::Tagged { text, target } => (text, target),
             ProposedMemory::Plain(text) => (text, String::new()),
         };
-        // Only an explicit `profile` may reach the always-injected file. Blank,
-        // misspelled or absent targets are facts, so the always-injected tier
-        // cannot grow by accident.
-        let target = if target.trim().eq_ignore_ascii_case("profile") {
-            "profile"
+        // Only an explicit `profile` may reach the always-injected file, and only a
+        // name the app knows may become its own category. Blank, misspelled or
+        // invented targets land in `other`, so neither the injected file nor the
+        // category list can grow by accident. `save_memory` applies the same rule.
+        let target = if target.trim().eq_ignore_ascii_case(crate::memory_files::PROFILE) {
+            crate::memory_files::PROFILE
         } else {
-            "fact"
+            crate::memory_files::canonical(&target).unwrap_or(crate::memory_files::FALLBACK)
         };
         db::ProposalDraft {
             text,
@@ -245,7 +246,7 @@ mod tests {
         assert_eq!(s.memory.len(), 1);
         let draft = s.memory.into_iter().next().unwrap().into_draft();
         assert_eq!(draft.text, "Likes Rust");
-        assert_eq!(draft.target, "fact");
+        assert_eq!(draft.target, "other");
     }
 
     #[test]
@@ -261,14 +262,31 @@ mod tests {
             .collect();
         assert_eq!(drafts[0].target, "profile");
         assert_eq!(drafts[0].text, "Replies in Dutch");
-        assert_eq!(drafts[1].target, "fact");
+        assert_eq!(drafts[1].target, "other");
     }
 
     #[test]
-    fn an_entry_without_a_target_is_filed_as_a_fact() {
+    fn an_invented_category_is_filed_as_other_and_a_real_one_is_honoured() {
+        let invented = parse_summary(
+            r#"{"summary":"x","memory":[{"text":"Something","target":"astrophysics"}]}"#,
+        )
+        .unwrap();
+        let draft = invented.memory.into_iter().next().unwrap().into_draft();
+        assert_eq!(draft.target, "other");
+
+        let real = parse_summary(
+            r#"{"summary":"x","memory":[{"text":"Studies IB","target":"Education"}]}"#,
+        )
+        .unwrap();
+        let draft = real.memory.into_iter().next().unwrap().into_draft();
+        assert_eq!(draft.target, "education");
+    }
+
+    #[test]
+    fn an_entry_without_a_target_is_filed_as_other() {
         let s = parse_summary(r#"{"summary":"x","memory":[{"text":"Something"}]}"#).unwrap();
         let draft = s.memory.into_iter().next().unwrap().into_draft();
-        assert_eq!(draft.target, "fact");
+        assert_eq!(draft.target, "other");
     }
 
     #[test]
@@ -295,7 +313,7 @@ mod tests {
             .next()
             .unwrap()
             .into_draft();
-        assert_eq!(draft.target, "fact");
+        assert_eq!(draft.target, "other");
     }
 
     #[test]

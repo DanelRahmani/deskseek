@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { FactRow, MemoryProposal } from "../types";
+import type { MemoryCategoryView, MemoryProposal } from "../types";
 
 interface Props {
   chatId: string | null;
@@ -12,8 +12,12 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
   const [body, setBody] = useState("");
   const [path, setPath] = useState("");
   const [proposals, setProposals] = useState<MemoryProposal[]>([]);
-  const [facts, setFacts] = useState<FactRow[]>([]);
+  const [store, setStore] = useState<MemoryCategoryView[]>([]);
   const [draft, setDraft] = useState("");
+  // Where a hand-typed line is filed. The profile is the default because a line
+  // someone types here is usually about themselves, but it is also the one file that
+  // is sent with every request, so the choice is visible rather than implied.
+  const [target, setTarget] = useState("profile");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -22,7 +26,7 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
     setPath(await api.memoryPath());
     if (chatId) setProposals(await api.listProposals(chatId, "pending"));
     else setProposals([]);
-    setFacts(await api.listFacts());
+    setStore(await api.memoryOverview());
   };
 
   useEffect(() => {
@@ -48,10 +52,10 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
     if (!entry) return;
     setBusy(true);
     try {
-      await api.appendMemory([entry]);
+      await api.appendMemory(target, [entry]);
       setDraft("");
       await reload();
-      setStatus("Added to memory.");
+      setStatus(`Added to ${target}.`);
       onChanged();
     } catch (e) {
       setStatus(String(e));
@@ -78,10 +82,10 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
     }
   };
 
-  const forget = async (id: string) => {
+  const forget = async (category: string, text: string) => {
     setBusy(true);
     try {
-      await api.deleteFact(id);
+      await api.deleteMemoryEntry(category, text);
       await reload();
     } catch (e) {
       setStatus(String(e));
@@ -176,10 +180,10 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
                     title={
                       p.target === "profile"
                         ? "Goes into memory.md, which is sent with every request"
-                        : "Kept as a fact and looked up only when it is relevant"
+                        : `Goes into the ${p.target} memory file, looked up only when it is relevant`
                     }
                   >
-                    {p.target === "profile" ? "→ always sent" : "→ facts"}
+                    {p.target === "profile" ? "→ always sent" : `→ ${p.target}`}
                   </span>
                 </div>
               </div>
@@ -189,41 +193,76 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
 
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
-            Kept facts
+            Kept memory
           </h3>
-          {facts.length === 0 && (
+          {store.every((c) => c.entries.length === 0) ? (
             <p className="text-xs text-neutral-600">
-              Nothing yet. Facts are looked up only when they match what you ask, so this list can
+              Nothing yet. These files are looked up only when they match what you ask, so they can
               grow without costing anything on the turns where none of it is relevant.
             </p>
+          ) : (
+            <div className="space-y-3">
+              {store
+                .filter((c) => c.entries.length > 0)
+                .map((c) => (
+                  <div key={c.category}>
+                    <div className="mb-1 flex items-baseline gap-2">
+                      <span className="shrink-0 text-[11px] font-medium text-neutral-300">
+                        {c.category}
+                      </span>
+                      <span className="truncate text-[10px] text-neutral-600">{c.about}</span>
+                    </div>
+                    <div className="space-y-1">
+                      {c.entries.map((e) => (
+                        <div
+                          key={`${c.category}-${e.date}-${e.text}`}
+                          className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2 py-1.5 text-xs"
+                        >
+                          <span className="min-w-0 flex-1 text-neutral-300">{e.text}</span>
+                          <span className="shrink-0 text-[10px] text-neutral-600">{e.date}</span>
+                          <button
+                            onClick={() => forget(c.category, e.text)}
+                            disabled={busy}
+                            className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
+                            title="Forget this"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              {store.some((c) => c.entries.length === 0) && (
+                <p className="text-[10px] text-neutral-600">
+                  Nothing yet under{" "}
+                  {store
+                    .filter((c) => c.entries.length === 0)
+                    .map((c) => c.category)
+                    .join(", ")}
+                  .
+                </p>
+              )}
+            </div>
           )}
-          <div className="space-y-1">
-            {facts.map((f) => (
-              <div
-                key={f.id}
-                className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2 py-1.5 text-xs"
-              >
-                <span className="min-w-0 flex-1 text-neutral-300">{f.text}</span>
-                <span className="shrink-0 text-[10px] text-neutral-600" title={f.scope}>
-                  {f.scope === "global" ? "everywhere" : f.scope.replace(/^project:/, "")}
-                </span>
-                <button
-                  onClick={() => forget(f.id)}
-                  disabled={busy}
-                  className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
-                  title="Forget this"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
         </section>
 
         <section>
           <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
             Remember something
           </h3>
+          <select
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            className="mb-2 w-full rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-[11px] text-neutral-300 outline-none focus:border-neutral-700"
+          >
+            <option value="profile">profile — sent with every request</option>
+            {store.map((c) => (
+              <option key={c.category} value={c.category}>
+                {c.category} — {c.about}
+              </option>
+            ))}
+          </select>
           <div className="flex gap-2">
             <input
               value={draft}
@@ -266,7 +305,7 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
             <p className="mt-1 rounded-md border border-amber-900/60 bg-amber-950/30 px-2 py-1 text-[11px] text-amber-300">
               {profileEntries} entries here, and all of it is sent with every message. Keep this
               file to who the user is and how they want to be worked with; everything else belongs
-              in the kept facts above, where it is only looked up when it is relevant.
+              in the category files above, where it is only looked up when it is relevant.
             </p>
           )}
         </section>

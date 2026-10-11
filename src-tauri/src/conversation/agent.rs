@@ -409,6 +409,13 @@ publishing, `rm -rf /`) are still refused — a refusal is final, so do not retr
 
     // Spell out how memory works so the model never guesses at a file name or
     // asks to read something it has already been given.
+    // The category list is generated from the same table the tool validates
+    // against, so the guide cannot describe a category the app would refuse.
+    let categories = crate::memory_files::CATEGORIES
+        .iter()
+        .map(|c| format!("    - {} — {}", c.id, c.about))
+        .collect::<Vec<_>>()
+        .join("\n");
     let memory_guide = format!(
         "\n\n# Memory\n\n\
 Your memory has two parts.\n\n\
@@ -416,14 +423,18 @@ Your memory has two parts.\n\n\
 Its contents are included below under \"Memory\" — they have already been read for you, so \
 never ask to read it and never open it with a tool. It holds who the user is and how they want \
 to be worked with, and it is deliberately kept short.\n\n\
-2. Everything else is stored as individual facts and looked up for you. When any of them match \
-what the user just asked they appear below under \"Possibly relevant memory\". That list changes \
-from turn to turn; if it is absent, nothing matched.\n\n\
-Do not create, rename or move files for memory. When the user tells you something durable, \
-call `save_memory` and say which tier it belongs in with `target`: `profile` only for who the \
-user is or how they want to be worked with, and `fact` — the default — for everything else. \
-Do not ask for permission first — the app handles it.",
-        state.paths.memory_file().display()
+2. Everything else is one markdown file per category:\n\n{}\n\n\
+Those files are not read for you in full. Entries that match what the user just asked appear \
+below under \"Possibly relevant memory\", each tagged with its category; if that section is \
+absent, nothing matched. That list changes from turn to turn, so never treat it as complete.\n\n\
+Do not create, rename or move files for memory — a category is a name you pass, not a file you \
+touch. When the user tells you something durable, call `save_memory` with `category` set to \
+whichever line above fits best; use `profile` only for who the user is or how they want to be \
+worked with, and `other` when nothing fits. Inside a project folder the memory is filed with \
+the project instead, so it does not turn up in other conversations. Do not ask for permission \
+first — the app handles it.",
+        state.paths.memory_file().display(),
+        categories
     );
     parts.push(part("Memory guide", "memory", memory_guide.chars().count()));
     base.push_str(&memory_guide);
@@ -453,21 +464,18 @@ Do not ask for permission first — the app handles it.",
     }
     let mut system = system_with_memory(&base, memory.as_deref());
 
-    // Tier 2: facts looked up by what the user just asked, so a store that grows
-    // forever costs nothing on a turn where none of it is relevant. A failure
-    // here is not worth losing the turn over; it just means no recall.
+    // The rest of memory: entries from the category files that match what the user
+    // just asked, so a store that grows forever costs nothing on a turn where none
+    // of it is relevant. Reading a handful of small files is cheap; a failure here
+    // is not worth losing the turn over, it just means no recall.
     if let Some(ask) = ask {
-        let recalled = {
-            let conn = state.db.lock().unwrap();
-            crate::memory_facts::relevant(
-                &conn,
-                ask,
-                workspace,
-                memory.as_deref().unwrap_or(""),
-                TIER2_CHARS,
-            )
-            .unwrap_or(None)
-        };
+        let dir = state.paths.memory_dir();
+        let recalled = crate::memory_files::select(
+            &crate::memory_files::candidates(&dir, workspace),
+            ask,
+            memory.as_deref().unwrap_or(""),
+            TIER2_CHARS,
+        );
         if let Some(block) = recalled {
             let text = format!(
                 "\n\n# Possibly relevant memory\n\n\
@@ -619,12 +627,18 @@ async fn run_tool(
     if name == "save_memory" {
         let draft = tools::parse_memory(args)?;
 
-        // The routing is the whole point of the two tiers: the profile file is
-        // injected into every request, so only identity and standing
-        // preferences may reach it, or the always-sent tier grows without
-        // bound. A fact is stored individually and looked up only when it
-        // matches what the user just asked.
-        if draft.target == "profile" {
+        // The routing is the whole point of the split: the profile file is
+        // injected into every request, so only identity and standing preferences
+        // may reach it. Everything else goes to a category file, and inside a
+        // project it goes to that project's file, so a note about one client does
+        // not surface in another's chat.
+        let workspace = db::get_chat(&state.db.lock().unwrap(), chat_id)
+            .ok()
+            .and_then(|chat| chat.workspace)
+            .map(std::path::PathBuf::from);
+        let destination = crate::memory_files::destination(&draft.target, workspace.as_deref());
+
+        if destination == crate::memory_files::PROFILE {
             crate::memory::append(&state.paths.memory_file(), &draft.entries)
                 .map_err(|e| e.to_string())?;
             return Ok(format!(
@@ -634,23 +648,16 @@ async fn run_tool(
             ));
         }
 
-        // Scoped to the project the fact was learned in, so a note about one
-        // client does not surface in another's chat — the same rule
-        // `accept_proposals` uses, so the two paths cannot disagree.
-        let conn = state.db.lock().unwrap();
-        let scope = db::get_chat(&conn, chat_id)
-            .ok()
-            .and_then(|chat| chat.workspace)
-            .map(|ws| crate::memory_facts::scope_for(Some(std::path::Path::new(&ws))))
-            .unwrap_or_else(|| crate::memory_facts::scope_for(None));
-        for entry in &draft.entries {
-            crate::memory_facts::upsert(&conn, &scope, "fact", entry, Some(chat_id), 1)
-                .map_err(|e| e.to_string())?;
-        }
+        let added = crate::memory_files::append(
+            &state.paths.memory_dir(),
+            &destination,
+            &draft.entries,
+        )
+        .map_err(|e| e.to_string())?;
         return Ok(format!(
-            "Kept {} fact{} — looked up later when relevant, not sent with every request.",
-            draft.entries.len(),
-            if draft.entries.len() == 1 { "" } else { "s" }
+            "Kept {added} entr{} in the '{destination}' memory — looked up later when it is \
+             relevant, not sent with every request.",
+            if added == 1 { "y" } else { "ies" }
         ));
     }
 

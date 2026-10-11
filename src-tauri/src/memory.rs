@@ -56,19 +56,35 @@ with no punctuation — it becomes part of a file name.\n\
 `memory` lists durable facts worth remembering in future chats: the user's \
 preferences, names, ongoing projects, standing constraints. Each entry is an object \
 with two keys. `text` is one self-contained sentence, no bullet prefix and no date. \
-`target` is either \"profile\" or \"fact\".\n\
+`target` is either \"profile\" or one of these category names: work, education, \
+projects, interests, people, other.\n\
 Use \"profile\" only for who the user is and how they want to be worked with — their \
 name, the language they want replies in, and standing preferences or constraints that \
-apply to every conversation. Use \"fact\" for everything else, including anything that \
-only matters for one project or subject.\n\
-When unsure, choose \"fact\": a profile entry is injected into every single request, so \
-that list has to stay short, while facts are looked up only when they are relevant. \
-Prefer zero entries over weak ones. Never include secrets, API keys, passwords or \
+apply to every conversation. Otherwise use the category that fits: work for their job, \
+education for what they are studying, projects for what they are building, interests \
+for hobbies and pastimes, people for the individuals in their life, and \"other\" when \
+none of them fit.\n\
+When unsure, choose \"other\": a profile entry is injected into every single request, so \
+that list has to stay short, while category entries are looked up only when they are \
+relevant. Prefer zero entries over weak ones. Never include secrets, API keys, passwords or \
 private credentials. Return valid JSON only.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_summary_prompt_names_every_category() {
+        // The prompt is a string literal and the categories are a table in code, so
+        // without this check the two drift and the model is asked for a category the
+        // app would refuse.
+        for id in crate::memory_files::category_ids() {
+            assert!(
+                SUMMARY_SYSTEM_PROMPT.contains(id),
+                "the summary prompt never mentions the '{id}' category"
+            );
+        }
+    }
 
     #[test]
     fn append_creates_the_file_with_a_header_and_dated_entries() {

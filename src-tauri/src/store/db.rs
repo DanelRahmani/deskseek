@@ -91,8 +91,9 @@ CREATE TABLE IF NOT EXISTS memory_proposals (
     text       TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'pending',
     -- Where an accepted proposal goes: 'profile' (the always-injected
-    -- MEMORY.md) or 'fact' (the tier queried by relevance).
-    target     TEXT NOT NULL DEFAULT 'fact',
+    -- MEMORY.md) or one of the memory categories, each of which is its own file.
+    -- Anything else is coerced to 'other' before it is stored.
+    target     TEXT NOT NULL DEFAULT 'other',
     created_at INTEGER NOT NULL
 );
 
@@ -131,51 +132,11 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
     PRIMARY KEY (artifact_id, version)
 );
 
--- Tier 2 memory: facts that are *retrieved* rather than always injected.
---
--- `norm` is the fact's text normalised to lowercase with collapsed whitespace,
--- and it is UNIQUE: it is the dedup key. A hash would do the same job but would
--- mean a second crate or an unstable `DefaultHasher`; storing the normalised
--- text is stable across Rust versions and readable when debugging.
-CREATE TABLE IF NOT EXISTS memory_facts (
-    id              TEXT PRIMARY KEY,
-    -- 'global' or 'project:<workspace path>'.
-    scope           TEXT NOT NULL DEFAULT 'global',
-    kind            TEXT NOT NULL DEFAULT 'fact',
-    text            TEXT NOT NULL,
-    norm            TEXT NOT NULL UNIQUE,
-    tags            TEXT NOT NULL DEFAULT '',
-    -- 1 (worth recalling) to 3 (always worth recalling).
-    importance      INTEGER NOT NULL DEFAULT 1,
-    source_chat_id  TEXT,
-    created_at      INTEGER NOT NULL,
-    updated_at      INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_memory_facts_scope ON memory_facts(scope, updated_at);
-
--- External-content FTS5: the text lives once, in memory_facts, and the triggers
--- below keep the index in step so no code path can forget to update it.
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
-    text,
-    content='memory_facts',
-    content_rowid='rowid'
-);
-
-CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts BEGIN
-    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts BEGIN
-    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
-    VALUES ('delete', old.rowid, old.text);
-END;
-
-CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
-    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
-    VALUES ('delete', old.rowid, old.text);
-    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.rowid, new.text);
-END;
+-- Memory used to live here: a `memory_facts` table with an FTS5 index over it,
+-- queried per turn. It is now one markdown file per category, under `memory/`,
+-- with the profile in `MEMORY.md` — see src/memory_files.rs for why. The tables
+-- are gone rather than kept around: this app has no users on an older layout, so
+-- there is nothing to migrate and no reason to carry a store nothing writes to.
 
 -- Full-text search over what was actually said, so a conversation can be found
 -- by its contents and not only by its title. External-content, exactly like
@@ -665,13 +626,10 @@ pub fn insert_proposals(
         if text.is_empty() {
             continue;
         }
-        // Anything unrecognised is filed as a fact rather than as a line in the
-        // always-injected file.
-        let target = if draft.target == "profile" {
-            "profile"
-        } else {
-            "fact"
-        };
+        // The destination is already validated where proposals are parsed
+        // (`summarize::into_draft`), so this stores what it is given rather than
+        // applying its own rule: one validator, so the two cannot disagree.
+        let target = &draft.target;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO memory_proposals (id, chat_id, text, status, target, created_at)

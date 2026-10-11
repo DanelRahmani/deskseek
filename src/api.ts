@@ -14,10 +14,10 @@ import type {
   DoneEvent,
   ErrorEvent,
   EnvProbe,
-  FactRow,
   FilePreview,
   FsEvent,
   GuardEvent,
+  MemoryCategoryView,
   MemoryProposal,
   McpReadyEvent,
   McpServer,
@@ -84,14 +84,18 @@ export const api = {
   getMemory: () => invoke<string | null>("get_memory"),
   setMemory: (body: string) => invoke<void>("set_memory", { body }),
   memoryPath: () => invoke<string>("memory_path"),
-  appendMemory: (entries: string[]) => invoke<void>("append_memory", { entries }),
+  appendMemory: (category: string, entries: string[]) =>
+    invoke<number>("append_memory", { category, entries }),
 
   listProposals: (chatId: string, status?: string) =>
     invoke<MemoryProposal[]>("list_proposals", { chatId, status: status ?? null }),
   acceptProposals: (ids: string[]) => invoke<number>("accept_proposals", { ids }),
   rejectProposals: (ids: string[]) => invoke<void>("reject_proposals", { ids }),
-  listFacts: () => invoke<FactRow[]>("list_facts"),
-  deleteFact: (id: string) => invoke<void>("delete_fact", { id }),
+  /** Every memory file, so the panel can show and prune what was kept. */
+  memoryOverview: () => invoke<MemoryCategoryView[]>("memory_overview"),
+  /** Forgets one line, by the text the panel shows. */
+  deleteMemoryEntry: (category: string, text: string) =>
+    invoke<boolean>("delete_memory_entry", { category, text }),
   summarizeChat: (chatId: string) => invoke<string>("summarize_chat", { chatId }),
   compactChat: (chatId: string) => invoke<string>("compact_chat", { chatId }),
 

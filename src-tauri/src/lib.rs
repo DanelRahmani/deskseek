@@ -5,7 +5,7 @@ mod conversation;
 mod fs_watch;
 mod mcp;
 mod memory;
-mod memory_facts;
+mod memory_files;
 mod runs;
 mod skills;
 mod store;
@@ -172,8 +172,8 @@ pub fn run() {
             commands::list_proposals,
             commands::accept_proposals,
             commands::reject_proposals,
-            commands::list_facts,
-            commands::delete_fact,
+            commands::memory_overview,
+            commands::delete_memory_entry,
             commands::summarize_chat,
             commands::compact_chat,
             commands::documents_dir,

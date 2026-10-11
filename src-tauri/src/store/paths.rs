@@ -26,6 +26,15 @@ impl AppPaths {
         self.root.join("MEMORY.md")
     }
 
+    /// One markdown file per category of memory, under a folder of their own.
+    ///
+    /// `MEMORY.md` deliberately stays at the root: it is the profile, it is read
+    /// by a person more often than any other file here, and burying the one file
+    /// you actually open would be a strange thing to do to it.
+    pub fn memory_dir(&self) -> PathBuf {
+        self.root.join("memory")
+    }
+
     /// One markdown file per summarised conversation, `YYYYMMDD-topic.md`.
     pub fn chatlog_dir(&self) -> PathBuf {
         self.root.join("CHATLOG")
