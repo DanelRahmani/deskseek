@@ -53,14 +53,14 @@ const EFFORTS = ["low", "high", "max"];
 
 /// The permission modes, in increasing order of autonomy. The labels are what
 /// the user picks; the values are what the backend stores.
-const MODES: { id: PermissionMode; label: string; hint: string }[] = [
+export const MODES: { id: PermissionMode; label: string; hint: string }[] = [
   { id: "manual", label: "Ask", hint: "Pause for approval before every write and command" },
   { id: "auto", label: "Auto", hint: "Run without asking; a guard refuses dangerous commands" },
   { id: "skip", label: "Skip", hint: "Never ask; only catastrophic commands are refused" },
 ];
 
 /** Kept in sync with the switch in App.tsx's send(). */
-const COMMANDS = [
+export const COMMANDS = [
   { name: "/compact", description: "Summarise the chat and reset the context" },
   { name: "/memory", description: "Open the memory panel" },
   { name: "/skills", description: "Choose skills for this chat" },

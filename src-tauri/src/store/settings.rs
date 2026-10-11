@@ -64,6 +64,22 @@ pub struct Settings {
     /// `system` follows the OS; `dark` and `light` override it.
     #[serde(default = "default_theme_mode")]
     pub theme_mode: String,
+    /// Accent colour as `#rrggbb`, replacing the theme's own. Empty keeps the
+    /// theme's, which is the only value guaranteed to clear the contrast floors.
+    #[serde(default)]
+    pub accent: String,
+    /// UI font family. Empty uses the built-in stack.
+    #[serde(default)]
+    pub font_ui: String,
+    /// Code font family. Empty uses the built-in stack.
+    #[serde(default)]
+    pub font_code: String,
+    /// Base UI font size in px. 0 uses the default.
+    #[serde(default)]
+    pub font_size: u32,
+    /// Suppress transitions and animations.
+    #[serde(default)]
+    pub reduce_motion: bool,
     /// Folder chat-mode document tools may touch. Empty means the default
     /// `documents` folder inside the app data directory.
     #[serde(default)]
@@ -138,6 +154,11 @@ impl Default for Settings {
             effort: "high".to_string(),
             theme: default_theme(),
             theme_mode: default_theme_mode(),
+            accent: String::new(),
+            font_ui: String::new(),
+            font_code: String::new(),
+            font_size: 0,
+            reduce_motion: false,
             documents_dir: String::new(),
             instructions: default_instructions(),
             browsing_enabled: true,

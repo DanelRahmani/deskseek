@@ -22,14 +22,14 @@ const SEARXNG_COMPOSE = `docker run -d --name searxng -p 8888:8080 \\
 
 /// Ordered from least to most isolating, which is also the order they are
 /// explained in. "Auto" is first because it is the default.
-const SANDBOX_MODES: { id: SandboxMode; label: string; hint: string }[] = [
+export const SANDBOX_MODES: { id: SandboxMode; label: string; hint: string }[] = [
   { id: "auto", label: "Auto", hint: "Use the strongest rung this machine can reach" },
   { id: "host", label: "This machine", hint: "Run directly, with the guard as the only protection" },
   { id: "docker", label: "Docker", hint: "Run in a throwaway container with no network" },
   { id: "wsl", label: "WSL2", hint: "Run inside a WSL distribution" },
 ];
 
-const RUNG_LABEL: Record<string, string> = {
+export const RUNG_LABEL: Record<string, string> = {
   docker: "a Docker container",
   wsl: "a WSL distribution",
   host: "this machine",

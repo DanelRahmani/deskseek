@@ -12,7 +12,7 @@
 //! the two rungs above already give. Add it if someone specifically needs a
 //! Windows-guest boundary.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
@@ -129,6 +129,34 @@ pub fn plan_for(mode: Mode, caps: &Capability, image: &str) -> Plan {
         },
         Mode::Auto => host(None),
     }
+}
+
+/// Docker Desktop's launcher, when it is where it installs.
+///
+/// Windows-only on purpose: it is the one platform where the engine is a GUI
+/// app that has to be started before it can be talked to. Elsewhere the daemon
+/// is a service, and starting services is not this app's business.
+pub fn docker_desktop() -> Option<PathBuf> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let program_files = std::env::var("ProgramFiles").ok();
+    let local = std::env::var("LOCALAPPDATA").ok();
+    let candidates = [
+        program_files
+            .as_ref()
+            .map(|root| PathBuf::from(root).join(r"Docker\Docker\Docker Desktop.exe")),
+        local
+            .as_ref()
+            .map(|root| PathBuf::from(root).join(r"Docker\Docker\Docker Desktop.exe")),
+        local
+            .as_ref()
+            .map(|root| PathBuf::from(root).join(r"Docker\Docker Desktop.exe")),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|candidate| candidate.is_file())
 }
 
 /// The line prepended to every command's output, so where it ran is never a

@@ -571,14 +571,30 @@ pub struct EnvProbe {
     /// `docker info` — the engine actually answers. False for the very common
     /// case of Docker Desktop installed and simply not started.
     pub docker_running: bool,
+    /// What `docker --version` printed, when the CLI answered at all.
+    pub docker_version: String,
+    /// Docker Desktop's launcher is where it installs, so the engine can be
+    /// started from the screen rather than only reported as stopped.
+    pub docker_desktop: bool,
     /// WSL2 can run the same jobs where Docker is not installed.
     pub wsl: bool,
+    /// The distribution commands would run in, when one is installed.
+    pub wsl_distro: String,
     /// Where `run_command` will actually run, and why — the resolved rung, not
     /// the raw capability, because that is the thing the user can change.
     pub sandbox_rung: String,
     pub sandbox_note: Option<String>,
+    /// "Edge" / "Chrome" / "Chromium" — whichever browser_read will drive.
+    pub browser_name: String,
+    /// The executable it will drive, so the setting can be checked by eye.
+    pub browser_path: String,
     pub searxng_url: String,
     pub searxng_ok: bool,
+}
+
+/// A tool's version output, trimmed to the one line a screen can show.
+fn first_line(raw: &str) -> String {
+    raw.lines().next().unwrap_or("").trim().chars().take(120).collect()
 }
 
 /// "Installed" and "running" are different questions, and Docker answers them
@@ -594,10 +610,13 @@ pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, S
     let settings = state.settings.lock().unwrap().clone();
 
     // One probe, shared with the run loop: the answer is cached on the state so
-    // a run never has to ask Docker anything before it can start.
-    let (caps, docker_cli) = tokio::join!(
+    // a run never has to ask Docker anything before it can start. `capture`
+    // rather than `probe` because the version string is worth having too, and
+    // it answers "is the CLI there" just as well: a program that cannot be run
+    // at all is the only thing that gives None.
+    let (caps, docker) = tokio::join!(
         sandbox_exec::detect(),
-        exec::probe("docker", &["--version"], 6),
+        exec::capture("docker", &["--version"], 6),
     );
     *state.sandbox.write().await = caps.clone();
 
@@ -609,18 +628,67 @@ pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, S
         &settings.sandbox_image,
     );
 
+    // Found the same way browser_read finds it, so the screen names the browser
+    // that will really be driven rather than making its own second guess. The
+    // version is deliberately not probed: `chrome.exe --version` opens a window
+    // on Windows instead of printing, and opening browsers is not something
+    // that should happen because somebody looked at their settings.
+    let browser = browse::find_browser(&settings.browser_path);
+
     let searxng_ok = browse::searxng_ready(&state.http, &settings.searxng_url).await;
 
     Ok(EnvProbe {
         has_api_key: keychain::has_api_key(),
-        docker_cli,
+        docker_cli: docker.is_some(),
         docker_running: caps.docker_running,
+        docker_version: docker.as_deref().map(first_line).unwrap_or_default(),
+        docker_desktop: sandbox_exec::docker_desktop().is_some(),
         wsl: caps.wsl_distro.is_some(),
+        wsl_distro: caps.wsl_distro.clone().unwrap_or_default(),
         sandbox_rung: plan.rung.as_str().to_string(),
         sandbox_note: plan.note,
+        browser_name: browser.as_deref().map(browse::browser_name).unwrap_or_default(),
+        browser_path: browser
+            .as_deref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
         searxng_url: settings.searxng_url,
         searxng_ok,
     })
+}
+
+/// Start Docker Desktop, best effort.
+///
+/// The engine answers tens of seconds after the launcher returns, so this only
+/// starts it and says so — Re-check is what waits for the answer, and claiming
+/// the engine is up here would be a lie the very next command would expose.
+#[tauri::command]
+pub fn start_docker() -> Result<(), String> {
+    let launcher = sandbox_exec::docker_desktop().ok_or(
+        "Docker Desktop is not in the folder it usually installs to — start it from the Start menu.",
+    )?;
+    std::process::Command::new(launcher)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Show a file or folder in the system file manager.
+///
+/// Same reasoning as `open_document`: the opener free function is the one that
+/// needs no scope entry in the capability file, and revealing is the read-only
+/// cousin of opening. The path is checked first so a stale one is reported
+/// rather than silently doing nothing.
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    let target = std::path::Path::new(&path);
+    if !target.exists() {
+        return Err(format!("{path} is not there any more."));
+    }
+    tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
 }
 
 // ------------------------------------------------------------------- files

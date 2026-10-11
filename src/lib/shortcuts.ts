@@ -17,6 +17,26 @@ export type Shortcut =
   | "focus-pane-1"
   | "dismiss";
 
+/**
+ * The chords written the way a person would say them, for the settings screen.
+ *
+ * Kept beside the resolver so the two cannot disagree about which chords exist,
+ * and typed against the same union so adding one to the resolver and forgetting
+ * it here is a compile error rather than a silent gap. shortcuts.check.ts pins
+ * that this table covers every action.
+ */
+export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: string }> = [
+  { keys: "Ctrl+N", action: "new-chat", label: "New chat" },
+  { keys: "Ctrl+W", action: "close-tab", label: "Close the tab" },
+  { keys: "Ctrl+B", action: "toggle-files", label: "Show or hide the file tree" },
+  { keys: "Ctrl+M", action: "open-memory", label: "Open the memory panel" },
+  { keys: "Ctrl+,", action: "open-settings", label: "Open settings" },
+  { keys: "Ctrl+\\", action: "toggle-split", label: "Split the view" },
+  { keys: "Ctrl+1", action: "focus-pane-0", label: "Focus the left pane" },
+  { keys: "Ctrl+2", action: "focus-pane-1", label: "Focus the right pane" },
+  { keys: "Esc", action: "dismiss", label: "Close the panel on top" },
+];
+
 /** The slice of KeyboardEvent the resolver needs — keeps it testable. */
 export interface KeyPress {
   key: string;

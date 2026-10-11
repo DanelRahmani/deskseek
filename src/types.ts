@@ -62,6 +62,16 @@ export interface Settings {
   theme: string;
   /** `system` follows the OS; `dark` and `light` override it. */
   themeMode: string;
+  /** Accent colour as `#rrggbb`, replacing the theme's own. Empty keeps it. */
+  accent: string;
+  /** UI font family. Empty uses the built-in stack. */
+  fontUi: string;
+  /** Code font family. Empty uses the built-in stack. */
+  fontCode: string;
+  /** Base UI font size in px. 0 uses the default. */
+  fontSize: number;
+  /** Suppress transitions and animations. */
+  reduceMotion: boolean;
   documentsDir: string;
   instructions: Instruction[];
   /** Master switch for fetch_url / browser_read / web_search. */
@@ -94,11 +104,21 @@ export interface EnvProbe {
   dockerCli: boolean;
   /** `docker info` — the engine answers. False when Docker Desktop is stopped. */
   dockerRunning: boolean;
+  /** What `docker --version` printed, when the CLI answered at all. */
+  dockerVersion: string;
+  /** Docker Desktop's launcher was found, so the engine can be started here. */
+  dockerDesktop: boolean;
   wsl: boolean;
+  /** The distribution commands would run in, when one is installed. */
+  wslDistro: string;
   /** The rung the current setting resolves to — what will really happen. */
   sandboxRung: SandboxRung;
   /** Set when a pinned rung could not be honoured, and why. */
   sandboxNote: string | null;
+  /** "Edge" / "Chrome" / "Chromium", when a browser was found. */
+  browserName: string;
+  /** The executable browser_read will drive. Empty when none was found. */
+  browserPath: string;
   searxngUrl: string;
   searxngOk: boolean;
 }

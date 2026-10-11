@@ -21,6 +21,7 @@ import {
   DEFAULT_THEME_ID,
   THEMES,
   contrast,
+  isHexColour,
   mix,
   resolveMode,
   resolveTheme,
@@ -75,7 +76,7 @@ let pairs = 0;
 
 for (const theme of THEMES) {
   for (const variant of ["dark", "light"] as const) {
-    const tokens = resolveTheme(theme.id, variant, true);
+    const tokens = resolveTheme({ theme: theme.id, mode: variant }, true);
     const where = `${theme.id}/${variant}`;
     keySets.add(Object.keys(tokens).sort().join(","));
 
@@ -136,7 +137,7 @@ if (root.length === 0) {
     declared.set(name, value.trim());
   }
 
-  const fallback = resolveTheme(DEFAULT_THEME_ID, "dark", true);
+  const fallback = resolveTheme({ theme: DEFAULT_THEME_ID, mode: "dark" }, true);
   for (const [name, value] of Object.entries(fallback)) {
     const found = declared.get(name);
     if (found === undefined) failures.push(`index.css :root is missing ${name}`);
@@ -144,6 +145,45 @@ if (root.length === 0) {
       failures.push(`index.css :root ${name} is ${found}, theme.ts computes ${value}`);
   }
 }
+
+// --- overrides ---------------------------------------------------------------
+
+const plain = resolveTheme({ theme: DEFAULT_THEME_ID, mode: "dark" }, true);
+
+// An override appears only when it is set, so clearing one lets the stylesheet's
+// default show through again rather than pinning a stale value.
+need(!("--font-ui" in plain), "no font token is emitted when nothing was overridden");
+
+const styled = resolveTheme(
+  { theme: DEFAULT_THEME_ID, mode: "dark", fontUi: "Georgia", fontCode: "Iosevka", fontSize: 15 },
+  true,
+);
+need(styled["--font-ui"] === "Georgia", "a font family override is emitted");
+need(styled["--font-code"] === "Iosevka", "a code font override is emitted");
+need(styled["--font-size-base"] === "15px", "a font size override is emitted");
+need(styled["--n-950"] === plain["--n-950"], "a font override leaves the ramp alone");
+
+const accented = resolveTheme({ theme: DEFAULT_THEME_ID, mode: "dark", accent: "#b45309" }, true);
+need(accented["--accent-solid"] === "#b45309", "an accent override replaces the solid");
+need(accented["--accent-text"] !== plain["--accent-text"], "the accent tint follows the override");
+need(accented["--danger-solid"] === plain["--danger-solid"], "other statuses do not follow it");
+
+// A malformed accent must be ignored rather than used: NaN in the derivation
+// serialises to an invalid declaration, which does not fall back to anything
+// sensible — it silently drops the background from every accent button. This is
+// the case the validation exists for, and it fails without it.
+for (const bad of ["nonsense", "#xyz", "#12345", "", "rgb(1,2,3)"]) {
+  const tokens = resolveTheme({ theme: DEFAULT_THEME_ID, mode: "dark", accent: bad }, true);
+  need(
+    tokens["--accent-solid"] === plain["--accent-solid"],
+    `a malformed accent ("${bad}") falls back to the theme's own`,
+  );
+}
+
+need(isHexColour("#0284c7"), "a six-digit hex counts as a colour");
+need(isHexColour("  #FFFFFF  "), "surrounding space is tolerated");
+need(!isHexColour("blue"), "a colour name is not hex");
+need(!isHexColour("#fff"), "three-digit shorthand is not accepted");
 
 // --- the gate ---------------------------------------------------------------
 

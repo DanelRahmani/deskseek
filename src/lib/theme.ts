@@ -48,6 +48,26 @@ export interface Theme {
 /** `system` follows the OS; the other two override it. */
 export type ThemeMode = "system" | "dark" | "light";
 
+/**
+ * Everything the appearance settings can change, in one bag.
+ *
+ * An absent or empty field means "the theme's own value", and nothing is
+ * emitted for it, so index.css keeps the single default. That is why these are
+ * optional rather than carrying sentinel values: a second copy of a default is
+ * a second copy that can drift.
+ */
+export interface Appearance {
+  theme: string;
+  /** `system` follows the OS. */
+  mode: string;
+  /** `#rrggbb`, replacing the theme's own accent. */
+  accent?: string;
+  fontUi?: string;
+  fontCode?: string;
+  /** Base UI font size in px. */
+  fontSize?: number;
+}
+
 export const THEMES: readonly Theme[] = [
   {
     id: "slate",
@@ -192,21 +212,29 @@ export function resolveMode(mode: string, systemDark: boolean): "dark" | "light"
 }
 
 /**
- * The custom properties for one theme, all of them concrete hex.
+ * The custom properties for one appearance, all of them concrete hex.
  *
  * They are computed here rather than mixed in CSS so the contrast floors in
  * theme.check.ts can be measured on the real values — a `color-mix()` in the
  * stylesheet would be unmeasurable without a browser.
+ *
+ * Only the overridden font tokens appear at all, so clearing one removes it
+ * from the map and the stylesheet's default shows through again.
  */
 export function resolveTheme(
-  themeId: string,
-  mode: string,
+  appearance: Appearance,
   systemDark: boolean,
 ): Record<string, string> {
-  const theme = themeById(themeId);
-  const resolved = resolveMode(mode, systemDark);
+  const theme = themeById(appearance.theme);
+  const resolved = resolveMode(appearance.mode, systemDark);
   const variant = resolved === "dark" ? theme.dark : theme.light;
   const { ramp } = variant;
+  // The accent arrives from a text field, so it is validated rather than
+  // trusted. `mix()` on a non-colour yields NaN, which serialises to an invalid
+  // declaration — and an invalid --accent-solid does not fall back to anything
+  // sensible, it drops the background from every accent button in the app.
+  const picked = (appearance.accent ?? "").trim();
+  const accent = isHexColour(picked) ? picked : variant.accent;
   return {
     "--n-950": ramp.n950,
     "--n-900": ramp.n900,
@@ -218,11 +246,38 @@ export function resolveTheme(
     "--n-300": ramp.n300,
     "--n-200": ramp.n200,
     "--n-100": ramp.n100,
-    ...status("accent", variant.accent, ramp, resolved),
+    ...status("accent", accent, ramp, resolved),
     ...status("danger", variant.danger, ramp, resolved),
     ...status("warn", variant.warn, ramp, resolved),
     ...status("ok", variant.ok, ramp, resolved),
+    ...fontTokens(appearance),
   };
+}
+
+/** The font overrides, and only the ones that were actually set. */
+function fontTokens(appearance: Appearance): Record<string, string> {
+  const tokens: Record<string, string> = {};
+  if (appearance.fontUi?.trim()) tokens["--font-ui"] = appearance.fontUi.trim();
+  if (appearance.fontCode?.trim()) tokens["--font-code"] = appearance.fontCode.trim();
+  if (appearance.fontSize) tokens["--font-size-base"] = `${appearance.fontSize}px`;
+  return tokens;
+}
+
+/**
+ * Whether a string is a colour this module can do arithmetic on.
+ *
+ * The accent field is free text and the settings file can be hand-edited, so
+ * this is a trust boundary rather than a formatting preference.
+ *
+ * Note there is deliberately no contrast rule for a picked accent. The status
+ * label is mixed toward the ramp's text end, so it clears the floor whatever the
+ * accent is; a ratio check here would always pass and would only look like a
+ * guard. What a pale accent really costs is the white label on a solid button,
+ * which the built-in accents do not clear either — that is a pre-existing
+ * limitation, not something the picker introduces.
+ */
+export function isHexColour(value: string): boolean {
+  return /^#[0-9a-f]{6}$/i.test(value.trim());
 }
 
 /**

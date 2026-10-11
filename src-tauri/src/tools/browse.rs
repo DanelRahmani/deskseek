@@ -6,7 +6,7 @@
 //! Windows box. If no browser is found the tool says so and `fetch_url` still
 //! works.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use tokio::process::Command;
@@ -175,6 +175,29 @@ fn which(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// A human name for a browser executable: "msedge" -> "Edge".
+///
+/// Matched on the file name rather than the path so the same rule covers the
+/// Windows install locations and the macOS app bundle, whose executable is
+/// literally named "Google Chrome".
+pub fn browser_name(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if stem.contains("edge") {
+        "Edge".to_string()
+    } else if stem.contains("chromium") {
+        "Chromium".to_string()
+    } else if stem.contains("chrome") {
+        "Chrome".to_string()
+    } else {
+        // An unrecognised name is reported as itself rather than guessed at.
+        stem
+    }
 }
 
 /// Explicit setting first, then the usual install locations, then PATH.
@@ -456,5 +479,25 @@ mod tests {
     fn a_bogus_explicit_path_falls_through_to_auto_detection() {
         // Must not panic; the result depends on the machine.
         let _ = find_browser("Z:\\definitely\\not\\here.exe");
+    }
+
+    #[test]
+    fn a_browser_is_named_by_its_executable() {
+        // The Windows install paths, the macOS app bundle and the PATH names
+        // have to land on the same product name.
+        for (path, want) in [
+            (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "Edge"),
+            (r"C:\Program Files\Google\Chrome\Application\chrome.exe", "Chrome"),
+            ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "Chrome"),
+            ("/usr/bin/chromium-browser", "Chromium"),
+            ("/usr/bin/google-chrome", "Chrome"),
+        ] {
+            assert_eq!(browser_name(Path::new(path)), want, "{path}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_browser_is_reported_as_itself() {
+        assert_eq!(browser_name(Path::new("/usr/bin/firefox")), "firefox");
     }
 }

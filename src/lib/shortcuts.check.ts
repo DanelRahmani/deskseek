@@ -7,7 +7,7 @@
  * wrong key silently steals a keystroke from the user, and one that stops firing
  * for the right key is invisible in review.
  */
-import { resolveShortcut } from "./shortcuts.ts";
+import { SHORTCUTS, resolveShortcut } from "./shortcuts.ts";
 
 function assert(ok: boolean, message: string): void {
   if (!ok) throw new Error(`FAIL: ${message}`);
@@ -57,5 +57,25 @@ assert(resolveShortcut(press("Escape", { altKey: true })) === null, "Alt+Escape 
 
 // A modifier we do not map is a no-op, not a guess.
 assert(resolveShortcut(press("q", { ctrlKey: true })) === null, "an unmapped chord does nothing");
+
+// The advertised table has to cover the resolver, or a chord exists that the
+// settings screen never mentions.
+const documented = new Set(SHORTCUTS.map((s) => s.action));
+for (const action of [
+  "new-chat",
+  "close-tab",
+  "toggle-files",
+  "open-memory",
+  "open-settings",
+  "toggle-split",
+  "focus-pane-0",
+  "focus-pane-1",
+  "dismiss",
+] as const) {
+  assert(documented.has(action), `${action} is listed in the shortcut table`);
+}
+for (const shortcut of SHORTCUTS) {
+  assert(shortcut.keys.length > 0 && shortcut.label.length > 0, `${shortcut.action} reads sensibly`);
+}
 
 console.log("shortcuts.check.ts: all checks passed");

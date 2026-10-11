@@ -178,20 +178,42 @@ export default function App() {
     })().catch((e) => setError(String(e)));
   }, []);
 
-  // The theme is cosmetic and the settings only arrive after start-up, so it is
-  // applied in an effect rather than during render. This is the only place that
-  // writes to <html>, and it also caches the resolved tokens where the inline
-  // script in index.html can find them before the app runs.
+  // The tokens written to <html> last time, so that clearing an override takes
+  // the inline property away instead of leaving it pinned to a value the user
+  // has just removed.
+  const appliedTokens = useRef<Set<string>>(new Set());
+
+  // The appearance is cosmetic and the settings only arrive after start-up, so
+  // it is applied in an effect rather than during render. This is the only place
+  // that writes to <html>, and it also caches the resolved tokens where the
+  // inline script in index.html can find them before the app runs.
   useEffect(() => {
     if (!settings) return;
     const apply = () => {
       const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const tokens = resolveTheme(settings.theme, settings.themeMode, systemDark);
+      const tokens = resolveTheme(
+        {
+          theme: settings.theme,
+          mode: settings.themeMode,
+          accent: settings.accent,
+          fontUi: settings.fontUi,
+          fontCode: settings.fontCode,
+          fontSize: settings.fontSize,
+        },
+        systemDark,
+      );
       const root = document.documentElement;
-      for (const [name, value] of Object.entries(tokens)) root.style.setProperty(name, value);
+      const previous = appliedTokens.current;
+      for (const name of previous) if (!(name in tokens)) root.style.removeProperty(name);
+      previous.clear();
+      for (const [name, value] of Object.entries(tokens)) {
+        root.style.setProperty(name, value);
+        previous.add(name);
+      }
       const mode = resolveMode(settings.themeMode, systemDark);
       root.dataset.theme = settings.theme;
       root.dataset.mode = mode;
+      root.dataset.reduceMotion = String(settings.reduceMotion);
       // Native scrollbars and form controls follow this, not our tokens.
       root.style.colorScheme = mode;
       try {
@@ -206,7 +228,15 @@ export default function App() {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
-  }, [settings?.theme, settings?.themeMode]);
+  }, [
+    settings?.theme,
+    settings?.themeMode,
+    settings?.accent,
+    settings?.fontUi,
+    settings?.fontCode,
+    settings?.fontSize,
+    settings?.reduceMotion,
+  ]);
 
   useEffect(() => {
     saveShell(shell);

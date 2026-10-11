@@ -1,7 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
-import { THEMES } from "../lib/theme";
-import type { Instruction, ModelInfo, Settings } from "../types";
+import { THEMES, isHexColour } from "../lib/theme";
+import { SHORTCUTS } from "../lib/shortcuts";
+import { COMMANDS, MODES } from "./ChatView";
+import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
+import type { EnvProbe, Instruction, ModelInfo, Settings } from "../types";
 
 interface Props {
   settings: Settings;
@@ -17,6 +21,70 @@ const SCOPES = ["chat", "coding", "both"];
 const inputCls =
   "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
 
+type Section =
+  | "appearance"
+  | "access"
+  | "prompt"
+  | "tools"
+  | "browsing"
+  | "instructions"
+  | "commands";
+
+/**
+ * The rail. `keywords` is what the search box matches on, so looking for
+ * "docker" finds Tools even though the word is not in its title.
+ */
+const SECTIONS: { id: Section; label: string; keywords: string }[] = [
+  {
+    id: "appearance",
+    label: "Appearance",
+    keywords: "theme colour color font size accent dark light motion density contrast",
+  },
+  { id: "access", label: "Access", keywords: "api key token base url endpoint documents folder" },
+  {
+    id: "prompt",
+    label: "Models & prompt",
+    keywords: "chat coding model thinking effort reasoning system prompt",
+  },
+  {
+    id: "tools",
+    label: "Tools",
+    keywords: "docker wsl container sandbox shell command computer screen image",
+  },
+  {
+    id: "browsing",
+    label: "Browsing",
+    keywords: "internet searxng search browser edge chrome fetch web",
+  },
+  { id: "instructions", label: "Instructions", keywords: "scoped rules context" },
+  {
+    id: "commands",
+    label: "Commands",
+    keywords: "slash keyboard shortcut permission mode guard help",
+  },
+];
+
+/**
+ * Accent swatches, chosen as solids dark enough to carry a white label and
+ * mid-tone enough that the tints derived from them read on both a dark and a
+ * light page. The free-text field beside them takes anything else.
+ */
+const ACCENTS = [
+  "#0369a1",
+  "#1d4ed8",
+  "#6d28d9",
+  "#be185d",
+  "#b91c1c",
+  "#c2410c",
+  "#15803d",
+  "#0f766e",
+];
+
+/** Suggestions only: any family installed on the machine can be typed in. */
+const FONT_SUGGESTIONS = ["Georgia", "Inter", "Iowan Old Style", "Cascadia Code", "Iosevka"];
+
+const FONT_SIZES = [12, 13, 14, 15, 16, 18];
+
 export function SettingsDialog({
   settings,
   keyMask,
@@ -29,9 +97,41 @@ export function SettingsDialog({
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"appearance" | "api" | "prompt" | "instructions" | "browsing">(
-    "appearance",
-  );
+  const [tab, setTab] = useState<Section>("appearance");
+  const [query, setQuery] = useState("");
+  const [probe, setProbe] = useState<EnvProbe | null>(null);
+  // Text fields commit on blur rather than on every keystroke: saving per letter
+  // would rewrite the settings file dozens of times to say nothing new.
+  const [accentDraft, setAccentDraft] = useState(settings.accent);
+  const [fontUiDraft, setFontUiDraft] = useState(settings.fontUi);
+  const [fontCodeDraft, setFontCodeDraft] = useState(settings.fontCode);
+
+  // The Tools and Browsing sections report what this machine actually has, so
+  // the probe runs once when the dialog opens; Re-check asks again.
+  const refreshProbe = async () => {
+    try {
+      setProbe(await api.probeEnvironment());
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  useEffect(() => {
+    refreshProbe();
+    // Once, on open. A probe takes a second or two, so this must not be a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Search filters the rail, and a query that hides the open section moves to
+  // the first one still showing — otherwise the rail and the body disagree.
+  const needle = query.trim().toLowerCase();
+  const visible = needle
+    ? SECTIONS.filter((s) => `${s.label} ${s.keywords}`.toLowerCase().includes(needle))
+    : SECTIONS;
+  useEffect(() => {
+    if (visible.length > 0 && !visible.some((s) => s.id === tab)) setTab(visible[0].id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needle]);
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -110,11 +210,42 @@ export function SettingsDialog({
   };
 
   /**
+   * Save one setting and ask the machine again.
+   *
+   * For the controls the Tools section then reports on: the resolved rung
+   * depends on the saved value, and clicking a sandbox mode while the panel went
+   * on naming the old rung would be worse than not showing it at all.
+   */
+  const saveTool = async (patch: Partial<Settings>) => {
+    const next = { ...form, ...patch };
+    setForm(next);
+    try {
+      onSaved(await api.saveSettings(next), keyMask);
+      await refreshProbe();
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  /**
    * Picking a theme saves it straight away rather than waiting for the Save
    * button: a theme you cannot see until you press Save is not a theme picker,
    * and the app repaints from the settings this hands back to it.
    */
-  const pickAppearance = async (patch: Partial<Pick<Settings, "theme" | "themeMode">>) => {
+  const pickAppearance = async (
+    patch: Partial<
+      Pick<
+        Settings,
+        | "theme"
+        | "themeMode"
+        | "accent"
+        | "fontUi"
+        | "fontCode"
+        | "fontSize"
+        | "reduceMotion"
+      >
+    >,
+  ) => {
     const next = { ...form, ...patch };
     setForm(next);
     try {
@@ -128,41 +259,44 @@ export function SettingsDialog({
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
-        <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
+        <div className="flex shrink-0 items-center gap-3 border-b border-neutral-800 px-5 py-3">
           <h2 className="text-sm font-semibold">Settings</h2>
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search settings…"
+            spellCheck={false}
+            className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+          />
           <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200">
             ×
           </button>
         </div>
 
-        <div className="flex gap-1 border-b border-neutral-800 px-5 pt-2">
-          {(
-            [
-              ["appearance", "Appearance"],
-              ["api", "API"],
-              ["prompt", "Prompt & models"],
-              ["instructions", "Scoped instructions"],
-              ["browsing", "Browsing"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              onClick={() => setTab(id)}
-              className={`rounded-t-md px-3 py-2 text-xs font-medium ${
-                tab === id
-                  ? "border-b-2 border-sky-500 text-neutral-100"
-                  : "text-neutral-500 hover:text-neutral-300"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <div className="flex min-h-0 flex-1">
+          <nav className="flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-neutral-800 p-2">
+            {visible.map((section) => (
+              <button
+                key={section.id}
+                onClick={() => setTab(section.id)}
+                className={`rounded-md px-3 py-2 text-left text-xs transition ${
+                  tab === section.id
+                    ? "bg-neutral-800 font-medium text-neutral-100"
+                    : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
+                }`}
+              >
+                {section.label}
+              </button>
+            ))}
+            {visible.length === 0 && (
+              <p className="px-3 py-2 text-[11px] text-neutral-600">Nothing matches.</p>
+            )}
+          </nav>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          <div className="min-w-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
           {tab === "appearance" && (
             <>
-              <div>
+              <section>
                 <label className="block text-xs text-neutral-500">Theme</label>
                 <div className="mt-2 grid grid-cols-3 gap-2">
                   {THEMES.map((theme) => (
@@ -175,27 +309,37 @@ export function SettingsDialog({
                           : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
                       }`}
                     >
-                      <span className="mb-2 flex gap-1">
-                        {[
-                          theme.dark.ramp.n950,
-                          theme.dark.ramp.n800,
-                          theme.dark.accent,
-                          theme.dark.ramp.n200,
-                        ].map((colour) => (
-                          <span
-                            key={colour}
-                            className="h-4 w-4 rounded-sm"
-                            style={{ background: colour }}
-                          />
-                        ))}
+                      {/* Both variants, because a theme is chosen for how it looks
+                          in both modes and not only the one you happen to be in. */}
+                      <span className="mb-1.5 flex gap-1" title="Dark">
+                        {[theme.dark.ramp.n950, theme.dark.ramp.n800, theme.dark.accent].map(
+                          (colour) => (
+                            <span
+                              key={colour}
+                              className="h-4 w-4 rounded-sm"
+                              style={{ background: colour }}
+                            />
+                          ),
+                        )}
+                      </span>
+                      <span className="mb-2 flex gap-1" title="Light">
+                        {[theme.light.ramp.n950, theme.light.ramp.n800, theme.light.accent].map(
+                          (colour) => (
+                            <span
+                              key={colour}
+                              className="h-4 w-4 rounded-sm ring-1 ring-neutral-800"
+                              style={{ background: colour }}
+                            />
+                          ),
+                        )}
                       </span>
                       {theme.name}
                     </button>
                   ))}
                 </div>
-              </div>
+              </section>
 
-              <div>
+              <section>
                 <label className="block text-xs text-neutral-500">Mode</label>
                 <div className="mt-2 flex gap-1">
                   {(["system", "dark", "light"] as const).map((mode) => (
@@ -212,16 +356,133 @@ export function SettingsDialog({
                     </button>
                   ))}
                 </div>
-              </div>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Accent</label>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <button
+                    onClick={() => {
+                      setAccentDraft("");
+                      pickAppearance({ accent: "" });
+                    }}
+                    title="Use the theme's own accent"
+                    className={`h-6 rounded-md border px-2 text-[11px] transition ${
+                      form.accent
+                        ? "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                        : "border-sky-500 text-neutral-100"
+                    }`}
+                  >
+                    Theme's own
+                  </button>
+                  {ACCENTS.map((colour) => (
+                    <button
+                      key={colour}
+                      onClick={() => {
+                        setAccentDraft(colour);
+                        pickAppearance({ accent: colour });
+                      }}
+                      title={colour}
+                      aria-label={`Accent ${colour}`}
+                      style={{ background: colour }}
+                      className={`h-6 w-6 rounded-md ring-2 transition ${
+                        form.accent.toLowerCase() === colour ? "ring-sky-400" : "ring-transparent"
+                      }`}
+                    />
+                  ))}
+                  <input
+                    value={accentDraft}
+                    onChange={(e) => setAccentDraft(e.target.value)}
+                    onBlur={() =>
+                      accentDraft !== form.accent && pickAppearance({ accent: accentDraft })
+                    }
+                    placeholder="#0369a1"
+                    spellCheck={false}
+                    className="w-24 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                  />
+                </div>
+                {accentDraft.trim() !== "" && !isHexColour(accentDraft) && (
+                  <p className="mt-1 text-[11px] text-amber-300">
+                    Not a colour — six hex digits, like #0369a1. Until then the theme's own
+                    accent is used.
+                  </p>
+                )}
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Fonts</label>
+                <div className="mt-2 space-y-2">
+                  <input
+                    value={fontUiDraft}
+                    onChange={(e) => setFontUiDraft(e.target.value)}
+                    onBlur={() =>
+                      fontUiDraft !== form.fontUi && pickAppearance({ fontUi: fontUiDraft })
+                    }
+                    list="font-suggestions"
+                    placeholder="Interface font — blank uses the built-in stack"
+                    spellCheck={false}
+                    className={inputCls}
+                  />
+                  <input
+                    value={fontCodeDraft}
+                    onChange={(e) => setFontCodeDraft(e.target.value)}
+                    onBlur={() =>
+                      fontCodeDraft !== form.fontCode && pickAppearance({ fontCode: fontCodeDraft })
+                    }
+                    list="font-suggestions"
+                    placeholder="Code font — blank uses the built-in stack"
+                    spellCheck={false}
+                    className={inputCls}
+                  />
+                  <datalist id="font-suggestions">
+                    {FONT_SUGGESTIONS.map((family) => (
+                      <option key={family} value={family} />
+                    ))}
+                  </datalist>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-neutral-500">Text size</span>
+                    <select
+                      value={String(form.fontSize)}
+                      onChange={(e) => pickAppearance({ fontSize: Number(e.target.value) })}
+                      className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+                    >
+                      <option value="0">Default</option>
+                      {FONT_SIZES.map((size) => (
+                        <option key={size} value={size}>
+                          {size}px
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  A family is used exactly as typed, so it has to be installed on this machine.
+                  Nothing is downloaded.
+                </p>
+              </section>
+
+              <section>
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.reduceMotion}
+                    onChange={(e) => pickAppearance({ reduceMotion: e.target.checked })}
+                  />
+                  Reduce motion
+                </label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Stops transitions and the pulsing indicators. Your operating system's own
+                  reduced-motion preference is honoured either way.
+                </p>
+              </section>
 
               <p className="text-[11px] text-neutral-600">
-                A theme is saved as soon as you pick it. Custom colours, fonts and
-                sizes are the next round of work.
+                Appearance choices are saved the moment you make them.
               </p>
             </>
           )}
 
-          {tab === "api" && (
+          {tab === "access" && (
             <>
               <label className="block text-xs text-neutral-500">Base URL</label>
               <input
@@ -279,6 +540,20 @@ export function SettingsDialog({
                 <p className="mt-1 text-[11px] text-neutral-600">
                   Leave blank to use the default: <span className="font-mono">{documentsDir}</span>
                 </p>
+                <div className="mt-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        await api.revealPath(documentsDir);
+                      } catch (e) {
+                        setStatus(String(e));
+                      }
+                    }}
+                    className={quietBtn}
+                  >
+                    Show that folder
+                  </button>
+                </div>
               </div>
             </>
           )}
@@ -385,8 +660,25 @@ export function SettingsDialog({
                 <label className="block text-xs text-neutral-500">
                   Browser for browser_read (optional)
                 </label>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Status
+                    state={probe?.browserName ? "ok" : "todo"}
+                    label={probe?.browserName ? `${probe.browserName} found` : "none found"}
+                  />
+                  {probe?.browserPath && (
+                    <span
+                      className="truncate font-mono text-[11px] text-neutral-600"
+                      title={probe.browserPath}
+                    >
+                      {probe.browserPath}
+                    </span>
+                  )}
+                  <button onClick={refreshProbe} disabled={busy} className={quietBtn}>
+                    Re-check
+                  </button>
+                </div>
                 <input
-                  className={inputCls}
+                  className={`${inputCls} mt-2`}
                   placeholder="auto-detect Edge, then Chrome"
                   value={form.browserPath}
                   onChange={(e) => set("browserPath", e.target.value)}
@@ -394,7 +686,8 @@ export function SettingsDialog({
                 />
                 <p className="mt-1 text-[11px] text-neutral-600">
                   Any Chromium-family browser is driven headlessly — nothing to download. Only set
-                  this if auto-detection picks the wrong one.
+                  this if auto-detection picks the wrong one; press Re-check after saving to see
+                  the change take.
                 </p>
               </div>
             </>
@@ -461,6 +754,209 @@ export function SettingsDialog({
               </button>
             </>
           )}
+
+          {tab === "tools" && (
+            <>
+              <section>
+                <label className="block text-xs text-neutral-500">Where shell commands run</label>
+                <div className="mt-2 flex flex-wrap items-center gap-0.5 rounded-md border border-neutral-800 p-0.5">
+                  {SANDBOX_MODES.map((mode) => (
+                    <button
+                      key={mode.id}
+                      onClick={() => saveTool({ sandbox: mode.id })}
+                      title={mode.hint}
+                      className={`rounded px-2 py-1 text-[11px] transition ${
+                        form.sandbox === mode.id
+                          ? "bg-neutral-800 text-neutral-100"
+                          : "text-neutral-500 hover:text-neutral-300"
+                      }`}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-neutral-500">
+                  Commands currently run in{" "}
+                  <strong className="text-neutral-300">
+                    {RUNG_LABEL[probe?.sandboxRung ?? "host"]}
+                  </strong>
+                  . A container and a WSL distribution cannot see the rest of your computer; a
+                  container also has no network and only the tools its image was built with.
+                </p>
+                {probe?.sandboxNote && (
+                  <p className="mt-1 text-[11px] text-amber-300">{probe.sandboxNote}</p>
+                )}
+                {(form.sandbox === "docker" || probe?.sandboxRung === "docker") && (
+                  <div className="mt-2">
+                    <label className="block text-[11px] text-neutral-600">
+                      Image — it must carry the workspace's toolchain
+                    </label>
+                    <input
+                      value={form.sandboxImage}
+                      onChange={(e) => set("sandboxImage", e.target.value)}
+                      onBlur={() => saveTool({ sandboxImage: form.sandboxImage })}
+                      placeholder="alpine:latest"
+                      spellCheck={false}
+                      className="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                    />
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Docker</label>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Status
+                    state={probe?.dockerRunning ? "ok" : probe?.dockerCli ? "warn" : "todo"}
+                    label={
+                      probe?.dockerRunning
+                        ? "engine running"
+                        : probe?.dockerCli
+                          ? "installed, engine stopped"
+                          : "not found"
+                    }
+                  />
+                  {probe?.dockerVersion && (
+                    <span className="truncate font-mono text-[11px] text-neutral-600">
+                      {probe.dockerVersion}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {probe?.dockerDesktop && !probe?.dockerRunning && (
+                    <button
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await api.startDocker();
+                          setStatus(
+                            "Docker Desktop is starting. The engine answers a minute or so later — then press Re-check.",
+                          );
+                        } catch (e) {
+                          setStatus(String(e));
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                      disabled={busy}
+                      className="rounded-md bg-sky-600 px-2 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:opacity-50"
+                    >
+                      Start Docker Desktop
+                    </button>
+                  )}
+                  <button onClick={refreshProbe} disabled={busy} className={quietBtn}>
+                    Re-check
+                  </button>
+                  <button
+                    onClick={() =>
+                      openUrl("https://docs.docker.com/desktop/install/windows-install/")
+                    }
+                    className={quietBtn}
+                  >
+                    Install guide
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-neutral-600">
+                  DeskSeek never installs Docker. A stopped engine is the usual reason a container
+                  command quietly falls back to running on your machine.
+                </p>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">WSL2</label>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <Status
+                    state={probe?.wsl ? "ok" : "todo"}
+                    label={probe?.wsl ? "found" : "not found"}
+                  />
+                  {probe?.wslDistro && (
+                    <span className="font-mono text-[11px] text-neutral-600">
+                      {probe.wslDistro}
+                    </span>
+                  )}
+                  <button
+                    onClick={() => openUrl("https://learn.microsoft.com/windows/wsl/install")}
+                    className={quietBtn}
+                  >
+                    Install guide
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-neutral-600">
+                  A second way to isolate commands, for machines without Docker.
+                </p>
+              </section>
+
+              <section>
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.computerUse}
+                    onChange={(e) => saveTool({ computerUse: e.target.checked })}
+                  />
+                  Let the assistant read and operate the desktop
+                </label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  It asks before every press and every keystroke, and Ctrl+Alt+Esc stops it
+                  immediately. Off by default, because whatever is on screen may be private.
+                  Windows only.
+                </p>
+              </section>
+            </>
+          )}
+
+          {tab === "commands" && (
+            <>
+              <section>
+                <label className="block text-xs text-neutral-500">Slash commands</label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Typed in the message box. The menu appears as soon as you type a slash.
+                </p>
+                <ul className="mt-2 space-y-1">
+                  {COMMANDS.map((command) => (
+                    <li key={command.name} className="flex gap-3 text-xs">
+                      <span className="w-24 shrink-0 font-mono text-neutral-300">
+                        {command.name}
+                      </span>
+                      <span className="text-neutral-500">{command.description}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Keyboard</label>
+                <ul className="mt-2 space-y-1">
+                  {SHORTCUTS.map((shortcut) => (
+                    <li key={shortcut.action} className="flex gap-3 text-xs">
+                      <span className="w-24 shrink-0 font-mono text-neutral-300">
+                        {shortcut.keys}
+                      </span>
+                      <span className="text-neutral-500">{shortcut.label}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1 text-[11px] text-neutral-600">Ctrl works wherever Cmd does.</p>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">How much it asks</label>
+                <ul className="mt-2 space-y-1">
+                  {MODES.map((mode) => (
+                    <li key={mode.id} className="flex gap-3 text-xs">
+                      <span className="w-24 shrink-0 text-neutral-300">{mode.label}</span>
+                      <span className="text-neutral-500">{mode.hint}</span>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-2 text-[11px] text-neutral-600">
+                  Chosen per chat in the header. The guard is a safety net, not a security
+                  boundary — only a container or a WSL distribution separates a command from the
+                  rest of the machine.
+                </p>
+              </section>
+            </>
+          )}
+          </div>
         </div>
 
         <div className="flex items-center gap-3 border-t border-neutral-800 px-5 py-3">
@@ -481,5 +977,27 @@ export function SettingsDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+const quietBtn =
+  "rounded-md border border-neutral-800 px-2 py-1 text-xs text-neutral-300 transition hover:border-neutral-700 disabled:opacity-50";
+
+/**
+ * A state chip for the Tools section, so what a machine has reads as a fact
+ * rather than as a field somebody has to interpret.
+ */
+function Status({ state, label }: { state: "ok" | "warn" | "todo"; label: string }) {
+  const tone =
+    state === "ok"
+      ? "bg-emerald-500/10 text-emerald-400"
+      : state === "warn"
+        ? "bg-amber-500/10 text-amber-400"
+        : "bg-neutral-800 text-neutral-400";
+  return (
+    <span className={`rounded px-1.5 py-0.5 text-[10px] ${tone}`}>
+      {state === "ok" ? "✓ " : ""}
+      {label}
+    </span>
   );
 }

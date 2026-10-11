@@ -87,6 +87,10 @@ export const api = {
   documentsDir: () => invoke<string>("documents_dir"),
   /** Open a generated document in the app that owns its type. */
   openDocument: (path: string) => invoke<void>("open_document", { path }),
+  /** Show a file or folder in the system file manager. */
+  revealPath: (path: string) => invoke<void>("reveal_path", { path }),
+  /** Best-effort launch of Docker Desktop; the engine answers much later. */
+  startDocker: () => invoke<void>("start_docker"),
 
   listArtifacts: (chatId: string) => invoke<Artifact[]>("list_artifacts", { chatId }),
   getArtifact: (artifactId: string, version?: number) =>
