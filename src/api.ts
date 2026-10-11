@@ -71,6 +71,9 @@ export const api = {
     invoke<void>("resend_last_turn", { chatId, text }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
+  /** Moves a chat to the sidebar's archive, or back out of it. */
+  setChatArchived: (chatId: string, archived: boolean) =>
+    invoke<void>("set_chat_archived", { chatId, archived }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
   setChatPermissionMode: (chatId: string, mode: PermissionMode) =>

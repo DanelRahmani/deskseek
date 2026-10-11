@@ -32,7 +32,7 @@ import type {
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsDialog } from "./components/SettingsDialog";
-import { MemoryPanel } from "./components/MemoryPanel";
+import type { SettingsSection } from "./components/SettingsDialog";
 import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SetupPanel } from "./components/SetupPanel";
@@ -49,7 +49,7 @@ import { buildPalette } from "./lib/commands";
 import { resolveMode, resolveTheme } from "./lib/theme";
 import { tokensFromChars } from "./lib/context";
 
-type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact" | "context";
+type Panel = "none" | "skills" | "mcp" | "files" | "artifact" | "context";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -72,7 +72,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
+  "/compact summarise and reset the context · /summarise review what is worth remembering · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -92,6 +92,9 @@ export default function App() {
   // True while files are being dragged over the window, for the drop overlay.
   const [dropping, setDropping] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // Which rail entry the dialog opens on, so Ctrl+M and `/memory` land on Memory
+  // rather than on whatever was looked at last.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
   const [palette, setPalette] = useState(false);
@@ -383,6 +386,16 @@ export default function App() {
     };
   }, [patch, attachPaths]);
 
+  /**
+   * Open settings, optionally on one section. Memory used to be a side panel of
+   * its own; it is a settings screen now, so every route to it goes through here
+   * and the dialog is the one place that decides where it opens.
+   */
+  const openSettings = useCallback((section: SettingsSection = "appearance") => {
+    setSettingsSection(section);
+    setShowSettings(true);
+  }, []);
+
   const refreshChats = useCallback(async (which: SectionKind) => {
     const list = await api.listChats(which);
     if (kindRef.current === which) setChats(list);
@@ -401,6 +414,23 @@ export default function App() {
   useEffect(() => {
     refreshChats(kind).catch((e) => setError(String(e)));
   }, [kind, refreshChats]);
+
+  /**
+   * Archive a chat or bring it back. Nothing is deleted, which is why this can be
+   * a hover button on a row rather than something behind a confirmation.
+   */
+  const setArchived = useCallback(
+    async (id: string, archived: boolean) => {
+      try {
+        await api.setChatArchived(id, archived);
+        await refreshChats(kindRef.current);
+        setNotice(archived ? "Archived — it is under Archived in the sidebar." : "Restored.");
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats],
+  );
 
   // The chat's own runtime is left alone: a run in a background chat keeps its
   // stream, tools and pending approvals while the user reads another one.
@@ -462,7 +492,7 @@ export default function App() {
             setNotice(HELP);
             return;
           case "/memory":
-            setPanel("memory");
+            openSettings("memory");
             return;
           case "/skills":
             setPanel("skills");
@@ -477,7 +507,7 @@ export default function App() {
             setPanel((current) => (current === "files" ? "none" : "files"));
             return;
           case "/settings":
-            setShowSettings(true);
+            openSettings();
             return;
           case "/folder":
             await pickWorkspace(chatId, pane);
@@ -493,6 +523,31 @@ export default function App() {
             if (chatId) await rewind(chatId);
             else setError("Open a chat to undo.");
             return;
+          case "/summarise":
+          case "/summarize": {
+            if (!chatId) {
+              setError("Open a chat to summarise.");
+              return;
+            }
+            patch(chatId, (rt) => ({ ...rt, busy: true }));
+            setNotice("Summarising the conversation…");
+            try {
+              const raw = await api.summarizeChat(chatId);
+              const [summary, count, topic, logPath] = raw.split("\u001f");
+              setNotice(
+                `${summary} — ${count} suggestion(s).` +
+                  (logPath ? ` Saved CHATLOG/${logPath.split(/[\\/]/).pop()} (${topic}).` : ""),
+              );
+              // Straight to where they are reviewed, but only when there is
+              // something to review: a modal over an empty list helps nobody.
+              if (Number(count) > 0) openSettings("memory");
+            } catch (e) {
+              setError(String(e));
+            } finally {
+              patch(chatId, (rt) => ({ ...rt, busy: false }));
+            }
+            return;
+          }
           case "/compact": {
             if (!chatId) {
               setError("Nothing to compact yet.");
@@ -773,7 +828,7 @@ export default function App() {
   // already names the section, and picking one switches to it below.
   const paletteItems = useMemo(() => {
     const all = Object.values(chatsById).sort((a, b) => b.updated_at - a.updated_at);
-    return buildPalette(all, !!activeId);
+    return buildPalette(all, !!activeId, activeId ? !!chatsById[activeId]?.archived : false);
   }, [chatsById, activeId]);
   const runPalette = useCallback(
     (id: string) => {
@@ -792,10 +847,10 @@ export default function App() {
           void newChat();
           return;
         case "settings":
-          setShowSettings(true);
+          openSettings();
           return;
         case "memory":
-          setPanel("memory");
+          openSettings("memory");
           return;
         case "skills":
           setPanel("skills");
@@ -824,9 +879,25 @@ export default function App() {
         case "rewind":
           if (activeIdRef.current) void rewind(activeIdRef.current);
           return;
+        case "archive":
+          if (activeIdRef.current) void setArchived(activeIdRef.current, true);
+          return;
+        case "unarchive":
+          if (activeIdRef.current) void setArchived(activeIdRef.current, false);
+          return;
       }
     },
-    [backupConfig, chatsById, exportChat, newChat, restoreConfig, rewind, selectChat, toggleSplit],
+    [
+      backupConfig,
+      chatsById,
+      exportChat,
+      newChat,
+      restoreConfig,
+      rewind,
+      selectChat,
+      setArchived,
+      toggleSplit,
+    ],
   );
 
   // One window listener, resolved by the pure map in lib/shortcuts.ts. Every
@@ -851,10 +922,10 @@ export default function App() {
           setPanel((current) => (current === "files" ? "none" : "files"));
           return;
         case "open-memory":
-          setPanel("memory");
+          openSettings("memory");
           return;
         case "open-settings":
-          setShowSettings(true);
+          openSettings();
           return;
         case "command-palette":
           setPalette((open) => !open);
@@ -948,8 +1019,9 @@ export default function App() {
           // The tab goes too; a pane showing it refills from the remaining tabs.
           setShell((s) => pruneShell(s, (t) => t === id));
         }}
-        onSettings={() => setShowSettings(true)}
-        onMemory={() => setPanel("memory")}
+        onSettings={() => openSettings()}
+        onArchive={setArchived}
+        onMemory={() => openSettings("memory")}
         onSkills={() => setPanel("skills")}
         onMcp={() => setPanel("mcp")}
         keyMask={keyMask}
@@ -1053,15 +1125,6 @@ export default function App() {
         </div>
       </div>
 
-      {panel === "memory" && (
-        <MemoryPanel
-          chatId={activeId}
-          onClose={() => setPanel("none")}
-          onChanged={() => {
-            if (activeIdRef.current) loadMessages(activeIdRef.current).catch(() => {});
-          }}
-        />
-      )}
       {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
       {panel === "context" && activeId && (
         <ContextPanel
@@ -1087,7 +1150,7 @@ export default function App() {
           settings={settings}
           onOpenSettings={() => {
             setShowSetup(false);
-            setShowSettings(true);
+            openSettings();
           }}
           onSaved={setSettings}
           onClose={() => setShowSetup(false)}
@@ -1100,7 +1163,12 @@ export default function App() {
           keyMask={keyMask}
           models={models}
           documentsDir={documentsDir}
+          section={settingsSection}
+          chatId={activeId}
           onClose={() => setShowSettings(false)}
+          onMemoryChanged={() => {
+            if (activeIdRef.current) loadMessages(activeIdRef.current).catch(() => {});
+          }}
           onSaved={(saved, mask) => {
             setSettings(saved);
             setKeyMask(mask);

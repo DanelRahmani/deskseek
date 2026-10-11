@@ -246,6 +246,18 @@ pub fn delete_chat(state: State<'_, AppState>, chat_id: String) -> Result<(), St
     db::delete_chat(&conn, &chat_id).map_err(|e| e.to_string())
 }
 
+/// Moves a chat to the sidebar's archive, or back out of it. The opposite of
+/// `delete_chat`: nothing is removed, so it is safe to offer on a row.
+#[tauri::command]
+pub fn set_chat_archived(
+    state: State<'_, AppState>,
+    chat_id: String,
+    archived: bool,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_archived(&conn, &chat_id, archived).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn set_chat_model(
     state: State<'_, AppState>,
@@ -1487,6 +1499,7 @@ mod tests {
             permission_mode: "manual".to_string(),
             cost_usd: 0.0,
             tools_enabled: true,
+            archived: false,
             created_at: 0,
             updated_at: 0,
         }

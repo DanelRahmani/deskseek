@@ -5,6 +5,7 @@ import { THEMES, isHexColour } from "../lib/theme";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
+import { MemorySection } from "./MemorySection";
 import type { EnvProbe, Instruction, ModelInfo, Settings, ToolGrant } from "../types";
 
 /**
@@ -68,8 +69,14 @@ interface Props {
   keyMask: string | null;
   models: ModelInfo[];
   documentsDir: string;
+  /** The section to open on. Ctrl+M and `/memory` land on Memory. */
+  section?: SettingsSection;
+  /** The open chat, for its pending memory suggestions. */
+  chatId?: string | null;
   onClose: () => void;
   onSaved: (settings: Settings, keyMask: string | null) => void;
+  /** Memory changed, so the transcript's cost and context estimate are stale. */
+  onMemoryChanged?: () => void;
 }
 
 const EFFORTS = ["low", "high", "max"];
@@ -77,20 +84,21 @@ const SCOPES = ["chat", "coding", "both"];
 const inputCls =
   "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
 
-type Section =
+export type SettingsSection =
   | "appearance"
   | "access"
   | "prompt"
   | "tools"
   | "browsing"
   | "instructions"
+  | "memory"
   | "commands";
 
 /**
  * The rail. `keywords` is what the search box matches on, so looking for
  * "docker" finds Tools even though the word is not in its title.
  */
-const SECTIONS: { id: Section; label: string; keywords: string }[] = [
+const SECTIONS: { id: SettingsSection; label: string; keywords: string }[] = [
   {
     id: "appearance",
     label: "Appearance",
@@ -113,6 +121,12 @@ const SECTIONS: { id: Section; label: string; keywords: string }[] = [
     keywords: "internet searxng search browser edge chrome fetch web",
   },
   { id: "instructions", label: "Instructions", keywords: "scoped rules context" },
+  {
+    id: "memory",
+    label: "Memory",
+    keywords:
+      "remember forget profile memory.md categories work education projects interests people suggestions summarise summarise chat recall",
+  },
   {
     id: "commands",
     label: "Commands",
@@ -314,14 +328,17 @@ export function SettingsDialog({
   keyMask,
   models,
   documentsDir,
+  section,
+  chatId,
   onClose,
   onSaved,
+  onMemoryChanged,
 }: Props) {
   const [form, setForm] = useState<Settings>(settings);
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<Section>("appearance");
+  const [tab, setTab] = useState<SettingsSection>(section ?? "appearance");
   const [query, setQuery] = useState("");
   const [probe, setProbe] = useState<EnvProbe | null>(null);
   // Text fields commit on blur rather than on every keystroke: saving per letter
@@ -516,6 +533,12 @@ export function SettingsDialog({
           </nav>
 
           <div className="min-w-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          {tab === "memory" && (
+            <MemorySection
+              chatId={chatId ?? null}
+              onChanged={() => onMemoryChanged?.()}
+            />
+          )}
           {tab === "appearance" && (
             <>
               <section>

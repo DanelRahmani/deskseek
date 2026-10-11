@@ -23,6 +23,8 @@ export interface ChatRow {
   cost_usd: number;
   /** Whether chat mode gives the model tools. Coding is always true. */
   tools_enabled: boolean;
+  /** Out of the sidebar's way. Nothing else about the chat changes. */
+  archived: boolean;
   created_at: number;
   updated_at: number;
 }

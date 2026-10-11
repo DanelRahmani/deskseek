@@ -17,6 +17,7 @@ export interface PaletteItem {
 export function buildPalette(
   chats: ReadonlyArray<{ id: string; title: string; kind: string }>,
   hasChat: boolean,
+  activeArchived = false,
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     { id: "new-chat", label: "New chat", hint: "Action" },
@@ -35,6 +36,13 @@ export function buildPalette(
     items.push({ id: "export", label: "Export this chat to Markdown", hint: "Action" });
     items.push({ id: "export-pdf", label: "Export this chat as a PDF", hint: "Action" });
     items.push({ id: "rewind", label: "Undo the agent's last file changes", hint: "Action" });
+    // One entry either way, never both: from inside an archived chat the only
+    // useful move is back out of the archive.
+    items.push(
+      activeArchived
+        ? { id: "unarchive", label: "Take this chat out of the archive", hint: "Action" }
+        : { id: "archive", label: "Archive this chat", hint: "Action" },
+    );
   }
   for (const chat of chats) {
     items.push({

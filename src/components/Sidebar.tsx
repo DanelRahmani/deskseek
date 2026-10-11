@@ -9,6 +9,8 @@ interface Props {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  /** Archive a chat, or take it back out of the archive. */
+  onArchive: (id: string, archived: boolean) => void;
   onSettings: () => void;
   onMemory: () => void;
   onSkills: () => void;
@@ -35,6 +37,7 @@ export function Sidebar({
   onSelect,
   onNew,
   onDelete,
+  onArchive,
   onSettings,
   onMemory,
   onSkills,
@@ -45,16 +48,28 @@ export function Sidebar({
   onSearch,
 }: Props) {
   const [query, setQuery] = useState("");
+  // Collapsed by default: the archive exists to be out of the way, and the count
+  // on the summary row is enough to say it is not empty.
+  const [showArchived, setShowArchived] = useState(false);
   // A plain substring match on the title or the folder. A search box over a
   // short list does not need more, and anything fancier would need a reason.
   const needle = query.trim().toLowerCase();
+  const active = chats.filter((c) => !c.archived);
+  const archived = chats.filter((c) => c.archived);
   const shown = needle
-    ? chats.filter(
+    ? active.filter(
         (c) =>
           c.title.toLowerCase().includes(needle) ||
           (c.workspace ?? "").toLowerCase().includes(needle),
       )
-    : chats;
+    : active;
+
+  const rowCls = (id: string) =>
+    `group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition ${
+      activeId === id
+        ? "bg-neutral-800 text-neutral-100"
+        : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
+    }`;
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
@@ -132,20 +147,13 @@ export function Sidebar({
         {chats.length === 0 && (
           <p className="px-1 py-4 text-xs text-neutral-600">No conversations yet.</p>
         )}
-        {chats.length > 0 && shown.length === 0 && hits.length === 0 && (
+        {shown.length === 0 && hits.length === 0 && query.trim() && (
           <p className="px-1 py-4 text-xs text-neutral-600">
             Nothing matches "{query.trim()}".
           </p>
         )}
         {shown.map((c) => (
-          <div
-            key={c.id}
-            className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition ${
-              activeId === c.id
-                ? "bg-neutral-800 text-neutral-100"
-                : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
-            }`}
-          >
+          <div key={c.id} className={rowCls(c.id)}>
             <button
               onClick={() => onSelect(c.id)}
               className="flex flex-1 items-center gap-1.5 truncate text-left"
@@ -168,6 +176,13 @@ export function Sidebar({
               </span>
             )}
             <button
+              onClick={() => onArchive(c.id, true)}
+              className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-sky-400 group-hover:block"
+              title="Archive — keeps it, out of the way"
+            >
+              ↓
+            </button>
+            <button
               onClick={() => onDelete(c.id)}
               className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-red-400 group-hover:block"
               title="Delete"
@@ -176,6 +191,45 @@ export function Sidebar({
             </button>
           </div>
         ))}
+
+        {archived.length > 0 && (
+          <div className="mt-3 border-t border-neutral-800 pt-2">
+            <button
+              onClick={() => setShowArchived((open) => !open)}
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-neutral-500 transition hover:text-neutral-300"
+              title="Archived chats are only hidden, never deleted"
+            >
+              <span className="text-[8px]">{showArchived ? "▼" : "▶"}</span>
+              Archived ({archived.length})
+            </button>
+            {showArchived &&
+              archived.map((c) => (
+                <div key={c.id} className={rowCls(c.id)}>
+                  <button
+                    onClick={() => onSelect(c.id)}
+                    className="flex-1 truncate text-left text-neutral-500"
+                    title={c.workspace ?? c.title}
+                  >
+                    {c.title}
+                  </button>
+                  <button
+                    onClick={() => onArchive(c.id, false)}
+                    className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-sky-400 group-hover:block"
+                    title="Take out of the archive"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    onClick={() => onDelete(c.id)}
+                    className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-red-400 group-hover:block"
+                    title="Delete"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+          </div>
+        )}
       </nav>
 
       <div className="space-y-1 border-t border-neutral-800 p-3">

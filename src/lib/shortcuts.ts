@@ -31,7 +31,7 @@ export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: s
   { keys: "Ctrl+N", action: "new-chat", label: "New chat" },
   { keys: "Ctrl+W", action: "close-tab", label: "Close the tab" },
   { keys: "Ctrl+B", action: "toggle-files", label: "Show or hide the file tree" },
-  { keys: "Ctrl+M", action: "open-memory", label: "Open the memory panel" },
+  { keys: "Ctrl+M", action: "open-memory", label: "Open the memory settings" },
   { keys: "Ctrl+,", action: "open-settings", label: "Open settings" },
   { keys: "Ctrl+K", action: "command-palette", label: "Open the command palette" },
   { keys: "?", action: "cheatsheet", label: "Show this list" },

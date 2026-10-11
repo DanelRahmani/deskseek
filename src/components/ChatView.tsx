@@ -69,7 +69,8 @@ export const MODES: { id: PermissionMode; label: string; hint: string }[] = [
 /** Kept in sync with the switch in App.tsx's send(). */
 export const COMMANDS = [
   { name: "/compact", description: "Summarise the chat and reset the context" },
-  { name: "/memory", description: "Open the memory panel" },
+  { name: "/summarise", description: "Propose memories from this chat" },
+  { name: "/memory", description: "Open the memory settings" },
   { name: "/skills", description: "Choose skills for this chat" },
   { name: "/mcp", description: "Manage MCP servers" },
   { name: "/setup", description: "Reopen the setup screen" },
@@ -403,7 +404,7 @@ export function ChatView({
                   : "Attach an image or ask for a document — chat can read and write files in your documents folder."}
               </p>
               <p className="mt-3 text-xs text-neutral-700">
-                Commands: /compact /files /memory /skills /mcp /setup /folder /new /help
+                Commands: {COMMANDS.map((command) => command.name).join(" ")}
               </p>
             </div>
           )}

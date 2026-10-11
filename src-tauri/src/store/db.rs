@@ -25,6 +25,9 @@ pub struct ChatRow {
     /// Whether this chat's model gets tools at all. Coding always does; a chat
     /// can be turned into a plain conversation.
     pub tools_enabled: bool,
+    /// Out of the way in the sidebar, and nothing else: the messages, the spend
+    /// and the folder are exactly where they were.
+    pub archived: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -60,6 +63,8 @@ CREATE TABLE IF NOT EXISTS chats (
     -- Chat mode is agentic by default; a chat that does not want tools can say
     -- so, which makes it a plain conversation with no file access.
     tools_enabled INTEGER NOT NULL DEFAULT 1,
+    -- Kept out of the sidebar's way without deleting anything.
+    archived     INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
@@ -209,6 +214,10 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 1",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // Databases written before the search index existed have no rows in it. The
     // triggers only fire on new writes, so an empty index over a non-empty table
     // means "first launch after the upgrade" and gets one build. `rebuild` is
@@ -226,9 +235,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Every chat of a section, archived ones included: the sidebar is what splits
+/// them, and a tab restored from the last session has to find its chat even when
+/// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at, archived
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -245,6 +257,7 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             tools_enabled: r.get::<_, i64>(9)? != 0,
             created_at: r.get(10)?,
             updated_at: r.get(11)?,
+            archived: r.get::<_, i64>(12)? != 0,
         })
     })?;
     rows.collect()
@@ -277,6 +290,7 @@ pub fn create_chat(
         permission_mode: permission_mode.to_string(),
         cost_usd: 0.0,
         tools_enabled: true,
+        archived: false,
         created_at: ts,
         updated_at: ts,
     })
@@ -284,7 +298,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at, archived
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -301,9 +315,21 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 tools_enabled: r.get::<_, i64>(9)? != 0,
                 created_at: r.get(10)?,
                 updated_at: r.get(11)?,
+                archived: r.get::<_, i64>(12)? != 0,
             })
         },
     )
+}
+
+/// Takes a chat out of the sidebar's way without deleting anything, or puts it
+/// back. `updated_at` is deliberately left alone: archiving is not activity, and
+/// bumping it would reorder the list on the way back in.
+pub fn set_chat_archived(conn: &Connection, id: &str, archived: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET archived = ?2 WHERE id = ?1",
+        params![id, archived as i64],
+    )?;
+    Ok(())
 }
 
 /// Adds one turn's spend to a chat's running total, so it survives a reload.
@@ -1059,6 +1085,36 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    #[test]
+    fn archiving_hides_a_chat_from_nothing_but_the_sidebar() {
+        let conn = mem();
+        let kept = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let shelved = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let before = get_chat(&conn, &shelved.id).unwrap().updated_at;
+
+        set_chat_archived(&conn, &shelved.id, true).unwrap();
+
+        // Both are still listed — the sidebar is what splits them, and a tab
+        // restored from the last session has to find its chat — and the flag says
+        // which is which.
+        let all = list_chats(&conn, "chat").unwrap();
+        assert_eq!(all.len(), 2);
+        let archived: Vec<&str> = all
+            .iter()
+            .filter(|c| c.archived)
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(archived, vec![shelved.id.as_str()]);
+        assert!(!get_chat(&conn, &kept.id).unwrap().archived);
+
+        // Archiving is not activity. A bumped timestamp would reorder the list the
+        // moment the chat came back out of the archive.
+        assert_eq!(get_chat(&conn, &shelved.id).unwrap().updated_at, before);
+
+        set_chat_archived(&conn, &shelved.id, false).unwrap();
+        assert!(!get_chat(&conn, &shelved.id).unwrap().archived);
     }
 
     #[test]

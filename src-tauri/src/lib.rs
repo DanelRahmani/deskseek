@@ -161,6 +161,7 @@ pub fn run() {
             commands::resend_last_turn,
             commands::rename_chat,
             commands::delete_chat,
+            commands::set_chat_archived,
             commands::set_chat_model,
             commands::set_chat_permission_mode,
             commands::set_chat_tools,

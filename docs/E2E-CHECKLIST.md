@@ -27,6 +27,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Dropping an image attaches it and the reply accounts for it
 - [ ] `Stop` mid-stream keeps the partial reply and ends the turn
 - [ ] `/compact` summarises and the context meter drops
+- [ ] `/summarise` proposes entries and opens *Settings → Memory* with them
+
+## Conversations
+
+- [ ] The arrow on a sidebar row moves a chat into *Archived (n)* at the bottom
+- [ ] An archived chat keeps its messages, its spend and its folder; `↑` restores it
+- [ ] `Ctrl+K` offers *Archive this chat*, and *Take out of the archive* once it is archived
+- [ ] Restoring does not reorder the list: the chat comes back where it was
 
 ## Two panes
 
@@ -39,7 +47,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Keyboard
 
 - [ ] `Ctrl+N` starts a chat; `Ctrl+W` closes the focused tab
-- [ ] `Ctrl+B` toggles the file tree; `Ctrl+M` opens the memory panel
+- [ ] `Ctrl+B` toggles the file tree; `Ctrl+M` opens the memory settings
 - [ ] `Ctrl+,` opens settings; `Ctrl+\` toggles the split
 - [ ] `Ctrl+1` / `Ctrl+2` move focus between the panes
 - [ ] `Escape` closes the open panel or dialog; while typing in the composer it
@@ -102,7 +110,8 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 ## Memory
 
-- [ ] *Summarise chat* proposes entries, each tagged with the file it would go to
+- [ ] *Summarise chat* in *Settings → Memory*, or `/summarise`, proposes entries each tagged with
+      the file it would go to
 - [ ] Accepting an *always sent* entry writes it to `MEMORY.md`
 - [ ] Accepting an entry tagged `work` / `interests` / … writes it to `memory/<category>.md`
 - [ ] A memory learned in one chat is recalled by keyword in a *different* chat
@@ -110,7 +119,9 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Forgetting a line removes it from its file and it stops being injected
 - [ ] A memory saved by the assistant with `save_memory` lands in the category it names
 - [ ] `save_memory` with no category (or an invented one) lands under *other*
-- [ ] The panel warns when `MEMORY.md` has grown large
+- [ ] *Settings → Memory* warns when `MEMORY.md` has grown large
+- [ ] A hand-added line lands in the category chosen in *Remember something*
+- [ ] *Show folder* opens the folder the files live in
 
 ## MCP
 

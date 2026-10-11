@@ -22,6 +22,21 @@ const items = buildPalette(chats, true);
 assert(items.some((i) => i.id === "export"), "export is offered while a chat is open");
 assert(!buildPalette(chats, false).some((i) => i.id === "export"), "export is hidden with no chat");
 
+// Archiving is offered either way round, but never both at once, and never with
+// no chat open — there would be nothing to archive.
+assert(items.some((i) => i.id === "archive"), "an open chat can be archived");
+assert(
+  !items.some((i) => i.id === "unarchive"),
+  "a chat that is not archived is not offered an unarchive",
+);
+const inArchive = buildPalette(chats, true, true);
+assert(inArchive.some((i) => i.id === "unarchive"), "an archived chat can be taken back out");
+assert(!inArchive.some((i) => i.id === "archive"), "and is not offered archiving again");
+assert(
+  !buildPalette(chats, false, true).some((i) => i.id === "unarchive"),
+  "no chat open means no archive action",
+);
+
 // One entry per chat, in the order given, tagged so the caller can route it.
 const chatItems = items.filter((i) => i.id.startsWith("chat:"));
 assert(chatItems.length === 2, "every chat is listed");

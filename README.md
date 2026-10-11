@@ -41,14 +41,16 @@ Both sections are functional:
     what you just asked. Only the matching entries are sent, so the store can grow without
     slowing anything down. Inside a project folder, memory is filed with that project instead
     (`project-<name>.md`), so a note about one client does not turn up in another's chat.
-  - *Summarise chat* proposes entries and tags each one with the file it would go to, so you can
-    see where an Accept will put it. A proposal only reaches `MEMORY.md` when it says so.
+  - Summarising is a command, not a panel: `/summarise` reads the open conversation, proposes
+    entries, and tags each one with the file it would go to. Nothing is stored until you accept
+    it in *Settings → Memory*, and a proposal only reaches `MEMORY.md` when it says so.
   - When the assistant remembers something itself — with `save_memory` — it does the same: only an
     explicit `profile` category goes to `MEMORY.md`, anything else goes to the category it names,
     and a name it invents falls back to `other` rather than creating a file. Memory saved
     mid-run therefore cannot quietly grow the always-sent file.
-  - The panel shows every category with its entries and lets you forget any line, and warns when
-    `MEMORY.md` has grown past what is worth sending every time.
+  - *Settings → Memory* (`Ctrl+M`, or `/memory`) shows every category with its entries, lets you
+    forget any single line, add one by hand into a category you choose, and warns when `MEMORY.md`
+    has grown past what is worth sending every time. *Show folder* opens the files themselves.
   - Honest limits: the lookup ranks by shared words, not meaning, so asking about "the car" will
     not surface a memory stored as "vehicle" — embeddings would fix that, at the cost of a model
     download and network at query time. Every category file is also scanned in full on a lookup,
@@ -58,13 +60,18 @@ Both sections are functional:
   the panel's file picker and remove one from the same list (the panel also opens the folder)
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
-- `/compact` and friends — `/help` lists the built-in commands, including `/mcp` and `/export`
+- `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`
+  and `/export`
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
   both sections, so a chat can be found by what was said in it rather than by its name
+- **Archive** — a conversation worth keeping but not worth looking at can be put away instead of
+  deleted: the arrow on its sidebar row files it under *Archived (n)* at the bottom, and `↑`
+  brings it back. Nothing is removed — the messages, the spend and the folder stay — which is
+  exactly why it needs no confirmation. Deleting is still the only thing that destroys anything
 - `/export` — write the whole conversation to a Markdown file in your documents folder; the
   palette also offers **Export this chat as a PDF**, printed by the browser on this machine
   through the same pipeline `doc_create` uses rather than a second implementation of its own
@@ -205,7 +212,7 @@ reaches the state change its button already makes:
 | `Ctrl+N` | New conversation |
 | `Ctrl+W` | Close the focused tab |
 | `Ctrl+B` | Show or hide the file tree |
-| `Ctrl+M` | Memory panel |
+| `Ctrl+M` | Memory settings |
 | `Ctrl+K` | Command palette |
 | `?` | This list, over whatever is on screen |
 | `Ctrl+,` | Settings |
