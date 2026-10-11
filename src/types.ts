@@ -112,6 +112,29 @@ export interface McpServer {
   trustReadOnly: boolean;
 }
 
+/** One line in a server's log: a tool call we made, or a line it wrote to stderr. */
+export interface ToolLog {
+  server: string;
+  at: string;
+  kind: "call" | "stderr";
+  tool: string;
+  /** The redacted arguments, calls only. */
+  args: string;
+  /** A stderr line, or why the call failed. */
+  detail: string;
+  ms: number;
+  /** Characters returned, calls only. */
+  size: number;
+  ok: boolean;
+}
+
+/** Emitted once discovery finishes, so the UI knows what the model can reach. */
+export interface McpReadyEvent {
+  toolCount: number;
+  runningCount: number;
+  failedCount: number;
+}
+
 export interface McpServerStatus {
   name: string;
   enabled: boolean;

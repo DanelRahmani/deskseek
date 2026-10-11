@@ -93,8 +93,8 @@ pub fn run() {
 
             let mcp_manager = Arc::new(tokio::sync::RwLock::new(mcp::McpManager::new(
                 paths.mcp_file(),
-            )));
-            let sandbox = Arc::new(tokio::sync::RwLock::new(
+                Some(app.handle().clone()),
+            )));            let sandbox = Arc::new(tokio::sync::RwLock::new(
                 tools::sandbox_exec::Capability::default(),
             ));
             let sandbox_probe = sandbox.clone();
@@ -195,6 +195,7 @@ pub fn run() {
             commands::mcp_save_servers,
             commands::mcp_reload,
             commands::mcp_restart,
+            commands::mcp_logs,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

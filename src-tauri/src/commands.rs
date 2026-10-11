@@ -9,7 +9,7 @@ use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
 use crate::conversation::{agent, summarize};
-use crate::mcp::{McpServer, ServerStatus};
+use crate::mcp::{McpServer, ServerStatus, ToolLog};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
@@ -789,6 +789,13 @@ pub async fn mcp_save_servers(
 pub async fn mcp_reload(state: State<'_, AppState>) -> Result<McpStatus, String> {
     state.mcp.write().await.reload().await;
     Ok(mcp_snapshot(&state).await)
+}
+
+/// What the running servers have actually been doing, oldest first. A snapshot
+/// only: new lines arrive on the `mcp-log` event while the panel is open.
+#[tauri::command]
+pub async fn mcp_logs(state: State<'_, AppState>) -> Result<Vec<ToolLog>, String> {
+    Ok(state.mcp.read().await.tool_logs())
 }
 
 /// Restart one server. A failure is reported through the status, not as an

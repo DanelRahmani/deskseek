@@ -297,6 +297,11 @@ tools are offered to the model in **both** sections:
 - Server output is treated as data, not instructions
 - Servers start in the background, so a slow `npx` download never blocks the window
 - Child processes are stopped when the app exits
+- The chat header shows a **🔌 N MCP tools** badge once discovery finishes, or *MCP starting…*
+  while it is still in flight — with a fresh chat, the first message can otherwise be sent
+  before the model has any of those tools
+- The panel's **Logs** tab shows every call (tool, redacted arguments, duration, result size)
+  and anything a server writes to stderr, which is where a failing server explains itself
 
 ```json
 {
@@ -316,6 +321,10 @@ tools are offered to the model in **both** sections:
 The protocol work is done by the official [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk)
 SDK, so discovery, version negotiation, pagination and multi-round-trip requests are handled for
 you. Built with `default-features = false` and only the client + stdio transport features.
+
+**Not yet supported: remote servers.** The streamable-HTTP transport is not wired up, so every
+server must be a local command. `headers`/`url` are not accepted yet, and a server that needs a
+bearer token has to be launched through a wrapper that supplies it.
 
 ## First run
 
@@ -383,6 +392,12 @@ pane rules in `src/lib/shell.ts` — the panes must never show the same chat twi
 tab must never leave a pane blank while another tab is still open — and the task-list reader in
 `src/lib/tasks.ts`, which parses arguments the model wrote and must therefore survive every
 malformed shape it can produce.
+
+**Windows: `cargo test` dies with `0xc0000139`?** That is a loader error, not a test failure: the
+test harness links `TaskDialogIndirect`, which only `comctl32` **v6** exports, but a test binary
+gets no application manifest, so the loader binds the v5 DLL and kills the process before `main`.
+`build.rs` adds the v6 dependency explicitly. Binary targets get it from Tauri's own link args,
+which is why only the tests are affected.
 
 ## Architecture
 

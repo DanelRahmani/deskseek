@@ -81,6 +81,17 @@ mod tests {
         assert!(!config.servers[0].trust_read_only);
     }
 
+    /// Every config written before HTTP existed omits the new keys, so the
+    /// defaults have to keep meaning "a stdio child process".
+    #[test]
+    fn a_server_without_a_command_is_not_runnable() {
+        let body = r#"{"servers":[{"name":"files","command":"npx"}]}"#;
+        let server = &serde_json::from_str::<McpConfig>(body).unwrap().servers[0];
+        assert_eq!(server.command, "npx");
+        assert!(server.args.is_empty());
+        assert!(server.env.is_empty());
+    }
+
     #[test]
     fn a_broken_file_reports_the_path_rather_than_vanishing() {
         let dir = std::env::temp_dir().join("deskseek-mcp-broken");

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
-import { api } from "../api";
-import type { McpServer, McpStatus } from "../types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api, onMcpLog } from "../api";
+import type { McpServer, McpStatus, ToolLog } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -10,7 +10,7 @@ const smallCls =
   "w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none";
 
 /** `KEY=value` per line, which is how everyone copies tokens into these files. */
-function parseEnv(text: string): Record<string, string> {
+function parsePairs(text: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const line of text.split("\n")) {
     const trimmed = line.trim();
@@ -22,8 +22,8 @@ function parseEnv(text: string): Record<string, string> {
   return out;
 }
 
-function envToText(env: Record<string, string>): string {
-  return Object.entries(env)
+function pairsToText(pairs: Record<string, string>): string {
+  return Object.entries(pairs)
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 }
@@ -39,18 +39,34 @@ function blankServer(): McpServer {
   };
 }
 
+/** `GET /mcp` reads badly but says "still starting", which is the honest state. */
+function logLine(line: ToolLog): string {
+  if (line.kind === "stderr") return line.detail;
+  const call = `${line.tool}(${line.args})`;
+  return line.ok ? `${call} → ${line.size} chars in ${line.ms}ms` : `${call} → ${line.detail}`;
+}
+
 export function McpPanel({ onClose }: Props) {
+  const [tab, setTab] = useState<"servers" | "logs">("servers");
   const [servers, setServers] = useState<McpServer[]>([]);
   const [status, setStatus] = useState<McpStatus | null>(null);
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [logs, setLogs] = useState<ToolLog[]>([]);
+  const [logServer, setLogServer] = useState<string>("");
+  const logEnd = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [list, snapshot] = await Promise.all([api.mcpServers(), api.mcpStatus()]);
+      const [list, snapshot, lines] = await Promise.all([
+        api.mcpServers(),
+        api.mcpStatus(),
+        api.mcpLogs(),
+      ]);
       setServers(list);
       setStatus(snapshot);
+      setLogs(lines);
       setDirty(false);
     } catch (e) {
       setNote(String(e));
@@ -60,6 +76,25 @@ export function McpPanel({ onClose }: Props) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // New lines arrive on their own event, so the Logs tab is live rather than
+  // refreshed on a timer. Only while the panel is open — nothing else shows it.
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void onMcpLog((line) => setLogs((prev) => [...prev, line])).then((fn) => {
+      if (disposed) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    logEnd.current?.scrollIntoView({ block: "end" });
+  }, [logs, tab]);
 
   const patch = (index: number, changes: Partial<McpServer>) => {
     setServers((prev) => prev.map((s, i) => (i === index ? { ...s, ...changes } : s)));
@@ -127,33 +162,112 @@ export function McpPanel({ onClose }: Props) {
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 px-5 py-2">
-          <button
-            onClick={save}
-            disabled={busy || !dirty}
-            className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
-          >
-            Save &amp; restart all
-          </button>
-          <button
-            onClick={reload}
-            disabled={busy}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-40"
-          >
-            Re-read file
-          </button>
-          <button
-            onClick={() => {
-              setServers((prev) => [...prev, blankServer()]);
-              setDirty(true);
-            }}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
-          >
-            + Add server
-          </button>
-          <span className="ml-auto text-[11px] text-neutral-600">{note}</span>
+        <div className="flex items-center gap-1 border-b border-neutral-800 px-5">
+          {(["servers", "logs"] as const).map((name) => (
+            <button
+              key={name}
+              onClick={() => setTab(name)}
+              className={`-mb-px border-b-2 px-3 py-2 text-xs capitalize transition ${
+                tab === name
+                  ? "border-sky-500 text-neutral-100"
+                  : "border-transparent text-neutral-500 hover:text-neutral-300"
+              }`}
+            >
+              {name}
+              {name === "logs" && logs.length > 0 && (
+                <span className="ml-1.5 text-[10px] text-neutral-600">{logs.length}</span>
+              )}
+            </button>
+          ))}
         </div>
 
+        {tab === "servers" && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 px-5 py-2">
+            <button
+              onClick={save}
+              disabled={busy || !dirty}
+              className="rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
+            >
+              Save &amp; restart all
+            </button>
+            <button
+              onClick={reload}
+              disabled={busy}
+              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-40"
+            >
+              Re-read file
+            </button>
+            <button
+              onClick={() => {
+                setServers((prev) => [...prev, blankServer()]);
+                setDirty(true);
+              }}
+              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+            >
+              + Add server
+            </button>
+            <span className="ml-auto text-[11px] text-neutral-600">{note}</span>
+          </div>
+        )}
+
+        {tab === "logs" && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-neutral-800 px-5 py-2">
+            <select
+              value={logServer}
+              onChange={(e) => setLogServer(e.target.value)}
+              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+            >
+              <option value="">All servers</option>
+              {[...new Set(logs.map((line) => line.server))].map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={() => setLogs([])}
+              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+            >
+              Clear view
+            </button>
+            <span className="ml-auto text-[11px] text-neutral-600">
+              What the servers have been doing, newest last. Clearing only hides them here.
+            </span>
+          </div>
+        )}
+
+        {tab === "logs" && (
+          <div className="min-h-0 flex-1 overflow-y-auto bg-neutral-950 px-5 py-4 font-mono text-[11px] leading-relaxed">
+            {logs.length === 0 && (
+              <p className="py-6 text-center font-sans text-xs text-neutral-500">
+                Nothing yet. Tool calls and anything a server writes to stderr appear here.
+              </p>
+            )}
+            {logs
+              .filter((line) => !logServer || line.server === logServer)
+              .map((line, index) => (
+                <div
+                  key={index}
+                  className={`flex gap-2 border-b border-neutral-900 py-1 ${
+                    line.kind === "stderr"
+                      ? "text-neutral-500"
+                      : line.ok
+                        ? "text-neutral-300"
+                        : "text-red-400"
+                  }`}
+                >
+                  <span className="shrink-0 text-neutral-700">
+                    {new Date(line.at).toLocaleTimeString()}
+                  </span>
+                  <span className="shrink-0 text-neutral-600">{line.server}</span>
+                  <span className="whitespace-pre-wrap break-all">{logLine(line)}</span>
+                </div>
+              ))}
+            <div ref={logEnd} />
+          </div>
+        )}
+
+        {tab === "servers" && (
         <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
           {status?.configError && (
             <p className="rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-300">
@@ -252,8 +366,8 @@ export function McpPanel({ onClose }: Props) {
                   <summary className="cursor-pointer select-none">Environment</summary>
                   <textarea
                     className={`${smallCls} mt-1 h-16 resize-y font-mono`}
-                    value={envToText(server.env)}
-                    onChange={(e) => patch(index, { env: parseEnv(e.target.value) })}
+                    value={pairsToText(server.env)}
+                    onChange={(e) => patch(index, { env: parsePairs(e.target.value) })}
                     placeholder="API_TOKEN=…&#10;one KEY=value per line"
                     spellCheck={false}
                   />
@@ -286,6 +400,7 @@ export function McpPanel({ onClose }: Props) {
             );
           })}
         </div>
+        )}
       </div>
     </div>
   );

@@ -33,6 +33,9 @@ interface Props {
   computerPaused: boolean;
   computerReason: string | null;
   onResumeComputer: () => void;
+  /** What the MCP servers offer. `ready: false` means discovery is still running. */
+  mcp: { ready: boolean; toolCount: number; failedCount: number };
+  onMcp: () => void;
   contextTokens: number;
   contextMax: number;
   onSend: (text: string) => void;
@@ -91,6 +94,8 @@ export function ChatView({
   computerPaused,
   computerReason,
   onResumeComputer,
+  mcp,
+  onMcp,
   contextTokens,
   contextMax,
   onSend,
@@ -213,6 +218,29 @@ export function ChatView({
             {needsFolder
               ? "Choose folder…"
               : `📁 ${chat.workspace?.split(/[\\/]/).filter(Boolean).pop()}`}
+          </button>
+        )}
+
+        {(!mcp.ready || mcp.toolCount > 0 || mcp.failedCount > 0) && (
+          <button
+            onClick={onMcp}
+            className={`rounded-md border px-2 py-1 text-xs transition ${
+              mcp.failedCount > 0
+                ? "border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
+                : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+            }`}
+            title={
+              !mcp.ready
+                ? "MCP servers are still starting; their tools are not offered yet"
+                : `${mcp.toolCount} tool(s) offered to the model` +
+                  (mcp.failedCount > 0 ? `, ${mcp.failedCount} server(s) failed to start` : "")
+            }
+          >
+            {!mcp.ready
+              ? "MCP starting…"
+              : mcp.toolCount > 0
+                ? `🔌 ${mcp.toolCount} MCP tool${mcp.toolCount === 1 ? "" : "s"}`
+                : `MCP: ${mcp.failedCount} failed`}
           </button>
         )}
 

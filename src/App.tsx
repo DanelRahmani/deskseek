@@ -9,6 +9,7 @@ import {
   onDone,
   onError,
   onGuard,
+  onMcpReady,
   onShot,
   onTool,
 } from "./api";
@@ -96,6 +97,9 @@ export default function App() {
   // The artifact currently in the panel. One at a time: the panel is a reading
   // surface, not a workspace.
   const [artifact, setArtifact] = useState<{ chatId: string; detail: ArtifactDetail } | null>(null);
+  // Not ready until the first `mcp-ready` arrives: at launch the model genuinely
+  // has no MCP tools yet, and the header should say so rather than imply zero.
+  const [mcp, setMcp] = useState({ ready: false, toolCount: 0, failedCount: 0 });
 
   const patch = useCallback((chatId: string, fn: (rt: SessionRuntime) => SessionRuntime) => {
     setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
@@ -127,7 +131,7 @@ export default function App() {
   // Startup only: load settings and every chat, then restore the saved shell.
   useEffect(() => {
     (async () => {
-      const [s, m, k, docs, chatList, codingList, paused] = await Promise.all([
+      const [s, m, k, docs, chatList, codingList, paused, mcpStatus] = await Promise.all([
         api.getSettings(),
         api.listModels(),
         api.maskedApiKey(),
@@ -136,12 +140,22 @@ export default function App() {
         api.listChats("coding"),
         // The hotkey may have been pressed before the window was listening.
         api.computerState(),
+        // MCP may already have finished starting, in which case `mcp-ready` has
+        // been and gone; ask rather than wait forever for an event we missed.
+        api.mcpStatus(),
       ]);
       setSettings(s);
       setModels(m);
       setKeyMask(k);
       setDocumentsDir(docs);
       setComputer({ paused, reason: paused ? "Computer control is stopped." : null });
+      // A configured, enabled server that is neither running nor failed is still
+      // starting. Anything else means discovery is over, event or no event.
+      setMcp({
+        ready: !mcpStatus.servers.some((s) => s.enabled && !s.running && s.error === null),
+        toolCount: mcpStatus.toolCount,
+        failedCount: mcpStatus.servers.filter((s) => s.enabled && s.error !== null).length,
+      });
 
       // Both sections, so a tab restored from the last session has a title even
       // when it belongs to the other one.
@@ -227,6 +241,9 @@ export default function App() {
         }));
       }),
       onComputer((e) => setComputer({ paused: e.paused, reason: e.reason })),
+      onMcpReady((e) =>
+        setMcp({ ready: true, toolCount: e.toolCount, failedCount: e.failedCount }),
+      ),
       onArtifact((e) => {
         // The whole document arrives on the event, so the panel opens without a
         // second round trip. A model that publishes in the background chat
@@ -666,6 +683,8 @@ export default function App() {
                     computerPaused={computer.paused}
                     computerReason={computer.reason}
                     onResumeComputer={() => api.setComputerPaused(false)}
+                    mcp={mcp}
+                    onMcp={() => setPanel("mcp")}
                     contextTokens={id ? tokensFor(id) : 0}
                     contextMax={max}
                     onSend={(text) => send(text, id, pane)}

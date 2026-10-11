@@ -16,6 +16,7 @@ import type {
   FsEvent,
   GuardEvent,
   MemoryProposal,
+  McpReadyEvent,
   McpServer,
   McpStatus,
   MessageRow,
@@ -26,6 +27,7 @@ import type {
   ShotEvent,
   SkillView,
   ToolEvent,
+  ToolLog,
   TreeListing,
 } from "./types";
 
@@ -95,6 +97,7 @@ export const api = {
   mcpReload: () => invoke<McpStatus>("mcp_reload"),
   mcpRestart: (name: string) => invoke<McpStatus>("mcp_restart", { name }),
   mcpConfigPath: () => invoke<string>("mcp_config_path"),
+  mcpLogs: () => invoke<ToolLog[]>("mcp_logs"),
 
   sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
     invoke<void>("send_message", { chatId, text, attachments }),
@@ -132,6 +135,16 @@ export function onComputer(handler: (e: ComputerStateEvent) => void): Promise<Un
 /** The model published or updated an artifact, for the side panel. */
 export function onArtifact(handler: (e: ArtifactEvent) => void): Promise<UnlistenFn> {
   return listen<ArtifactEvent>("chat-artifact", (event) => handler(event.payload));
+}
+
+/** One MCP tool call, or a line a server wrote to stderr. */
+export function onMcpLog(handler: (e: ToolLog) => void): Promise<UnlistenFn> {
+  return listen<ToolLog>("mcp-log", (event) => handler(event.payload));
+}
+
+/** MCP discovery finished, so the tool list is now what it will be. */
+export function onMcpReady(handler: (e: McpReadyEvent) => void): Promise<UnlistenFn> {
+  return listen<McpReadyEvent>("mcp-ready", (event) => handler(event.payload));
 }
 
 export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {
