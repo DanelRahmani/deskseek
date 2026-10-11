@@ -30,6 +30,7 @@ import type {
   Settings,
   ShotEvent,
   SkillView,
+  ToolGrant,
   ToolEvent,
   ToolLog,
   TreeListing,
@@ -107,6 +108,8 @@ export const api = {
     invoke<string[]>("list_tool_permissions", { workspace }),
   revokeToolPermission: (workspace: string, tool: string) =>
     invoke<void>("revoke_tool_permission", { workspace, tool }),
+  /** Every stored "always allow" grant, so it can be seen and taken back. */
+  toolGrants: () => invoke<ToolGrant[]>("tool_grants"),
 
   documentsDir: () => invoke<string>("documents_dir"),
   /** Write a whole chat to a Markdown file in the documents folder. */

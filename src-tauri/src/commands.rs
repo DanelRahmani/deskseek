@@ -828,6 +828,26 @@ pub fn revoke_tool_permission(
     db::revoke_tool(&conn, &workspace, &tool).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolGrant {
+    pub workspace: String,
+    pub tool: String,
+}
+
+/// Every stored "always allow" grant: which tool, in which folder. The other
+/// decisions last only as long as the app is running; these are the ones that
+/// survive a restart, and until now nothing showed them.
+#[tauri::command]
+pub fn tool_grants(state: State<'_, AppState>) -> Result<Vec<ToolGrant>, String> {
+    let conn = state.db.lock().unwrap();
+    let rows = db::all_allowed_tools(&conn).map_err(|e| e.to_string())?;
+    Ok(rows
+        .into_iter()
+        .map(|(workspace, tool)| ToolGrant { workspace, tool })
+        .collect())
+}
+
 // --------------------------------------------------------------- messaging
 
 #[tauri::command]

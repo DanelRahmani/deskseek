@@ -5,7 +5,63 @@ import { THEMES, isHexColour } from "../lib/theme";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
-import type { EnvProbe, Instruction, ModelInfo, Settings } from "../types";
+import type { EnvProbe, Instruction, ModelInfo, Settings, ToolGrant } from "../types";
+
+/**
+ * The stored "always allow" grants.
+ *
+ * Its own component so the list can load and change without touching the
+ * settings form around it: revoking one is not a settings edit, and it must not
+ * mark the dialog dirty.
+ */
+function Grants() {
+  const [grants, setGrants] = useState<ToolGrant[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .toolGrants()
+      .then(setGrants)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  const revoke = async (grant: ToolGrant) => {
+    try {
+      await api.revokeToolPermission(grant.workspace, grant.tool);
+      setGrants((prev) => prev.filter((g) => g !== grant));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  if (error) return <p className="mt-2 text-[11px] text-red-400">{error}</p>;
+  if (grants.length === 0) {
+    return (
+      <p className="mt-2 text-[11px] text-neutral-600">
+        Nothing is permanently allowed yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="mt-2 space-y-1">
+      {grants.map((grant) => (
+        <li key={`${grant.workspace}|${grant.tool}`} className="flex items-center gap-2 text-xs">
+          <span className="shrink-0 font-mono text-neutral-300">{grant.tool}</span>
+          <span className="truncate text-neutral-600" title={grant.workspace}>
+            {grant.workspace}
+          </span>
+          <button
+            onClick={() => void revoke(grant)}
+            className="ml-auto shrink-0 text-neutral-500 transition hover:text-red-400"
+            title="Take this back: the tool asks again in this folder"
+          >
+            ×
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 interface Props {
   settings: Settings;
@@ -1141,6 +1197,15 @@ export function SettingsDialog({
                   boundary — only a container or a WSL distribution separates a command from the
                   rest of the machine.
                 </p>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Always allowed, per folder</label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  "Allow always" on an approval is remembered for that folder and survives a
+                  restart. Nothing else is: the other decisions last as long as the app is running.
+                </p>
+                <Grants />
               </section>
             </>
           )}

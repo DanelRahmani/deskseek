@@ -90,7 +90,9 @@ Both sections are functional:
 - Tools: `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `run_command`,
   `git_status`, `git_diff`, `git_log`, `git_commit`, `git_push`
 - **Every write and every command asks first** — allow once, allow for the session, allow
-  always for that folder, or deny. Reads run freely
+  always for that folder, or deny. Reads run freely. The *always* answers live in
+  **Settings → Commands → Always allowed, per folder**, where each one can be taken back — the
+  only decisions that survive a restart are the ones you can see and revoke
 - A **path sandbox** refuses anything outside the workspace, including `..` traversal and
   symlink escapes; the API key is stripped from every child process environment
 - **Commands can run in a container** instead of on this machine — see *Where commands run* below

@@ -811,6 +811,16 @@ pub fn list_allowed_tools(conn: &Connection, workspace: &str) -> rusqlite::Resul
     rows.collect()
 }
 
+/// Every grant there is, as `(workspace, tool)`. The list above answers "what may
+/// this folder do"; nothing answered "what have I ever allowed", which is the
+/// question a user asks when they want it taken back.
+pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut stmt =
+        conn.prepare("SELECT workspace, tool FROM tool_permissions ORDER BY workspace, tool")?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
 // --------------------------------------------------------------- artifacts
 
 /// One artifact: a titled, versioned document the panel renders. `kind` picks

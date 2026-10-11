@@ -27,6 +27,12 @@ export interface ChatRow {
   updated_at: number;
 }
 
+/** One stored "always allow" grant: a tool, in one folder. */
+export interface ToolGrant {
+  workspace: string;
+  tool: string;
+}
+
 /** One message that matched a full-text search, with its match in context. */
 export interface MessageHit {
   chatId: string;
