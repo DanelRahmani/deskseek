@@ -279,7 +279,7 @@ pub async fn browser_read(explicit_path: &str, url: &str) -> Result<String, Stri
         .arg(&url)
         .stdin(Stdio::null());
 
-    let raw = run_process(cmd, None, BROWSER_TIMEOUT_SECS, false).await?;
+    let raw = run_process(cmd, None, BROWSER_TIMEOUT_SECS, false, None).await?;
     // A launch that produced no HTML at all is a failure, not an empty page —
     // say so rather than handing the model a blank result.
     if !raw.contains('<') {

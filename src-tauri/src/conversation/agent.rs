@@ -12,19 +12,25 @@ use crate::api::models;
 use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::Decision;
 use crate::conversation::assemble::{build_messages, system_with_memory, Turn};
+use crate::runs::Cancel;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{self, exec, ToolClass};
+use crate::tools::{self, exec, guard, ToolClass};
 use crate::AppState;
 
+pub const EVENT_STARTED: &str = "chat-started";
 pub const EVENT_DELTA: &str = "chat-delta";
 pub const EVENT_TOOL: &str = "chat-tool";
 pub const EVENT_APPROVAL: &str = "chat-approval";
 pub const EVENT_DONE: &str = "chat-done";
 pub const EVENT_ERROR: &str = "chat-error";
+pub const EVENT_GUARD: &str = "chat-guard";
 
 /// How many tool round-trips before we stop and hand back to the user. A cap is
 /// essential: without it a confused model can loop forever on its own budget.
 pub const MAX_TOOL_ROUNDS: usize = 12;
+
+/// Auto mode blocks are counted; this many in one run drops back to asking.
+const MAX_STRIKES: u32 = 3;
 
 const CODING_RULES: &str = "\
 You are in coding mode, working inside the folder above and nowhere else.
@@ -136,6 +142,27 @@ approval first, so say in one line what you are about to do and then call it.",
     }
 
     let scope = if coding { "coding" } else { "chat" };
+
+    // The model must know how much rope it has, so it plans around the guard
+    // instead of being surprised by it.
+    match guard::PermissionMode::parse(&chat.permission_mode) {
+        guard::PermissionMode::Manual => {}
+        guard::PermissionMode::Auto => base.push_str(
+            "\n\n# Approvals\n\n\
+This chat is in auto mode: file writes and commands run without asking, so say what you are \
+doing in one line as you go. A safety guard refuses catastrophic commands (disk formatting, \
+`git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`) and commands that \
+upload local data to the network. A refusal is final — do not retry it; tell the user what you \
+wanted to do instead.",
+        ),
+        guard::PermissionMode::Skip => base.push_str(
+            "\n\n# Approvals\n\n\
+This chat is in skip mode: nothing is shown to the user for approval; it all just runs. Say what \
+you are doing as you go. Only catastrophic commands (disk formatting, forced history rewrites, \
+publishing, `rm -rf /`) are still refused — a refusal is final, so do not retry it.",
+        ),
+    }
+
     for instruction in settings
         .instructions
         .iter()
@@ -174,6 +201,9 @@ permission first — the app handles it.",
 
 /// Asks the user whether a tool may run, unless it is already covered by a
 /// read-only class, a session grant, or a stored permission.
+///
+/// A stopped run must not leave the loop parked on a prompt, so the wait also
+/// ends (as a denial) the moment the run is cancelled.
 async fn approve(
     app: &AppHandle,
     state: &AppState,
@@ -182,6 +212,7 @@ async fn approve(
     tool: &str,
     class: ToolClass,
     args: &Value,
+    cancel: &Cancel,
 ) -> bool {
     let ws_key = workspace.to_string_lossy().to_string();
 
@@ -210,7 +241,10 @@ async fn approve(
     );
 
     // A dropped sender means the app went away — deny rather than hang.
-    let decision = rx.await.unwrap_or(Decision::Deny);
+    let decision = tokio::select! {
+        _ = cancel.cancelled() => Decision::Deny,
+        decision = rx => decision.unwrap_or(Decision::Deny),
+    };
     match decision {
         Decision::Session => {
             state.approvals.grant_session(&ws_key, tool);
@@ -272,6 +306,7 @@ async fn run_tool(
     name: &str,
     args: &Value,
     ws: &std::path::Path,
+    cancel: &Cancel,
 ) -> Result<String, String> {
     if matches!(name, "fetch_url" | "browser_read" | "web_search") {
         return run_browse_tool(state, name, args).await;
@@ -307,10 +342,15 @@ async fn run_tool(
         ));
     }
 
-    exec::execute(name, args, ws).await
+    exec::execute(name, args, ws, cancel).await
 }
 
-pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), String> {
+pub async fn run(
+    app: AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    cancel: Cancel,
+) -> Result<(), String> {
     let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
     let settings = state.settings.lock().unwrap().clone();
     let chat = {
@@ -356,8 +396,21 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
     let mut last_usage = None;
     let mut last_message_id = String::new();
     let mut last_finish: Option<String> = None;
+    // Auto and Skip run without asking; a blocked call counts a strike, and
+    // enough strikes drop the run back to asking.
+    let mut mode = guard::PermissionMode::parse(&chat.permission_mode);
+    let mut strikes: u32 = 0;
+
+    let _ = app.emit(
+        EVENT_STARTED,
+        serde_json::json!({ "chatId": chat_id }),
+    );
 
     for _round in 0..MAX_TOOL_ROUNDS {
+        // Stopped between rounds: keep whatever the last round produced.
+        if cancel.is_cancelled() {
+            break;
+        }
         let history = {
             let conn = state.db.lock().unwrap();
             db::list_messages(&conn, chat_id).map_err(|e| e.to_string())?
@@ -391,7 +444,7 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
         let emit_app = app.clone();
         let emit_chat = chat_id.to_string();
         let outcome = match client
-            .stream_chat(&request, |event| {
+            .stream_chat(&request, &cancel, |event| {
                 let (kind, text) = match event {
                     StreamEvent::Content(t) => ("content", t),
                     StreamEvent::Reasoning(t) => ("reasoning", t),
@@ -410,6 +463,18 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
                     EVENT_ERROR,
                     serde_json::json!({ "chatId": chat_id, "message": message }),
                 );
+                // A done event in every path, so a background session's tab can
+                // clear its running indicator.
+                let _ = app.emit(
+                    EVENT_DONE,
+                    serde_json::json!({
+                        "chatId": chat_id,
+                        "messageId": last_message_id,
+                        "usage": null,
+                        "costUsd": null,
+                        "finishReason": "error",
+                    }),
+                );
                 return Err(message);
             }
         };
@@ -427,13 +492,22 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
             .as_ref()
             .and_then(|c| serde_json::to_string(c).ok());
 
-        {
+        let content = outcome.message.content.as_ref().and_then(|c| c.as_text());
+        let has_content = content.as_deref().is_some_and(|t| !t.trim().is_empty());
+        let has_calls = outcome
+            .message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|c| !c.is_empty());
+
+        // A stop before the first token produced nothing worth storing.
+        if !(outcome.cancelled && !has_content && !has_calls) {
             let conn = state.db.lock().unwrap();
             let row = db::insert_message(
                 &conn,
                 chat_id,
                 "assistant",
-                outcome.message.content.as_ref().and_then(|c| c.as_text()),
+                content.as_deref(),
                 outcome.message.reasoning_content.as_deref(),
                 tool_calls_json.as_deref(),
                 None,
@@ -442,6 +516,10 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
             .map_err(|e| e.to_string())?;
             db::touch_chat(&conn, chat_id).map_err(|e| e.to_string())?;
             last_message_id = row.id;
+        }
+
+        if outcome.cancelled {
+            break;
         }
 
         let calls = outcome.message.tool_calls.unwrap_or_default();
@@ -471,13 +549,58 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
                 }),
             );
 
-            let allowed = matches!(class, ToolClass::Read | ToolClass::Internal)
-                || approve(&app, state, chat_id, &ws, &name, class, &args).await;
+            let mut denial: Option<String> = None;
+            let allowed = if matches!(class, ToolClass::Read | ToolClass::Internal) {
+                true
+            } else {
+                match mode {
+                    guard::PermissionMode::Manual => {
+                        approve(&app, state, chat_id, &ws, &name, class, &args, &cancel).await
+                    }
+                    guard::PermissionMode::Auto | guard::PermissionMode::Skip => {
+                        match guard::classify(&name, &args, mode == guard::PermissionMode::Skip) {
+                            None => true,
+                            Some(reason) => {
+                                strikes += 1;
+                                let _ = app.emit(
+                                    EVENT_GUARD,
+                                    serde_json::json!({
+                                        "chatId": chat_id,
+                                        "tool": name,
+                                        "args": args,
+                                        "reason": reason,
+                                        "mode": mode.as_str(),
+                                    }),
+                                );
+                                if mode == guard::PermissionMode::Auto && strikes >= MAX_STRIKES {
+                                    mode = guard::PermissionMode::Manual;
+                                    let _ = app.emit(
+                                        EVENT_GUARD,
+                                        serde_json::json!({
+                                            "chatId": chat_id,
+                                            "escalated": true,
+                                            "reason": "Repeated blocked actions — would you like to approve the next one yourself?",
+                                        }),
+                                    );
+                                }
+                                denial = Some(format!(
+                                    "Blocked by the safety guard ({}). Do not retry this — tell the user what you wanted to do and ask how they would prefer to proceed.",
+                                    reason
+                                ));
+                                false
+                            }
+                        }
+                    }
+                }
+            };
 
             let result = if allowed {
-                run_tool(state, &name, &args, &ws).await
+                run_tool(state, &name, &args, &ws, &cancel).await
             } else {
-                Err("The user denied this action. Do not retry it — ask them what they would prefer.".to_string())
+                Err(denial.unwrap_or_else(|| {
+                    "The user denied this action. Do not retry it — ask them what they would prefer."
+                        .to_string()
+                }))
             };
 
             let (ok, text) = match &result {
@@ -501,6 +624,15 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
                 db::insert_message(&conn, chat_id, "tool", Some(&content), None, None, Some(&call.id), None)
                     .map_err(|e| e.to_string())?;
             }
+
+            // Stopped while a tool ran: record this result, then stop.
+            if cancel.is_cancelled() {
+                break;
+            }
+        }
+
+        if cancel.is_cancelled() {
+            break;
         }
     }
 

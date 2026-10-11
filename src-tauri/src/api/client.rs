@@ -7,6 +7,7 @@ use futures_util::StreamExt;
 
 use crate::api::stream::{MessageAccumulator, SseBuffer};
 use crate::api::types::{ChatMessage, ChatRequest, StreamChunk, Usage};
+use crate::runs::Cancel;
 
 /// Long timeout: a thinking-mode answer with a 384K output budget can stream
 /// for a long time.
@@ -29,6 +30,8 @@ pub struct StreamOutcome {
     pub message: ChatMessage,
     pub usage: Usage,
     pub finish_reason: Option<String>,
+    /// True when the user stopped the run: `message` holds whatever arrived.
+    pub cancelled: bool,
 }
 
 pub struct Client {
@@ -66,13 +69,13 @@ impl Client {
 
     /// Stream one assistant turn, invoking `on_event` as deltas arrive.
     ///
-    /// ponytail: there is no cancellation token yet — a request runs to
-    /// completion or the app closes. Ceiling: a runaway answer cannot be
-    /// aborted from the UI. Upgrade path: thread a `CancellationToken` in here
-    /// and check it each loop iteration, plus a `cancel_stream` command.
+    /// `cancel` is checked between chunks; a cancelled run returns the partial
+    /// message with `cancelled: true` rather than an error, so the caller can
+    /// persist what the model managed to say before it was stopped.
     pub async fn stream_chat<F>(
         &self,
         req: &ChatRequest,
+        cancel: &Cancel,
         mut on_event: F,
     ) -> anyhow::Result<StreamOutcome>
     where
@@ -98,8 +101,21 @@ impl Client {
         let mut finish_reason = None;
         let mut sse = SseBuffer::default();
         let mut stream = resp.bytes_stream();
+        let mut cancelled = false;
 
-        while let Some(item) = stream.next().await {
+        // Pinned outside the loop: one subscription per run, not per chunk.
+        let stopped = cancel.cancelled();
+        tokio::pin!(stopped);
+
+        loop {
+            let item = tokio::select! {
+                _ = &mut stopped => {
+                    cancelled = true;
+                    break;
+                }
+                item = stream.next() => item,
+            };
+            let Some(item) = item else { break };
             let bytes = item.context("stream interrupted")?;
             for payload in sse.push(&bytes) {
                 if payload == "[DONE]" {
@@ -130,7 +146,12 @@ impl Client {
         Ok(StreamOutcome {
             message: acc.into_message(),
             usage,
-            finish_reason,
+            finish_reason: if cancelled {
+                Some("cancelled".to_string())
+            } else {
+                finish_reason
+            },
+            cancelled,
         })
     }
 

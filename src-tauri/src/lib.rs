@@ -4,6 +4,7 @@ mod commands;
 mod conversation;
 mod mcp;
 mod memory;
+mod runs;
 mod skills;
 mod store;
 mod tools;
@@ -18,6 +19,8 @@ pub struct AppState {
     pub paths: store::paths::AppPaths,
     pub settings: Mutex<store::settings::Settings>,
     pub approvals: approvals::Approvals,
+    /// Live agent runs, so the UI can stop one mid-stream.
+    pub runs: runs::Runs,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
@@ -52,6 +55,7 @@ pub fn run() {
                 paths,
                 settings: Mutex::new(settings),
                 approvals: approvals::Approvals::default(),
+                runs: runs::Runs::default(),
                 mcp: mcp_manager.clone(),
             });
 
@@ -77,6 +81,7 @@ pub fn run() {
             commands::rename_chat,
             commands::delete_chat,
             commands::set_chat_model,
+            commands::set_chat_permission_mode,
             commands::set_chat_workspace,
             commands::get_memory,
             commands::set_memory,
@@ -96,6 +101,8 @@ pub fn run() {
             commands::list_tool_permissions,
             commands::revoke_tool_permission,
             commands::send_message,
+            commands::stop_chat,
+            commands::running_chats,
             commands::mcp_status,
             commands::mcp_config_path,
             commands::mcp_servers,

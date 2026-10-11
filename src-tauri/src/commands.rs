@@ -11,6 +11,7 @@ use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
+use crate::tools::guard::PermissionMode;
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -106,6 +107,7 @@ pub fn create_chat(
         &model,
         settings.thinking,
         &settings.effort,
+        &settings.permission_mode,
     )
     .map_err(|e| e.to_string())
 }
@@ -138,6 +140,17 @@ pub fn set_chat_model(
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::set_chat_model(&conn, &chat_id, &model, thinking, &effort).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_chat_permission_mode(
+    state: State<'_, AppState>,
+    chat_id: String,
+    mode: String,
+) -> Result<(), String> {
+    let mode = PermissionMode::parse(&mode).as_str();
+    let conn = state.db.lock().unwrap();
+    db::set_chat_permission_mode(&conn, &chat_id, mode).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -388,7 +401,23 @@ pub async fn send_message(
         }
     }
 
-    agent::run(app, &state, &chat_id).await
+    // One live run per chat: registering cancels any turn already in flight.
+    let (run_id, cancel) = state.runs.begin(&chat_id);
+    let result = agent::run(app, &state, &chat_id, cancel).await;
+    state.runs.finish(&chat_id, run_id);
+    result
+}
+
+/// Stops the live run for a chat. False when nothing was running.
+#[tauri::command]
+pub fn stop_chat(state: State<'_, AppState>, chat_id: String) -> bool {
+    state.runs.cancel(&chat_id)
+}
+
+/// Chat ids with a run in flight — how a background tab knows it is still going.
+#[tauri::command]
+pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
+    state.runs.running()
 }
 
 // ------------------------------------------------------------------- MCP

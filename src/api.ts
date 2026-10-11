@@ -7,11 +7,13 @@ import type {
   DeltaEvent,
   DoneEvent,
   ErrorEvent,
+  GuardEvent,
   MemoryProposal,
   McpServer,
   McpStatus,
   MessageRow,
   ModelInfo,
+  PermissionMode,
   SectionKind,
   Settings,
   SkillView,
@@ -38,6 +40,8 @@ export const api = {
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
+  setChatPermissionMode: (chatId: string, mode: PermissionMode) =>
+    invoke<void>("set_chat_permission_mode", { chatId, mode }),
   setChatWorkspace: (chatId: string, workspace: string | null) =>
     invoke<void>("set_chat_workspace", { chatId, workspace }),
 
@@ -75,6 +79,8 @@ export const api = {
 
   sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
     invoke<void>("send_message", { chatId, text, attachments }),
+  stopChat: (chatId: string) => invoke<boolean>("stop_chat", { chatId }),
+  runningChats: () => invoke<string[]>("running_chats"),
 };
 
 export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {
@@ -95,4 +101,8 @@ export function onDone(handler: (e: DoneEvent) => void): Promise<UnlistenFn> {
 
 export function onError(handler: (e: ErrorEvent) => void): Promise<UnlistenFn> {
   return listen<ErrorEvent>("chat-error", (event) => handler(event.payload));
+}
+
+export function onGuard(handler: (e: GuardEvent) => void): Promise<UnlistenFn> {
+  return listen<GuardEvent>("chat-guard", (event) => handler(event.payload));
 }

@@ -3,6 +3,7 @@
 
 pub mod browse;
 pub mod exec;
+pub mod guard;
 pub mod sandbox;
 pub mod walk;
 

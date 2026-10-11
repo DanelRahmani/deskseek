@@ -15,9 +15,13 @@ export interface ChatRow {
   model: string;
   thinking: boolean;
   effort: string;
+  /** `manual` asks before every write and command; `auto` and `skip` do not. */
+  permission_mode: PermissionMode;
   created_at: number;
   updated_at: number;
 }
+
+export type PermissionMode = "manual" | "auto" | "skip";
 
 export interface MessageRow {
   id: string;
@@ -156,6 +160,16 @@ export interface DoneEvent {
 export interface ErrorEvent {
   chatId: string;
   message: string;
+}
+
+/** Emitted when the safety guard refuses a call, or drops a chat back to asking. */
+export interface GuardEvent {
+  chatId: string;
+  tool?: string;
+  args?: unknown;
+  reason: string;
+  mode?: PermissionMode;
+  escalated?: boolean;
 }
 
 /** A tool call the UI is rendering. */

@@ -10,6 +10,7 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+use crate::runs::Cancel;
 use crate::tools::{sandbox, walk};
 
 const MAX_READ_BYTES: u64 = 256 * 1024;
@@ -173,7 +174,7 @@ fn edit_file(args: &Value, ws: &Path) -> Result<String, String> {
     }
 }
 
-async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
+async fn run_shell(command: &str, ws: &Path, cancel: &Cancel) -> Result<String, String> {
     let cmd = if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(command);
@@ -183,7 +184,7 @@ async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
         c.arg("-c").arg(command);
         c
     };
-    run_process(cmd, Some(ws), COMMAND_TIMEOUT_SECS, true).await
+    run_process(cmd, Some(ws), COMMAND_TIMEOUT_SECS, true, Some(cancel)).await
 }
 
 /// Runs a prepared command, draining both pipes and enforcing a timeout.
@@ -191,11 +192,15 @@ async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
 ///
 /// `include_stderr` is false for the browser, which writes Chromium debug
 /// chatter to stderr that has nothing to do with the page.
+///
+/// `cancel` kills the child the moment the user stops the run; a browser fetch
+/// passes `None` because it is short-lived and never worth interrupting.
 pub(crate) async fn run_process(
     mut cmd: Command,
     cwd: Option<&Path>,
     timeout_secs: u64,
     include_stderr: bool,
+    cancel: Option<&Cancel>,
 ) -> Result<String, String> {
     if let Some(dir) = cwd {
         cmd.current_dir(dir);
@@ -224,14 +229,29 @@ pub(crate) async fn run_process(
         buf
     });
 
-    let status = match timeout(Duration::from_secs(timeout_secs), child.wait()).await {
-        Ok(Ok(status)) => Some(status),
-        Ok(Err(e)) => return Err(format!("command failed: {e}")),
-        Err(_) => {
-            let _ = child.kill().await;
-            None
+    let stop = async {
+        match cancel {
+            Some(cancel) => cancel.cancelled().await,
+            None => std::future::pending::<()>().await,
         }
     };
+    tokio::pin!(stop);
+
+    let mut cancelled = false;
+    let status = tokio::select! {
+        _ = &mut stop => {
+            cancelled = true;
+            None
+        }
+        waited = timeout(Duration::from_secs(timeout_secs), child.wait()) => match waited {
+            Ok(Ok(status)) => Some(status),
+            Ok(Err(e)) => return Err(format!("command failed: {e}")),
+            Err(_) => None,
+        },
+    };
+    if status.is_none() {
+        let _ = child.kill().await;
+    }
 
     let stdout = out_task.await.unwrap_or_default();
     let stderr = err_task.await.unwrap_or_default();
@@ -243,6 +263,9 @@ pub(crate) async fn run_process(
     match status {
         Some(status) if !status.success() => {
             text.push_str(&format!("\n(exit code {:?})", status.code()));
+        }
+        None if cancelled => {
+            text.push_str("\n(stopped by the user)");
         }
         None => {
             text.push_str(&format!("\n(timed out after {timeout_secs}s)"));
@@ -278,7 +301,12 @@ async fn git(ws: &Path, args: &[&str]) -> Result<String, String> {
     Ok(truncate(text.trim_end().to_string()))
 }
 
-pub async fn execute(tool: &str, args: &Value, ws: &Path) -> Result<String, String> {
+pub async fn execute(
+    tool: &str,
+    args: &Value,
+    ws: &Path,
+    cancel: &Cancel,
+) -> Result<String, String> {
     match tool {
         "read_file" => read_file(args, ws),
         "list_dir" => list_dir(args, ws),
@@ -286,7 +314,7 @@ pub async fn execute(tool: &str, args: &Value, ws: &Path) -> Result<String, Stri
         "grep" => grep(args, ws),
         "write_file" => write_file(args, ws),
         "edit_file" => edit_file(args, ws),
-        "run_command" => run_shell(require_str(args, "command")?, ws).await,
+        "run_command" => run_shell(require_str(args, "command")?, ws, cancel).await,
         "git_status" => git(ws, &["status", "--short", "--branch"]).await,
         "git_diff" => git(ws, &["--no-pager", "diff", "HEAD"]).await,
         "git_log" => {
@@ -407,7 +435,7 @@ mod tests {
     async fn run_command_captures_output_and_survives_sandbox() {
         let ws = workspace();
         let cmd = if cfg!(windows) { "echo hello" } else { "echo hello" };
-        let out = run_shell(cmd, &ws).await.unwrap();
+        let out = run_shell(cmd, &ws, &Cancel::new()).await.unwrap();
         assert!(out.contains("hello"), "{out}");
         let _ = std::fs::remove_dir_all(&ws);
     }

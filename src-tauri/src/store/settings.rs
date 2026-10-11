@@ -75,6 +75,13 @@ pub struct Settings {
     /// auto-detect (Edge, then Chrome, then Chromium on PATH).
     #[serde(default)]
     pub browser_path: String,
+    /// Permission mode new chats start in: `manual` | `auto` | `skip`.
+    #[serde(default = "default_permission_mode")]
+    pub permission_mode: String,
+}
+
+fn default_permission_mode() -> String {
+    "manual".to_string()
 }
 
 fn default_true() -> bool {
@@ -96,6 +103,7 @@ impl Default for Settings {
             browsing_enabled: true,
             searxng_url: String::new(),
             browser_path: String::new(),
+            permission_mode: default_permission_mode(),
         }
     }
 }

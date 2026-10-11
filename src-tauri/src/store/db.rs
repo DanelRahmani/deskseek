@@ -18,6 +18,8 @@ pub struct ChatRow {
     pub model: String,
     pub thinking: bool,
     pub effort: String,
+    /// `manual` | `auto` | `skip` — see `tools::guard::PermissionMode`.
+    pub permission_mode: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS chats (
     model        TEXT NOT NULL,
     thinking     INTEGER NOT NULL DEFAULT 1,
     effort       TEXT NOT NULL DEFAULT 'high',
+    permission_mode TEXT NOT NULL DEFAULT 'manual',
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
@@ -99,12 +102,16 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // Additive migrations for databases written by earlier versions. A failure
     // here just means the column is already present.
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'manual'",
+        [],
+    );
     Ok(conn)
 }
 
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, created_at, updated_at
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -116,8 +123,9 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             model: r.get(4)?,
             thinking: r.get::<_, i64>(5)? != 0,
             effort: r.get(6)?,
-            created_at: r.get(7)?,
-            updated_at: r.get(8)?,
+            permission_mode: r.get(7)?,
+            created_at: r.get(8)?,
+            updated_at: r.get(9)?,
         })
     })?;
     rows.collect()
@@ -130,13 +138,14 @@ pub fn create_chat(
     model: &str,
     thinking: bool,
     effort: &str,
+    permission_mode: &str,
 ) -> rusqlite::Result<ChatRow> {
     let id = uuid::Uuid::new_v4().to_string();
     let ts = now_ts();
     conn.execute(
-        "INSERT INTO chats (id, title, kind, workspace, model, thinking, effort, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        params![id, "New chat", kind, workspace, model, thinking as i64, effort, ts],
+        "INSERT INTO chats (id, title, kind, workspace, model, thinking, effort, permission_mode, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+        params![id, "New chat", kind, workspace, model, thinking as i64, effort, permission_mode, ts],
     )?;
     Ok(ChatRow {
         id,
@@ -146,6 +155,7 @@ pub fn create_chat(
         model: model.to_string(),
         thinking,
         effort: effort.to_string(),
+        permission_mode: permission_mode.to_string(),
         created_at: ts,
         updated_at: ts,
     })
@@ -153,7 +163,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, created_at, updated_at
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -165,11 +175,24 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 model: r.get(4)?,
                 thinking: r.get::<_, i64>(5)? != 0,
                 effort: r.get(6)?,
-                created_at: r.get(7)?,
-                updated_at: r.get(8)?,
+                permission_mode: r.get(7)?,
+                created_at: r.get(8)?,
+                updated_at: r.get(9)?,
             })
         },
     )
+}
+
+pub fn set_chat_permission_mode(
+    conn: &Connection,
+    id: &str,
+    mode: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET permission_mode = ?2 WHERE id = ?1",
+        params![id, mode],
+    )?;
+    Ok(())
 }
 
 pub fn set_chat_model(
@@ -481,7 +504,7 @@ mod tests {
     #[test]
     fn messages_are_sequenced_and_ordered() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         insert_message(&conn, &chat.id, "user", Some("one"), None, None, None, None).unwrap();
         insert_message(&conn, &chat.id, "assistant", Some("two"), None, None, None, None).unwrap();
         let msgs = list_messages(&conn, &chat.id).unwrap();
@@ -494,8 +517,9 @@ mod tests {
     #[test]
     fn chats_are_scoped_by_kind() {
         let conn = mem();
-        create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
-        create_chat(&conn, "coding", Some("C:/proj"), "deepseek-v4-pro", true, "high").unwrap();
+        create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
+        create_chat(&conn, "coding", Some("C:/proj"), "deepseek-v4-pro", true, "high", "manual")
+            .unwrap();
         assert_eq!(list_chats(&conn, "chat").unwrap().len(), 1);
         assert_eq!(list_chats(&conn, "coding").unwrap().len(), 1);
         assert_eq!(list_chats(&conn, "nothing").unwrap().len(), 0);
@@ -504,7 +528,7 @@ mod tests {
     #[test]
     fn deleting_a_chat_removes_its_messages() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         insert_message(&conn, &chat.id, "user", Some("hi"), None, None, None, None).unwrap();
         delete_chat(&conn, &chat.id).unwrap();
         assert!(list_messages(&conn, &chat.id).unwrap().is_empty());
@@ -514,16 +538,27 @@ mod tests {
     #[test]
     fn thinking_round_trips_as_a_bool() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", false, "low").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", false, "low", "manual").unwrap();
         let back = get_chat(&conn, &chat.id).unwrap();
         assert!(!back.thinking);
         assert_eq!(back.effort, "low");
     }
 
     #[test]
+    fn permission_mode_round_trips_and_can_be_changed() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "auto")
+            .unwrap();
+        assert_eq!(chat.permission_mode, "auto");
+        assert_eq!(get_chat(&conn, &chat.id).unwrap().permission_mode, "auto");
+        set_chat_permission_mode(&conn, &chat.id, "skip").unwrap();
+        assert_eq!(get_chat(&conn, &chat.id).unwrap().permission_mode, "skip");
+    }
+
+    #[test]
     fn proposals_start_pending_and_can_be_marked() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         let made = insert_proposals(
             &conn,
             &chat.id,
@@ -544,7 +579,7 @@ mod tests {
     #[test]
     fn deleting_a_chat_clears_its_proposals_and_skills() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         insert_proposals(&conn, &chat.id, &["fact".to_string()]).unwrap();
         set_chat_skills(&conn, &chat.id, &["concise".to_string()]).unwrap();
         delete_chat(&conn, &chat.id).unwrap();
@@ -555,7 +590,7 @@ mod tests {
     #[test]
     fn skills_are_replaced_not_appended() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         set_chat_skills(&conn, &chat.id, &["a".to_string(), "b".to_string()]).unwrap();
         set_chat_skills(&conn, &chat.id, &["b".to_string()]).unwrap();
         assert_eq!(get_chat_skills(&conn, &chat.id).unwrap(), vec!["b".to_string()]);
@@ -576,7 +611,7 @@ mod tests {
     #[test]
     fn summaries_round_trip_and_overwrite() {
         let conn = mem();
-        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high").unwrap();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
         assert!(get_summary(&conn, &chat.id).unwrap().is_none());
         set_summary(&conn, &chat.id, "first").unwrap();
         set_summary(&conn, &chat.id, "second").unwrap();

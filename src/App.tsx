@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, onApproval, onDelta, onDone, onError, onTool } from "./api";
+import { api, onApproval, onDelta, onDone, onError, onGuard, onTool } from "./api";
 import { filesToAttachments } from "./lib/attachments";
 import type {
   ApprovalEvent,
@@ -8,6 +8,7 @@ import type {
   DoneEvent,
   MessageRow,
   ModelInfo,
+  PermissionMode,
   SectionKind,
   Settings,
   ToolRun,
@@ -123,6 +124,14 @@ export default function App() {
       onError((e) => {
         if (e.chatId !== activeIdRef.current) return;
         setError(e.message);
+      }),
+      onGuard((e) => {
+        if (e.chatId !== activeIdRef.current) return;
+        setNotice(
+          e.escalated
+            ? e.reason
+            : `Safety guard refused ${e.tool ?? "a command"}: ${e.reason}`,
+        );
       }),
     ]).then((fns) => {
       if (disposed) fns.forEach((f) => f());
@@ -306,6 +315,26 @@ export default function App() {
     [refreshChats],
   );
 
+  const changeMode = useCallback(
+    async (mode: PermissionMode) => {
+      const chat = activeIdRef.current;
+      if (!chat) return;
+      await api.setChatPermissionMode(chat, mode);
+      await refreshChats(kindRef.current);
+    },
+    [refreshChats],
+  );
+
+  const stop = useCallback(async () => {
+    const chat = activeIdRef.current;
+    if (!chat) return;
+    try {
+      await api.stopChat(chat);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   const decideApproval = useCallback(
     async (requestId: string, decision: "once" | "session" | "always" | "deny") => {
       setApprovals((prev) => prev.filter((a) => a.requestId !== requestId));
@@ -382,7 +411,9 @@ export default function App() {
         contextTokens={contextTokens}
         contextMax={contextMax}
         onSend={send}
+        onStop={stop}
         onModelChange={changeModel}
+        onModeChange={changeMode}
         onPickWorkspace={pickWorkspace}
         onAttach={attach}
         onRemoveAttachment={(index) =>

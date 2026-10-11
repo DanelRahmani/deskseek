@@ -45,6 +45,26 @@ Both sections are functional:
   symlink escapes; the API key is stripped from every child process environment
 - Project context from `AGENTS.md`, else `.deskseek/context.md`
 
+**Approvals, permission modes and stopping a run**
+
+Each conversation carries its own permission mode, chosen in the header:
+
+- **Ask** (default) — pause for approval before every write and every command
+- **Auto** — run without asking. A safety guard refuses known-catastrophic commands (disk
+  formatting, `git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`,
+  download-and-execute pipelines) and commands that upload local data to the network. Three
+  refusals in one run drop the chat back to *Ask* automatically
+- **Skip** — never ask. Only the catastrophic tier is still refused
+
+One honest caveat, stated plainly in the app too: **the guard is a heuristic, not a security
+boundary.** It catches the patterns a confused or prompt-injected model reaches for. It is not a
+sandbox, and a missing match is not proof of safety. The real containment is the workspace path
+sandbox plus the API key being stripped from every child process.
+
+**Stop** — while a run is going, the send button becomes *Stop*. It aborts the model stream, kills
+any running child process, and records whatever the model had produced so far. A chat runs one
+turn at a time: sending again while a turn is in flight stops the old one.
+
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
@@ -120,8 +140,11 @@ cd src-tauri && cargo test
 src/                     React UI (App, Sidebar, ChatView, SettingsDialog, Markdown)
 src-tauri/src/
   api/                   DeepSeek client, SSE parsing, delta accumulation, model pricing
-  conversation/          message-array assembly (owns the reasoning-content rule)
+  conversation/          message-array assembly (owns the reasoning-content rule), agent loop
   store/                 SQLite schema, settings JSON, OS keychain, paths
+  tools/                 built-in tools, path sandbox, process runner, permission guard
+  mcp/                   MCP client (rmcp) and server config
+  runs.rs                in-flight run registry + cancel handles
   commands.rs            the Tauri command surface
 ```
 
@@ -131,6 +154,7 @@ Notable invariants (covered by tests):
   carries `tools`** — otherwise the API returns 400.
 - `tool_choice: required`/named is rejected in thinking mode.
 - Model prices are half off-peak; peak is 01:00–04:00 and 06:00–10:00 UTC, Mon–Fri.
+- A chat has at most one live run; starting another cancels the first.
 
 ## License
 

@@ -7,6 +7,7 @@ import type {
   DoneEvent,
   MessageRow,
   ModelInfo,
+  PermissionMode,
   ToolRun,
 } from "../types";
 import { Markdown } from "./Markdown";
@@ -29,7 +30,9 @@ interface Props {
   contextTokens: number;
   contextMax: number;
   onSend: (text: string) => void;
+  onStop: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
+  onModeChange: (mode: PermissionMode) => void;
   onPickWorkspace: () => void;
   onAttach: (files: FileList | File[]) => void;
   onRemoveAttachment: (index: number) => void;
@@ -37,6 +40,14 @@ interface Props {
 }
 
 const EFFORTS = ["low", "high", "max"];
+
+/// The permission modes, in increasing order of autonomy. The labels are what
+/// the user picks; the values are what the backend stores.
+const MODES: { id: PermissionMode; label: string; hint: string }[] = [
+  { id: "manual", label: "Ask", hint: "Pause for approval before every write and command" },
+  { id: "auto", label: "Auto", hint: "Run without asking; a guard refuses dangerous commands" },
+  { id: "skip", label: "Skip", hint: "Never ask; only catastrophic commands are refused" },
+];
 
 /** Kept in sync with the switch in App.tsx's send(). */
 const COMMANDS = [
@@ -71,7 +82,9 @@ export function ChatView({
   contextTokens,
   contextMax,
   onSend,
+  onStop,
   onModelChange,
+  onModeChange,
   onPickWorkspace,
   onAttach,
   onRemoveAttachment,
@@ -181,6 +194,32 @@ export function ChatView({
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {chat && (
+            <div
+              className="flex items-center gap-0.5 rounded-md border border-neutral-800 p-0.5"
+              title={MODES.find((m) => m.id === chat.permission_mode)?.hint}
+            >
+              {MODES.map((mode) => {
+                const active = chat.permission_mode === mode.id;
+                const tone =
+                  mode.id === "skip"
+                    ? "border-red-700 bg-red-500/15 text-red-300"
+                    : "border-sky-800 bg-sky-500/15 text-sky-300";
+                return (
+                  <button
+                    key={mode.id}
+                    onClick={() => onModeChange(mode.id)}
+                    className={`rounded px-1.5 py-0.5 text-[11px] transition ${
+                      active ? tone : "border border-transparent text-neutral-500 hover:text-neutral-300"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div
             className="flex items-center gap-1.5"
             title={`Approximately ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used (chars ÷ 3.6)`}
@@ -243,6 +282,20 @@ export function ChatView({
           )}
         </div>
       </header>
+
+      {chat && chat.permission_mode !== "manual" && (
+        <div
+          className={`shrink-0 px-4 py-1 text-[11px] ${
+            chat.permission_mode === "skip"
+              ? "bg-red-950/40 text-red-300"
+              : "bg-sky-950/30 text-sky-300"
+          }`}
+        >
+          {chat.permission_mode === "skip"
+            ? "Skip mode: writes and commands run without asking. Only catastrophic commands (disk formatting, forced history rewrites, publishing) are refused."
+            : "Auto mode: writes and commands run without asking. A safety guard refuses catastrophic commands and uploads of local data."}
+        </div>
+      )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4">
         <div className="mx-auto flex max-w-3xl flex-col gap-5 py-6">
@@ -384,10 +437,21 @@ export function ChatView({
             <button
               onClick={submit}
               disabled={busy || (!draft.trim() && attachments.length === 0)}
-              className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600"
+              className={`rounded-lg px-3 py-1.5 text-sm font-medium text-white transition disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 ${
+                busy ? "hidden" : "bg-sky-600 hover:bg-sky-500"
+              }`}
             >
-              {busy ? "…" : "Send"}
+              Send
             </button>
+            {busy && (
+              <button
+                onClick={onStop}
+                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 transition hover:border-red-800 hover:bg-red-950/40 hover:text-red-300"
+                title="Stop this run"
+              >
+                Stop
+              </button>
+            )}
           </div>
         </div>
       </div>
