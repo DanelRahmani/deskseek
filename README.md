@@ -18,7 +18,9 @@ Both sections are functional:
 
 **Chat**
 
-- Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code
+- Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code — and every
+  fenced block, and every answer, carries a **Copy** button, so a snippet does not have to be
+  drag-selected out of the page
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
   one. An image is downscaled and sent to the model as a multimodal content part; a text file
   is sent as its own text, so the model can actually read it; anything else is kept as a name

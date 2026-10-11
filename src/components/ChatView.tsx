@@ -11,7 +11,7 @@ import type {
   ToolRun,
 } from "../types";
 import { tasksFrom } from "../lib/tasks";
-import { Markdown } from "./Markdown";
+import { CopyButton, Markdown } from "./Markdown";
 import { formatTokens } from "../lib/context";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
@@ -727,6 +727,11 @@ function Bubble({
         <ThinkingBlock text={message.reasoning_content} streaming={false} />
       )}
       <Markdown>{message.content ?? ""}</Markdown>
+      {message.content && (
+        <div className="mt-1">
+          <CopyButton text={message.content} label="Copy this answer as Markdown" />
+        </div>
+      )}
     </div>
   );
 }
