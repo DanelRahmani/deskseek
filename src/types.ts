@@ -60,6 +60,8 @@ export interface Settings {
   thinking: boolean;
   effort: string;
   theme: string;
+  /** `system` follows the OS; `dark` and `light` override it. */
+  themeMode: string;
   documentsDir: string;
   instructions: Instruction[];
   /** Master switch for fetch_url / browser_read / web_search. */

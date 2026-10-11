@@ -4,6 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>DeskSeek</title>
+    <script>
+      /*
+        Paint the saved theme before the first frame.
+
+        Settings live in a JSON file the webview can only read after start-up,
+        so by the time the app knows which theme to use it has already painted
+        Slate dark. App.tsx caches the resolved tokens here as well, and this
+        applies them synchronously. Anything unreadable simply means the
+        defaults in index.css stand.
+      */
+      try {
+        var saved = localStorage.getItem("deskseek.theme");
+        if (saved) {
+          var tokens = JSON.parse(saved);
+          for (var name in tokens) {
+            document.documentElement.style.setProperty(name, tokens[name]);
+          }
+        }
+      } catch (e) {
+        /* A missing or unparseable cache is not worth failing a launch over. */
+      }
+    </script>
   </head>
 
   <body>

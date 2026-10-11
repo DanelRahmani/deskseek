@@ -57,7 +57,13 @@ pub struct Settings {
     pub system_prompt: String,
     pub thinking: bool,
     pub effort: String,
+    /// A theme id from `THEMES` in src/lib/theme.ts. An unknown id resolves to
+    /// the first theme rather than failing, so this is free to grow.
+    #[serde(default = "default_theme")]
     pub theme: String,
+    /// `system` follows the OS; `dark` and `light` override it.
+    #[serde(default = "default_theme_mode")]
+    pub theme_mode: String,
     /// Folder chat-mode document tools may touch. Empty means the default
     /// `documents` folder inside the app data directory.
     #[serde(default)]
@@ -109,6 +115,14 @@ fn default_sandbox_image() -> String {
     "alpine:latest".to_string()
 }
 
+fn default_theme() -> String {
+    "slate".to_string()
+}
+
+fn default_theme_mode() -> String {
+    "system".to_string()
+}
+
 fn default_true() -> bool {
     true
 }
@@ -122,7 +136,8 @@ impl Default for Settings {
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
             thinking: true,
             effort: "high".to_string(),
-            theme: "system".to_string(),
+            theme: default_theme(),
+            theme_mode: default_theme_mode(),
             documents_dir: String::new(),
             instructions: default_instructions(),
             browsing_enabled: true,

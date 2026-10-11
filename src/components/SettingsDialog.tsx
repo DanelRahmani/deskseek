@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api";
+import { THEMES } from "../lib/theme";
 import type { Instruction, ModelInfo, Settings } from "../types";
 
 interface Props {
@@ -28,7 +29,9 @@ export function SettingsDialog({
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"api" | "prompt" | "instructions" | "browsing">("api");
+  const [tab, setTab] = useState<"appearance" | "api" | "prompt" | "instructions" | "browsing">(
+    "appearance",
+  );
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -106,6 +109,22 @@ export function SettingsDialog({
     }
   };
 
+  /**
+   * Picking a theme saves it straight away rather than waiting for the Save
+   * button: a theme you cannot see until you press Save is not a theme picker,
+   * and the app repaints from the settings this hands back to it.
+   */
+  const pickAppearance = async (patch: Partial<Pick<Settings, "theme" | "themeMode">>) => {
+    const next = { ...form, ...patch };
+    setForm(next);
+    try {
+      const saved = await api.saveSettings(next);
+      onSaved(saved, keyMask);
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
       <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
@@ -119,6 +138,7 @@ export function SettingsDialog({
         <div className="flex gap-1 border-b border-neutral-800 px-5 pt-2">
           {(
             [
+              ["appearance", "Appearance"],
               ["api", "API"],
               ["prompt", "Prompt & models"],
               ["instructions", "Scoped instructions"],
@@ -140,6 +160,67 @@ export function SettingsDialog({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+          {tab === "appearance" && (
+            <>
+              <div>
+                <label className="block text-xs text-neutral-500">Theme</label>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {THEMES.map((theme) => (
+                    <button
+                      key={theme.id}
+                      onClick={() => pickAppearance({ theme: theme.id })}
+                      className={`rounded-lg border p-3 text-left text-xs transition ${
+                        form.theme === theme.id
+                          ? "border-sky-500 text-neutral-100"
+                          : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                      }`}
+                    >
+                      <span className="mb-2 flex gap-1">
+                        {[
+                          theme.dark.ramp.n950,
+                          theme.dark.ramp.n800,
+                          theme.dark.accent,
+                          theme.dark.ramp.n200,
+                        ].map((colour) => (
+                          <span
+                            key={colour}
+                            className="h-4 w-4 rounded-sm"
+                            style={{ background: colour }}
+                          />
+                        ))}
+                      </span>
+                      {theme.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-neutral-500">Mode</label>
+                <div className="mt-2 flex gap-1">
+                  {(["system", "dark", "light"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => pickAppearance({ themeMode: mode })}
+                      className={`rounded-md border px-3 py-1.5 text-xs capitalize transition ${
+                        form.themeMode === mode
+                          ? "border-sky-500 text-neutral-100"
+                          : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                      }`}
+                    >
+                      {mode}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <p className="text-[11px] text-neutral-600">
+                A theme is saved as soon as you pick it. Custom colours, fonts and
+                sizes are the next round of work.
+              </p>
+            </>
+          )}
+
           {tab === "api" && (
             <>
               <label className="block text-xs text-neutral-500">Base URL</label>

@@ -1,5 +1,116 @@
 @import "tailwindcss";
 
+/* ---------------------------------------------------------------------------
+   Theme tokens.
+
+   This file owns three things and nothing else: the Slate-dark defaults that
+   paint the first frame, the Tailwind colour names mapped onto the tokens, and
+   the non-colour defaults.
+
+   Every colour below is replaced at runtime by resolveTheme() in
+   src/lib/theme.ts, which writes the same properties onto <html>. Those are the
+   same thirty values written down twice, so theme.check.ts compares the two and
+   fails the build when they drift.
+--------------------------------------------------------------------------- */
+
+@theme inline {
+  /* The grey ramp, straight through: bg-neutral-900 and friends resolve to
+     whatever the active theme says n-900 is. Pointing Tailwind's existing names
+     at the tokens is what restyles the whole app without editing a component. */
+  --color-neutral-100: var(--n-100);
+  --color-neutral-200: var(--n-200);
+  --color-neutral-300: var(--n-300);
+  --color-neutral-400: var(--n-400);
+  --color-neutral-500: var(--n-500);
+  --color-neutral-600: var(--n-600);
+  --color-neutral-700: var(--n-700);
+  --color-neutral-800: var(--n-800);
+  --color-neutral-900: var(--n-900);
+  --color-neutral-950: var(--n-950);
+
+  /* The app writes notices, approval cards and tool errors as red, amber and
+     emerald text on tinted panels. Those few steps collapse onto four semantic
+     values per status; leaving them as Tailwind's palette would keep dark-mode
+     colours in a light theme, where they read at about 2:1 on white. */
+  --color-sky-300: var(--accent-text);
+  --color-sky-400: var(--accent-text);
+  --color-sky-500: var(--accent-hover);
+  --color-sky-600: var(--accent-solid);
+  --color-sky-700: var(--accent-solid);
+  --color-sky-800: var(--accent-border);
+  --color-sky-900: var(--accent-border);
+  --color-sky-950: var(--accent-bg);
+
+  --color-red-300: var(--danger-text);
+  --color-red-400: var(--danger-text);
+  --color-red-500: var(--danger-solid);
+  --color-red-700: var(--danger-border);
+  --color-red-800: var(--danger-border);
+  --color-red-900: var(--danger-border);
+  --color-red-950: var(--danger-bg);
+
+  --color-amber-200: var(--warn-text);
+  --color-amber-300: var(--warn-text);
+  --color-amber-400: var(--warn-hover);
+  --color-amber-500: var(--warn-solid);
+  --color-amber-700: var(--warn-border);
+  --color-amber-800: var(--warn-border);
+  --color-amber-900: var(--warn-border);
+  --color-amber-950: var(--warn-bg);
+
+  --color-emerald-300: var(--ok-text);
+  --color-emerald-400: var(--ok-text);
+  --color-emerald-500: var(--ok-hover);
+  --color-emerald-600: var(--ok-solid);
+
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Slate dark — the `slate` theme's dark variant in src/lib/theme.ts. */
+  --n-950: #0a0a0a;
+  --n-900: #171717;
+  --n-800: #262626;
+  --n-700: #404040;
+  --n-600: #6a6a6a;
+  --n-500: #737373;
+  --n-400: #a3a3a3;
+  --n-300: #d4d4d4;
+  --n-200: #e5e5e5;
+  --n-100: #f5f5f5;
+
+  --accent-bg: #082534;
+  --accent-border: #073852;
+  --accent-text: #88c2e0;
+  --accent-solid: #0284c7;
+  --accent-hover: #2e98cf;
+
+  --danger-bg: #381010;
+  --danger-border: #5a1515;
+  --danger-text: #ea9898;
+  --danger-solid: #dc2626;
+  --danger-hover: #e14b4b;
+
+  --warn-bg: #382209;
+  --warn-border: #593308;
+  --warn-text: #e8bc89;
+  --warn-solid: #d97706;
+  --warn-hover: #de8e31;
+
+  --ok-bg: #09291f;
+  --ok-border: #083f2e;
+  --ok-text: #89cab6;
+  --ok-solid: #059669;
+  --ok-hover: #30a782;
+
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-code: ui-monospace, "Cascadia Code", Consolas, monospace;
+  --font-size-base: 14px;
+}
+
 html,
 body,
 #root {
@@ -8,10 +119,11 @@ body,
 
 body {
   margin: 0;
-  background: #0a0a0a;
-  color: #e5e5e5;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 14px;
+  background: var(--n-950);
+  color: var(--n-200);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-base);
+  /* The window is a fixed pane; only its inner regions scroll. */
   overflow: hidden;
 }
 
@@ -20,17 +132,18 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2c2c2c;
+  background: var(--n-800);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a3a;
+  background: var(--n-700);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* Markdown rendering */
+/* Markdown rendering. Every colour is a token so a note reads the same on every
+   theme. */
 .md {
   line-height: 1.65;
   word-wrap: break-word;
@@ -76,25 +189,25 @@ body {
   margin: 0.25em 0;
 }
 .md a {
-  color: #7dd3fc;
+  color: var(--accent-text);
   text-decoration: underline;
 }
 .md blockquote {
-  border-left: 3px solid #333;
+  border-left: 3px solid var(--n-800);
   margin: 0.7em 0;
   padding: 0.1em 0 0.1em 1em;
-  color: #a3a3a3;
+  color: var(--n-400);
 }
 .md code {
-  background: #1c1c1c;
+  background: var(--n-800);
   padding: 0.12em 0.35em;
   border-radius: 4px;
   font-size: 0.9em;
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-code);
 }
 .md pre {
-  background: #141414;
-  border: 1px solid #262626;
+  background: var(--n-900);
+  border: 1px solid var(--n-800);
   border-radius: 8px;
   padding: 0.9em 1em;
   overflow-x: auto;
@@ -114,15 +227,90 @@ body {
 }
 .md th,
 .md td {
-  border: 1px solid #2a2a2a;
+  border: 1px solid var(--n-800);
   padding: 0.4em 0.7em;
   text-align: left;
 }
 .md th {
-  background: #171717;
+  background: var(--n-900);
 }
 .md hr {
   border: none;
-  border-top: 1px solid #262626;
+  border-top: 1px solid var(--n-800);
   margin: 1em 0;
+}
+
+/* Syntax highlighting.
+
+   rehype-highlight, through react-markdown, marks these classes. The colours
+   used to come from highlight.js's github-dark stylesheet — dark-only, so a
+   light theme kept dark code blocks, and it was a hard import in main.tsx. The
+   tints are the status text tiers, which are the ones already measured for
+   readability against their backgrounds; green and red already mean "added" and
+   "removed" elsewhere in the app. */
+.hljs {
+  color: var(--n-200);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--n-500);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-doctag,
+.hljs-name,
+.hljs-literal,
+.hljs-selector-tag,
+.hljs-strong {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition,
+.hljs-attribute,
+.hljs-meta .hljs-string {
+  color: var(--ok-text);
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-selector-attr,
+.hljs-selector-pseudo {
+  color: var(--warn-text);
+}
+.hljs-title,
+.hljs-section,
+.hljs-title.class_,
+.hljs-title.function_ {
+  color: var(--danger-text);
+}
+.hljs-type,
+.hljs-built_in,
+.hljs-attr,
+.hljs-property {
+  color: var(--accent-text);
+}
+.hljs-meta,
+.hljs-meta .hljs-keyword,
+.hljs-tag {
+  color: var(--n-400);
+}
+.hljs-deletion {
+  color: var(--danger-text);
+}
+.hljs-params {
+  color: var(--n-300);
+}
+.hljs-code,
+.hljs-formula {
+  color: var(--ok-text);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-link {
+  text-decoration: underline;
 }

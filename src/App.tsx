@@ -40,6 +40,7 @@ import { TabStrip } from "./components/TabStrip";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
 import { resolveShortcut } from "./lib/shortcuts";
+import { resolveMode, resolveTheme } from "./lib/theme";
 
 type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact";
 
@@ -176,6 +177,36 @@ export default function App() {
       else if (!k) setShowSettings(true);
     })().catch((e) => setError(String(e)));
   }, []);
+
+  // The theme is cosmetic and the settings only arrive after start-up, so it is
+  // applied in an effect rather than during render. This is the only place that
+  // writes to <html>, and it also caches the resolved tokens where the inline
+  // script in index.html can find them before the app runs.
+  useEffect(() => {
+    if (!settings) return;
+    const apply = () => {
+      const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const tokens = resolveTheme(settings.theme, settings.themeMode, systemDark);
+      const root = document.documentElement;
+      for (const [name, value] of Object.entries(tokens)) root.style.setProperty(name, value);
+      const mode = resolveMode(settings.themeMode, systemDark);
+      root.dataset.theme = settings.theme;
+      root.dataset.mode = mode;
+      // Native scrollbars and form controls follow this, not our tokens.
+      root.style.colorScheme = mode;
+      try {
+        localStorage.setItem("deskseek.theme", JSON.stringify(tokens));
+      } catch {
+        // A full or disabled store must not stop the theme applying.
+      }
+    };
+    apply();
+    // Following the OS means reacting when it changes while the app is open.
+    if (settings.themeMode === "dark" || settings.themeMode === "light") return;
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, [settings?.theme, settings?.themeMode]);
 
   useEffect(() => {
     saveShell(shell);
