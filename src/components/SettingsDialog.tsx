@@ -85,6 +85,21 @@ const FONT_SUGGESTIONS = ["Georgia", "Inter", "Iowan Old Style", "Cascadia Code"
 
 const FONT_SIZES = [12, 13, 14, 15, 16, 18];
 
+/**
+ * A family name as a CSS value, with the live token behind it so a family that
+ * is not installed falls back to what is really in use instead of to the
+ * browser's default serif.
+ *
+ * Quotes are stripped first: a stray one makes the whole declaration invalid,
+ * and an invalid `font-family` fails silently — the field would simply stop
+ * previewing anything with no sign of why.
+ */
+function previewFamily(family: string, fallback: string): string | undefined {
+  const name = family.trim().replace(/"/g, "");
+  if (!name) return undefined;
+  return `"${name}", ${fallback}`;
+}
+
 export function SettingsDialog({
   settings,
   keyMask,
@@ -421,6 +436,9 @@ export function SettingsDialog({
                     list="font-suggestions"
                     placeholder="Interface font — blank uses the built-in stack"
                     spellCheck={false}
+                    // The field previews its own family: a font is impossible to
+                    // judge in a font that is not the one being named.
+                    style={{ fontFamily: previewFamily(fontUiDraft, "var(--font-ui)") }}
                     className={inputCls}
                   />
                   <input
@@ -432,6 +450,7 @@ export function SettingsDialog({
                     list="font-suggestions"
                     placeholder="Code font — blank uses the built-in stack"
                     spellCheck={false}
+                    style={{ fontFamily: previewFamily(fontCodeDraft, "var(--font-code)") }}
                     className={inputCls}
                   />
                   <datalist id="font-suggestions">
@@ -453,6 +472,26 @@ export function SettingsDialog({
                         </option>
                       ))}
                     </select>
+                  </div>
+
+                  {/* Prose and code side by side, because the two families are
+                      chosen for different things and at the chosen size. */}
+                  <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2">
+                    <p
+                      className="truncate text-neutral-200"
+                      style={{
+                        fontFamily: previewFamily(fontUiDraft, "var(--font-ui)"),
+                        fontSize: form.fontSize > 0 ? `${form.fontSize}px` : undefined,
+                      }}
+                    >
+                      The quick brown fox jumps over the lazy dog
+                    </p>
+                    <p
+                      className="mt-1 truncate text-xs text-neutral-500"
+                      style={{ fontFamily: previewFamily(fontCodeDraft, "var(--font-code)") }}
+                    >
+                      {"const done = items.filter((item) => item.done).length;"}
+                    </p>
                   </div>
                 </div>
                 <p className="mt-1 text-[11px] text-neutral-600">
