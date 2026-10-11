@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { THEMES, isHexColour } from "../lib/theme";
@@ -80,8 +80,58 @@ const ACCENTS = [
   "#0f766e",
 ];
 
-/** Suggestions only: any family installed on the machine can be typed in. */
-const FONT_SUGGESTIONS = ["Georgia", "Inter", "Iowan Old Style", "Cascadia Code", "Iosevka"];
+/**
+ * Families worth offering, by where they come from. Not the machine's real
+ * list — that is asked for at runtime below — but the families a machine is
+ * likely to have, so the list is useful before anything is granted.
+ */
+const FONT_FAMILIES = [
+  // Shipped with Windows
+  "Arial", "Arial Black", "Bahnschrift", "Calibri", "Cambria", "Candara",
+  "Comic Sans MS", "Consolas", "Constantia", "Corbel", "Courier New",
+  "Franklin Gothic Medium", "Gabriola", "Georgia", "Impact", "Lucida Console",
+  "Lucida Sans Unicode", "Microsoft Sans Serif", "Palatino Linotype", "Segoe Print",
+  "Segoe Script", "Segoe UI", "Sitka Text", "Sylfaen", "Tahoma", "Times New Roman",
+  "Trebuchet MS", "Verdana",
+  // Shipped with macOS
+  "American Typewriter", "Avenir", "Avenir Next", "Baskerville", "Charter", "Didot",
+  "Futura", "Geneva", "Gill Sans", "Helvetica", "Helvetica Neue", "Hiragino Sans",
+  "Iowan Old Style", "Lucida Grande", "Menlo", "Monaco", "Optima", "Palatino",
+  "SF Mono", "San Francisco", "Skia",
+  // Shipped with the common Linux desktops
+  "Cantarell", "DejaVu Sans", "DejaVu Sans Mono", "Liberation Mono", "Liberation Sans",
+  "Liberation Serif", "Noto Sans", "Noto Sans Mono", "Ubuntu", "Ubuntu Mono",
+  // Coding fonts, installed on purpose
+  "Cascadia Code", "Cascadia Mono", "Fira Code", "Hack", "IBM Plex Mono", "Iosevka",
+  "JetBrains Mono", "Roboto Mono", "Source Code Pro", "Space Mono", "Victor Mono",
+  // Free faces common enough to be worth listing
+  "Fira Sans", "IBM Plex Sans", "Inter", "Lato", "Merriweather", "Montserrat",
+  "Open Sans", "Poppins", "Roboto", "Source Sans Pro",
+].sort((a, b) => a.localeCompare(b));
+
+/** What `queryLocalFonts` hands back, narrowed to the one field used. */
+type LocalFont = { family: string };
+
+/**
+ * Every family this machine has, asked for once and cached in the module so the
+ * second font field does not raise a second permission prompt.
+ *
+ * ponytail: the promise is the cache, so a refusal stays refused for the life
+ * of the session. If a webview ever grants it later, drop the cache and the
+ * retry comes free.
+ */
+let localFonts: Promise<string[]> | null = null;
+function loadLocalFonts(): Promise<string[]> {
+  localFonts ??= (async () => {
+    const read = (navigator as Navigator & { queryLocalFonts?: () => Promise<LocalFont[]> })
+      .queryLocalFonts;
+    if (!read) throw new Error("this webview does not expose the local font list");
+    // `call` keeps the receiver: the method throws when detached from navigator.
+    const fonts = await read.call(navigator);
+    return [...new Set(fonts.map((font) => font.family))];
+  })();
+  return localFonts;
+}
 
 const FONT_SIZES = [12, 13, 14, 15, 16, 18];
 
@@ -98,6 +148,109 @@ function previewFamily(family: string, fallback: string): string | undefined {
   const name = family.trim().replace(/"/g, "");
   if (!name) return undefined;
   return `"${name}", ${fallback}`;
+}
+
+/**
+ * A font field with a list under it, every entry set in the family it names.
+ *
+ * Deliberately not a `<datalist>`: that filters by what is already in the box,
+ * so with the current family sitting there the only entry left is the one you
+ * have, and changing font means clearing the field first. Here the list opens
+ * whole — the current family included — and narrows only once you type.
+ */
+function FontPicker({
+  value,
+  fallback,
+  placeholder,
+  onPick,
+}: {
+  value: string;
+  fallback: string;
+  placeholder: string;
+  onPick: (family: string) => void;
+}) {
+  // null means "showing what is saved"; a string means the box is being edited,
+  // which is also what decides whether the list filters.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [installed, setInstalled] = useState<string[]>([]);
+  const needle = draft?.trim().toLowerCase() ?? "";
+
+  const families = useMemo(() => {
+    const all = installed.length
+      ? [...new Set([...FONT_FAMILIES, ...installed])].sort((a, b) => a.localeCompare(b))
+      : FONT_FAMILIES;
+    return needle ? all.filter((family) => family.toLowerCase().includes(needle)) : all;
+  }, [installed, needle]);
+
+  const commit = (family: string) => {
+    setDraft(null);
+    setOpen(false);
+    const next = family.trim();
+    if (next !== value) onPick(next);
+  };
+
+  return (
+    <div>
+      <input
+        value={draft ?? value}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => {
+          setOpen(true);
+          // Asking needs a user gesture, and a focus is one. A refusal is not
+          // worth reporting: the curated list carries on by itself.
+          loadLocalFonts()
+            .then(setInstalled)
+            .catch(() => {});
+        }}
+        onBlur={() => (draft === null ? setOpen(false) : commit(draft))}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setDraft(null);
+            setOpen(false);
+          } else if (e.key === "Enter") {
+            commit(draft ?? value);
+          } else if (e.key === "ArrowDown" && !open) {
+            setOpen(true);
+          }
+        }}
+        placeholder={placeholder}
+        spellCheck={false}
+        // The field previews its own family: a font is impossible to judge in a
+        // font that is not the one being named.
+        style={{ fontFamily: previewFamily(draft ?? value, fallback) }}
+        className={inputCls}
+      />
+      {open && (
+        <div className="mt-1 max-h-56 overflow-y-auto rounded-lg border border-neutral-800 bg-neutral-950 py-1">
+          {families.map((family) => (
+            <button
+              key={family}
+              type="button"
+              // Holding the field's focus, so picking a row is not a blur that
+              // commits the half-typed name first.
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => commit(family)}
+              style={{ fontFamily: previewFamily(family, fallback) }}
+              className={`block w-full truncate px-3 py-1 text-left text-sm hover:bg-neutral-800 ${
+                family === value ? "text-sky-300" : "text-neutral-300"
+              }`}
+            >
+              {family}
+            </button>
+          ))}
+          {families.length === 0 && (
+            <p className="px-3 py-1 text-[11px] text-neutral-600">
+              Nothing here matches. What you type is kept either way.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function SettingsDialog({
@@ -118,8 +271,6 @@ export function SettingsDialog({
   // Text fields commit on blur rather than on every keystroke: saving per letter
   // would rewrite the settings file dozens of times to say nothing new.
   const [accentDraft, setAccentDraft] = useState(settings.accent);
-  const [fontUiDraft, setFontUiDraft] = useState(settings.fontUi);
-  const [fontCodeDraft, setFontCodeDraft] = useState(settings.fontCode);
 
   // The Tools and Browsing sections report what this machine actually has, so
   // the probe runs once when the dialog opens; Re-check asks again.
@@ -427,37 +578,18 @@ export function SettingsDialog({
               <section>
                 <label className="block text-xs text-neutral-500">Fonts</label>
                 <div className="mt-2 space-y-2">
-                  <input
-                    value={fontUiDraft}
-                    onChange={(e) => setFontUiDraft(e.target.value)}
-                    onBlur={() =>
-                      fontUiDraft !== form.fontUi && pickAppearance({ fontUi: fontUiDraft })
-                    }
-                    list="font-suggestions"
+                  <FontPicker
+                    value={form.fontUi}
+                    fallback="var(--font-ui)"
                     placeholder="Interface font — blank uses the built-in stack"
-                    spellCheck={false}
-                    // The field previews its own family: a font is impossible to
-                    // judge in a font that is not the one being named.
-                    style={{ fontFamily: previewFamily(fontUiDraft, "var(--font-ui)") }}
-                    className={inputCls}
+                    onPick={(fontUi) => pickAppearance({ fontUi })}
                   />
-                  <input
-                    value={fontCodeDraft}
-                    onChange={(e) => setFontCodeDraft(e.target.value)}
-                    onBlur={() =>
-                      fontCodeDraft !== form.fontCode && pickAppearance({ fontCode: fontCodeDraft })
-                    }
-                    list="font-suggestions"
+                  <FontPicker
+                    value={form.fontCode}
+                    fallback="var(--font-code)"
                     placeholder="Code font — blank uses the built-in stack"
-                    spellCheck={false}
-                    style={{ fontFamily: previewFamily(fontCodeDraft, "var(--font-code)") }}
-                    className={inputCls}
+                    onPick={(fontCode) => pickAppearance({ fontCode })}
                   />
-                  <datalist id="font-suggestions">
-                    {FONT_SUGGESTIONS.map((family) => (
-                      <option key={family} value={family} />
-                    ))}
-                  </datalist>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-neutral-500">Text size</span>
                     <select
@@ -474,29 +606,33 @@ export function SettingsDialog({
                     </select>
                   </div>
 
-                  {/* Prose and code side by side, because the two families are
-                      chosen for different things and at the chosen size. */}
-                  <div className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2">
+                  {/* Each family named in itself: the name is the one string
+                      that says which typeface you are reading, and the code
+                      line carries the glyph pairs a code font has to keep
+                      apart. The wrapper sets the size so the code line can be
+                      the same 0.9em that the app's own code blocks use. */}
+                  <div
+                    className="rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2"
+                    style={{ fontSize: form.fontSize > 0 ? `${form.fontSize}px` : undefined }}
+                  >
                     <p
                       className="truncate text-neutral-200"
-                      style={{
-                        fontFamily: previewFamily(fontUiDraft, "var(--font-ui)"),
-                        fontSize: form.fontSize > 0 ? `${form.fontSize}px` : undefined,
-                      }}
+                      style={{ fontFamily: previewFamily(form.fontUi, "var(--font-ui)") }}
                     >
-                      The quick brown fox jumps over the lazy dog
+                      {`${form.fontUi.trim() || "Interface default"} — the quick brown fox jumps over the lazy dog`}
                     </p>
                     <p
-                      className="mt-1 truncate text-xs text-neutral-500"
-                      style={{ fontFamily: previewFamily(fontCodeDraft, "var(--font-code)") }}
+                      className="mt-1 truncate text-[0.9em] text-neutral-400"
+                      style={{ fontFamily: previewFamily(form.fontCode, "var(--font-code)") }}
                     >
-                      {"const done = items.filter((item) => item.done).length;"}
+                      {`${form.fontCode.trim() || "Code default"} — const done = items.filter((item) => item.done).length; // 0O 1lI`}
                     </p>
                   </div>
                 </div>
                 <p className="mt-1 text-[11px] text-neutral-600">
-                  A family is used exactly as typed, so it has to be installed on this machine.
-                  Nothing is downloaded.
+                  A family is used exactly as typed, so one that is not installed falls back to the
+                  built-in stack. Anything on this machine can be typed in, whether or not the list
+                  knows it. Nothing is downloaded.
                 </p>
               </section>
 
