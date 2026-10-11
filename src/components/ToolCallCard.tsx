@@ -16,6 +16,7 @@ const ICONS: Record<string, string> = {
   git_commit: "🌿",
   git_push: "🌿",
   update_tasks: "☑",
+  artifact_create: "📊",
   fetch_url: "🌐",
   browser_read: "🌐",
   browser_open: "🌐",
@@ -71,6 +72,9 @@ function describe(run: ToolRun): string {
         ? `${tasks.filter((t) => t.status === "completed").length}/${tasks.length} done`
         : "";
     }
+    case "artifact_create":
+      // The panel is already showing it, so the card only names it.
+      return pick("title");
     default:
       return "";
   }

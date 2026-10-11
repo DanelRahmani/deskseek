@@ -1,9 +1,21 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { api, onApproval, onComputer, onDelta, onDone, onError, onGuard, onShot, onTool } from "./api";
+import {
+  api,
+  onApproval,
+  onArtifact,
+  onComputer,
+  onDelta,
+  onDone,
+  onError,
+  onGuard,
+  onShot,
+  onTool,
+} from "./api";
 import { filesToAttachments } from "./lib/attachments";
 import type {
   ApprovalEvent,
+  ArtifactDetail,
   Attachment,
   ChatRow,
   DoneEvent,
@@ -22,11 +34,12 @@ import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
+import { ArtifactPanel } from "./components/ArtifactPanel";
 import { TabStrip } from "./components/TabStrip";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
 
-type Panel = "none" | "memory" | "skills" | "mcp" | "files";
+type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -80,6 +93,9 @@ export default function App() {
     paused: false,
     reason: null,
   });
+  // The artifact currently in the panel. One at a time: the panel is a reading
+  // surface, not a workspace.
+  const [artifact, setArtifact] = useState<{ chatId: string; detail: ArtifactDetail } | null>(null);
 
   const patch = useCallback((chatId: string, fn: (rt: SessionRuntime) => SessionRuntime) => {
     setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
@@ -211,6 +227,13 @@ export default function App() {
         }));
       }),
       onComputer((e) => setComputer({ paused: e.paused, reason: e.reason })),
+      onArtifact((e) => {
+        // The whole document arrives on the event, so the panel opens without a
+        // second round trip. A model that publishes in the background chat
+        // still gets read: the panel is not tied to the selected tab.
+        setArtifact({ chatId: e.chatId, detail: e.artifact });
+        setPanel("artifact");
+      }),
       onDone((e) => {
         patch(e.chatId, (rt) => ({ ...rt, busy: false, usage: e }));
       }),
@@ -677,6 +700,16 @@ export default function App() {
       )}
       {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
       {panel === "mcp" && <McpPanel onClose={() => setPanel("none")} />}
+      {panel === "artifact" && artifact && (
+        <ArtifactPanel
+          // Re-mounted per version: a new one resets the version picker and the
+          // editor, which is exactly what a fresh document should do.
+          key={`${artifact.detail.artifact.id}@${artifact.detail.artifact.current_version}`}
+          detail={artifact.detail}
+          onClose={() => setPanel("none")}
+          onChange={(detail) => setArtifact({ chatId: artifact.chatId, detail })}
+        />
+      )}
 
       {showSetup && settings && (
         <SetupPanel

@@ -93,6 +93,28 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (workspace, tool)
 );
+
+CREATE TABLE IF NOT EXISTS artifacts (
+    id              TEXT PRIMARY KEY,
+    chat_id         TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    message_id      TEXT,
+    kind            TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    current_version INTEGER NOT NULL DEFAULT 1,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_chat ON artifacts(chat_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS artifact_versions (
+    artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+    version     INTEGER NOT NULL,
+    content     TEXT NOT NULL,
+    created_by  TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    PRIMARY KEY (artifact_id, version)
+);
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -491,6 +513,188 @@ pub fn list_allowed_tools(conn: &Connection, workspace: &str) -> rusqlite::Resul
     rows.collect()
 }
 
+// --------------------------------------------------------------- artifacts
+
+/// One artifact: a titled, versioned document the panel renders. `kind` picks
+/// the renderer (`html` / `svg` / `mermaid` / `markdown` / `code`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRow {
+    pub id: String,
+    pub chat_id: String,
+    pub message_id: Option<String>,
+    pub kind: String,
+    pub title: String,
+    pub current_version: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactVersionRow {
+    pub version: i64,
+    pub created_by: String,
+    pub created_at: i64,
+}
+
+/// The artifact plus the one version the panel is showing and the list to pick
+/// another from. Sent whole so opening one is a single round trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactDetail {
+    pub artifact: ArtifactRow,
+    pub content: String,
+    pub versions: Vec<ArtifactVersionRow>,
+}
+
+fn artifact_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ArtifactRow> {
+    Ok(ArtifactRow {
+        id: r.get(0)?,
+        chat_id: r.get(1)?,
+        message_id: r.get(2)?,
+        kind: r.get(3)?,
+        title: r.get(4)?,
+        current_version: r.get(5)?,
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
+
+const ARTIFACT_COLS: &str =
+    "id, chat_id, message_id, kind, title, current_version, created_at, updated_at";
+
+/// Store a new artifact and its first version. `created_by` is `assistant` for
+/// the model and `user` for an edit made in the panel.
+pub fn create_artifact(
+    conn: &Connection,
+    chat_id: &str,
+    message_id: Option<&str>,
+    kind: &str,
+    title: &str,
+    content: &str,
+    created_by: &str,
+) -> rusqlite::Result<ArtifactRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "INSERT INTO artifacts (id, chat_id, message_id, kind, title, current_version, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+        params![id, chat_id, message_id, kind, title, ts],
+    )?;
+    tx.execute(
+        "INSERT INTO artifact_versions (artifact_id, version, content, created_by, created_at)
+         VALUES (?1, 1, ?2, ?3, ?4)",
+        params![id, content, created_by, ts],
+    )?;
+    tx.commit()?;
+    Ok(ArtifactRow {
+        id,
+        chat_id: chat_id.to_string(),
+        message_id: message_id.map(str::to_string),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        current_version: 1,
+        created_at: ts,
+        updated_at: ts,
+    })
+}
+
+/// Append a version and make it current. Nothing is ever overwritten, so an
+/// edit and a rollback are the same operation.
+pub fn add_artifact_version(
+    conn: &Connection,
+    artifact_id: &str,
+    content: &str,
+    created_by: &str,
+) -> rusqlite::Result<ArtifactRow> {
+    let ts = now_ts();
+    let tx = conn.unchecked_transaction()?;
+    let next: i64 = tx.query_row(
+        "SELECT current_version + 1 FROM artifacts WHERE id = ?1",
+        [artifact_id],
+        |r| r.get(0),
+    )?;
+    tx.execute(
+        "INSERT INTO artifact_versions (artifact_id, version, content, created_by, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![artifact_id, next, content, created_by, ts],
+    )?;
+    tx.execute(
+        "UPDATE artifacts SET current_version = ?2, updated_at = ?3 WHERE id = ?1",
+        params![artifact_id, next, ts],
+    )?;
+    tx.commit()?;
+    get_artifact(conn, artifact_id)
+}
+
+pub fn get_artifact(conn: &Connection, id: &str) -> rusqlite::Result<ArtifactRow> {
+    conn.query_row(
+        &format!("SELECT {ARTIFACT_COLS} FROM artifacts WHERE id = ?1"),
+        [id],
+        artifact_row,
+    )
+}
+
+/// The most recent artifact in this chat with this exact title, if any. This is
+/// what makes a second `artifact_create` with the same title a new *version*
+/// rather than a second document.
+pub fn find_artifact_by_title(
+    conn: &Connection,
+    chat_id: &str,
+    title: &str,
+) -> rusqlite::Result<Option<ArtifactRow>> {
+    conn.query_row(
+        &format!(
+            "SELECT {ARTIFACT_COLS} FROM artifacts
+             WHERE chat_id = ?1 AND title = ?2 ORDER BY updated_at DESC LIMIT 1"
+        ),
+        params![chat_id, title],
+        artifact_row,
+    )
+    .optional()
+}
+
+pub fn list_artifacts(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<ArtifactRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {ARTIFACT_COLS} FROM artifacts WHERE chat_id = ?1 ORDER BY updated_at DESC"
+    ))?;
+    let rows = stmt.query_map([chat_id], artifact_row)?;
+    rows.collect()
+}
+
+/// The artifact, one version's content (`None` = current), and every version's
+/// metadata — newest first, which is the order the dropdown shows.
+pub fn get_artifact_detail(
+    conn: &Connection,
+    id: &str,
+    version: Option<i64>,
+) -> rusqlite::Result<ArtifactDetail> {
+    let artifact = get_artifact(conn, id)?;
+    let wanted = version.unwrap_or(artifact.current_version);
+    let content: String = conn.query_row(
+        "SELECT content FROM artifact_versions WHERE artifact_id = ?1 AND version = ?2",
+        params![id, wanted],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn.prepare(
+        "SELECT version, created_by, created_at FROM artifact_versions
+         WHERE artifact_id = ?1 ORDER BY version DESC",
+    )?;
+    let versions = stmt
+        .query_map([id], |r| {
+            Ok(ArtifactVersionRow {
+                version: r.get(0)?,
+                created_by: r.get(1)?,
+                created_at: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(ArtifactDetail {
+        artifact,
+        content,
+        versions,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +703,58 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    #[test]
+    fn an_artifact_keeps_every_version() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
+        let art = create_artifact(&conn, &chat.id, Some("m1"), "html", "Report", "<p>v1</p>", "assistant")
+            .unwrap();
+        assert_eq!(art.current_version, 1);
+
+        let edited = add_artifact_version(&conn, &art.id, "<p>v2</p>", "user").unwrap();
+        assert_eq!(edited.current_version, 2);
+        assert_eq!(edited.title, "Report");
+
+        // The current content is v2, and v1 is still there to roll back to.
+        let detail = get_artifact_detail(&conn, &art.id, None).unwrap();
+        assert_eq!(detail.content, "<p>v2</p>");
+        assert_eq!(detail.versions.len(), 2);
+        // Newest first, which is the order the dropdown wants.
+        assert_eq!(detail.versions[0].version, 2);
+        assert_eq!(detail.versions[1].version, 1);
+        assert_eq!(detail.versions[0].created_by, "user");
+
+        let old = get_artifact_detail(&conn, &art.id, Some(1)).unwrap();
+        assert_eq!(old.content, "<p>v1</p>");
+        // Asking for an old version does not move the current pointer.
+        assert_eq!(old.artifact.current_version, 2);
+    }
+
+    #[test]
+    fn artifacts_are_listed_per_chat() {
+        let conn = mem();
+        let a = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let b = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        create_artifact(&conn, &a.id, None, "markdown", "Notes", "# hi", "assistant").unwrap();
+        create_artifact(&conn, &b.id, None, "markdown", "Other", "# yo", "assistant").unwrap();
+        assert_eq!(list_artifacts(&conn, &a.id).unwrap().len(), 1);
+        assert_eq!(list_artifacts(&conn, &a.id).unwrap()[0].title, "Notes");
+    }
+
+    #[test]
+    fn a_title_lookup_finds_the_same_chat_only() {
+        let conn = mem();
+        let a = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let b = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let made = create_artifact(&conn, &a.id, None, "html", "Report", "v1", "assistant").unwrap();
+
+        let found = find_artifact_by_title(&conn, &a.id, "Report").unwrap();
+        assert_eq!(found.map(|r| r.id), Some(made.id));
+        // A different chat is a different document, and an unseen title is none.
+        assert!(find_artifact_by_title(&conn, &b.id, "Report").unwrap().is_none());
+        assert!(find_artifact_by_title(&conn, &a.id, "Nothing").unwrap().is_none());
     }
 
     #[test]

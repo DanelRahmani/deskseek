@@ -21,7 +21,9 @@ pub enum ToolClass {
     /// Runs without asking — reads only.
     Read,
     /// Handled by the app itself and never sandboxed or prompted — writing
-    /// MEMORY.md is the only one.
+    /// MEMORY.md, publishing the task list, and creating an artifact, which is
+    /// stored in the database and shown in a sandboxed panel rather than put on
+    /// disk anywhere.
     Internal,
     /// Modifies the workspace; the user approves each call.
     Write,
@@ -58,6 +60,61 @@ fn params(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
 /// How many steps a plan may have. The panel is a progress indicator, not a
 /// project tracker; a model that needs more than this needs to re-plan.
 pub const MAX_TASKS: usize = 20;
+
+/// What the artifact panel knows how to render. A closed set: an unknown kind
+/// would render as a blank panel and the model would never learn why.
+pub const ARTIFACT_KINDS: [&str; 5] = ["html", "svg", "mermaid", "markdown", "code"];
+
+/// Artifacts live in the database, so this cap is about keeping one runaway
+/// generation from bloating it — well past what the panel can usefully show.
+pub const MAX_ARTIFACT_CHARS: usize = 200_000;
+
+/// A validated `artifact_create` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArtifactDraft {
+    pub title: String,
+    pub kind: String,
+    pub content: String,
+}
+
+/// Validates `artifact_create`. Like `parse_tasks`, the error text is fed back
+/// to the model, so it should say what to send instead.
+pub fn parse_artifact(args: &serde_json::Value) -> Result<ArtifactDraft, String> {
+    let title = args
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or("artifact_create needs a short \"title\"")?;
+    let kind = args
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if !ARTIFACT_KINDS.contains(&kind) {
+        return Err(format!(
+            "artifact_create kind must be one of {}",
+            ARTIFACT_KINDS.join(", ")
+        ));
+    }
+    let content = args
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .ok_or("artifact_create needs non-empty \"content\"")?;
+    if content.chars().count() > MAX_ARTIFACT_CHARS {
+        return Err(format!(
+            "artifact_create content is longer than {MAX_ARTIFACT_CHARS} characters; split it into \
+             several artifacts"
+        ));
+    }
+    Ok(ArtifactDraft {
+        // Capped so a runaway title cannot stretch the tab strip.
+        title: title.chars().take(120).collect(),
+        kind: kind.to_string(),
+        content: content.to_string(),
+    })
+}
 
 /// One line of the model's plan. A closed set, so a typo in the tool call is
 /// caught here rather than rendering as a mystery glyph.
@@ -228,6 +285,21 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                         }
                     }),
                     &["tasks"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "artifact_create",
+                "Put a document in the side panel that the user can read, edit and come back to. Use it whenever the answer is something to keep rather than a chat reply — a report, a page, a chart, a diagram, a note, a snippet — and never paste a long block into the chat when an artifact would do. Calling it again publishes a new version of the same document.",
+                params(
+                    json!({
+                        "title": {"type": "string", "description": "Short name shown on the panel, e.g. \"Q3 revenue chart\""},
+                        "kind": {"type": "string", "enum": ARTIFACT_KINDS, "description": "html: a complete self-contained page (styles inline, no network). svg: the <svg> markup. mermaid: Mermaid diagram source. markdown: a Markdown note. code: source code, shown read-only."},
+                        "content": {"type": "string", "description": "The whole document. For html, include its styles in a <style> tag; there is no network access, so no CDN links."}
+                    }),
+                    &["title", "kind", "content"],
                 ),
             ),
             ToolClass::Internal,
@@ -493,6 +565,54 @@ mod tests {
         // But a plan is useful in both sections, unlike the git tools.
         assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "update_tasks"));
         assert!(tools_for("coding").iter().any(|(t, _)| t.function.name == "update_tasks"));
+    }
+
+    #[test]
+    fn artifact_create_is_internal_and_available_in_both_sections() {
+        // Stored in the database and rendered sandboxed, so it is not a
+        // workspace write and the model must not be stopped by a prompt every
+        // time it publishes an update.
+        assert_eq!(class_of("artifact_create"), ToolClass::Internal);
+        assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "artifact_create"));
+        assert!(tools_for("coding").iter().any(|(t, _)| t.function.name == "artifact_create"));
+    }
+
+    #[test]
+    fn an_artifact_must_have_a_known_kind_and_content() {
+        let good = parse_artifact(&json!({
+            "title": "Report", "kind": "html", "content": "<p>hi</p>"
+        }))
+        .unwrap();
+        assert_eq!(good.kind, "html");
+        assert_eq!(good.title, "Report");
+
+        // The title is trimmed and capped; the content is kept verbatim.
+        let long_title = "x".repeat(500);
+        let capped = parse_artifact(&json!({
+            "title": format!("  {long_title}  "), "kind": "code", "content": "let a = 1;"
+        }))
+        .unwrap();
+        assert_eq!(capped.title.chars().count(), 120);
+        assert_eq!(capped.content, "let a = 1;");
+
+        // Every advertised kind is accepted, and nothing else is.
+        for kind in ARTIFACT_KINDS {
+            assert!(
+                parse_artifact(&json!({"title": "t", "kind": kind, "content": "x"})).is_ok(),
+                "{kind} should be a valid kind"
+            );
+        }
+        // Each of these is a shape a model actually produces.
+        for bad in [
+            json!({"kind": "html", "content": "<p></p>"}),
+            json!({"title": "t", "kind": "html"}),
+            json!({"title": "t", "kind": "html", "content": "   "}),
+            json!({"title": "t", "kind": "python", "content": "x"}),
+            json!({"title": " ", "kind": "html", "content": "x"}),
+            json!({"title": "t", "kind": "HTML", "content": "x"}),
+        ] {
+            assert!(parse_artifact(&bad).is_err(), "{bad} should be rejected");
+        }
     }
 
     #[test]

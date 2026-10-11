@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "check": "node src/lib/shell.check.ts && node src/lib/tasks.check.ts",
+    "check": "node src/lib/shell.check.ts && node src/lib/tasks.check.ts && node src/lib/artifact.check.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -16,6 +16,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.2",
     "@tauri-apps/plugin-opener": "^2",
     "highlight.js": "^11.12.0",
+    "mermaid": "^12.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

@@ -35,6 +35,8 @@ Both sections are functional:
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
   and the checklist is pinned above the composer, ticking over as steps start and finish. It is
   collapsible, and a step in progress pulses so a long job is visible at a glance
+- **Artifacts** — a document the model publishes with `artifact_create` opens in a panel beside
+  the chat, rendered live and versioned, instead of scrolling away as a giant code block
 - Approximate **context-window meter** in the header
 
 **Coding**
@@ -216,6 +218,37 @@ And the limits, stated rather than papered over:
 - **Screenshots are not implemented.** The agent reads text; your eyes are the picture.
 - **What a window reports is data, never instructions.** Text in a window is content you did not
   write, so it is treated exactly like a web page: reported, never obeyed.
+
+**Artifacts** (both sections)
+
+When the answer is a document rather than a reply — a report, a page, a chart, a diagram, a note
+or a snippet worth keeping — the agent calls `artifact_create` instead of pasting it into the
+chat. The document opens in a panel beside the conversation and is kept, not scrolled away:
+
+| Kind | How it is shown |
+| --- | --- |
+| `html` | A sandboxed frame, rendered live |
+| `svg` / `mermaid` | The diagram, drawn and centred on white |
+| `markdown` | The normal Markdown renderer |
+| `code` | Monospace, read-only |
+
+Each artifact is **versioned**. Calling `artifact_create` again with the same title publishes a
+new version rather than a second document; a version menu goes back to any earlier one, and
+*Restore* makes an old version current again — by saving it as a new version, so nothing is ever
+overwritten. *Edit* opens the document as text; saving it adds a version attributed to you. The
+tool card in the chat names what was published, and the live panel is where the substance lives.
+
+Two things worth saying plainly:
+
+- **The frame is the sandbox.** Artifacts are rendered with `sandbox="allow-scripts allow-forms"`
+  and **no** `allow-same-origin`, so an artifact gets an opaque origin and cannot reach the app's
+  DOM, its storage, or the Tauri APIs behind it. On top of that the frame carries a
+  `Content-Security-Policy` of `default-src 'none'`, so nothing in an artifact can reach the
+  network — the styles and scripts must be inline. That is what makes a self-contained page work
+  and a tracking pixel not.
+- **An artifact is data, not a file.** It lives in the database, is never written into your
+  workspace, and the model cannot read one back unless you paste it. It is a reading surface, not
+  a second filesystem.
 
 **MCP servers**
 

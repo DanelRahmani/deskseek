@@ -227,6 +227,41 @@ export interface ComputerStateEvent {
   reason: string | null;
 }
 
+/** What an artifact's content is, which picks its renderer. */
+export type ArtifactKind = "html" | "svg" | "mermaid" | "markdown" | "code";
+
+export interface Artifact {
+  id: string;
+  chat_id: string;
+  message_id: string | null;
+  kind: ArtifactKind;
+  title: string;
+  current_version: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ArtifactVersion {
+  version: number;
+  /** `assistant` when the model wrote it, `user` when it was edited here. */
+  created_by: string;
+  created_at: number;
+}
+
+/** An artifact and one version of its content — the current one unless asked. */
+export interface ArtifactDetail {
+  artifact: Artifact;
+  content: string;
+  /** Newest first, which is the order the dropdown shows. */
+  versions: ArtifactVersion[];
+}
+
+/** Emitted when the model publishes or updates an artifact. */
+export interface ArtifactEvent {
+  chatId: string;
+  artifact: ArtifactDetail;
+}
+
 /** A read-only peek at one file. */
 export interface FilePreview {
   path: string;

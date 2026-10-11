@@ -24,6 +24,9 @@ pub const EVENT_APPROVAL: &str = "chat-approval";
 pub const EVENT_DONE: &str = "chat-done";
 pub const EVENT_ERROR: &str = "chat-error";
 pub const EVENT_GUARD: &str = "chat-guard";
+/// A new or updated artifact, for the side panel. Carries the whole document so
+/// opening it is one event, not an event plus a fetch.
+pub const EVENT_ARTIFACT: &str = "chat-artifact";
 
 /// How many tool round-trips before we stop and hand back to the user. A cap is
 /// essential: without it a confused model can loop forever on its own budget.
@@ -144,6 +147,17 @@ you start working, and call it again each time a step starts or finishes — sen
 every time, it replaces the previous one. One short line per step, exactly one step \
 `in_progress` at a time, and a step is `completed` only when it is actually finished. The user \
 watches this list, so an out-of-date one is worse than none.",
+    );
+
+    base.push_str(
+        "\n\n# Writing something to keep\n\n\
+When the answer is a document rather than a reply — a report, a page, a chart, a diagram, a note, \
+or a snippet worth keeping — call `artifact_create` instead of pasting it into the chat. It opens \
+in the side panel, where the user can read it, edit it, and go back to an earlier version. Pick \
+the kind that fits: `html` for a self-contained page (styles inline — there is no network access, \
+so no CDN links), `svg` or `mermaid` for a diagram, `markdown` for prose, `code` for source. \
+Calling it again with the same title publishes a new version of that document, so revising is \
+cheap and nothing is lost. Keep the chat reply short and put the substance in the artifact.",
     );
 
     // Where commands run changes what the model should reach for, so it is
@@ -418,6 +432,7 @@ async fn run_tool(
     app: &AppHandle,
     state: &AppState,
     chat_id: &str,
+    message_id: &str,
     name: &str,
     args: &Value,
     call_id: &str,
@@ -487,6 +502,46 @@ async fn run_tool(
             "Checklist updated: {} task{}, {done} done, {doing} in progress.",
             tasks.len(),
             if tasks.len() == 1 { "" } else { "s" }
+        ));
+    }
+
+    if name == "artifact_create" {
+        // Nothing runs and nothing is written to disk — the document goes into
+        // the database and the panel renders it sandboxed.
+        let draft = tools::parse_artifact(args)?;
+        let detail = {
+            let conn = state.db.lock().unwrap();
+            // The same title in the same chat is an update, not a second copy:
+            // that is what gives the panel its version history.
+            let existing = db::find_artifact_by_title(&conn, chat_id, &draft.title)
+                .map_err(|e| e.to_string())?;
+            let row = match existing {
+                Some(prev) => {
+                    db::add_artifact_version(&conn, &prev.id, &draft.content, "assistant")
+                        .map_err(|e| e.to_string())?
+                }
+                None => db::create_artifact(
+                    &conn,
+                    chat_id,
+                    Some(message_id),
+                    &draft.kind,
+                    &draft.title,
+                    &draft.content,
+                    "assistant",
+                )
+                .map_err(|e| e.to_string())?,
+            };
+            db::get_artifact_detail(&conn, &row.id, None).map_err(|e| e.to_string())?
+        };
+        let _ = app.emit(
+            EVENT_ARTIFACT,
+            serde_json::json!({ "chatId": chat_id, "artifact": detail }),
+        );
+        return Ok(format!(
+            "\"{}\" is open in the panel at version {} ({}). The user can read and edit it there. \
+             To change it yourself, call artifact_create again with the same title and the full new \
+             document — the older versions are kept.",
+            detail.artifact.title, detail.artifact.current_version, detail.artifact.kind
         ));
     }
 
@@ -763,7 +818,19 @@ pub async fn run(
             };
 
             let result = if allowed {
-                run_tool(&app, state, chat_id, &name, &args, &call.id, &ws, &cancel, &plan).await
+                run_tool(
+                    &app,
+                    state,
+                    chat_id,
+                    &last_message_id,
+                    &name,
+                    &args,
+                    &call.id,
+                    &ws,
+                    &cancel,
+                    &plan,
+                )
+                .await
             } else {
                 Err(denial.unwrap_or_else(|| {
                     "The user denied this action. Do not retry it — ask them what they would prefer."

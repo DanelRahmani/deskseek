@@ -274,6 +274,51 @@ pub fn chatlog_dir(state: State<'_, AppState>) -> String {
     state.paths.chatlog_dir().display().to_string()
 }
 
+// --------------------------------------------------------------- artifacts
+
+#[tauri::command]
+pub fn list_artifacts(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> Result<Vec<db::ArtifactRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_artifacts(&conn, &chat_id).map_err(|e| e.to_string())
+}
+
+/// One artifact plus one version's content. `version` of `None` means current.
+#[tauri::command]
+pub fn get_artifact(
+    state: State<'_, AppState>,
+    artifact_id: String,
+    version: Option<i64>,
+) -> Result<db::ArtifactDetail, String> {
+    let conn = state.db.lock().unwrap();
+    db::get_artifact_detail(&conn, &artifact_id, version).map_err(|e| e.to_string())
+}
+
+/// An edit made in the panel. It appends a version — nothing is overwritten —
+/// and hands back the whole detail so the version list is refreshed in the same
+/// round trip.
+#[tauri::command]
+pub fn save_artifact_version(
+    state: State<'_, AppState>,
+    artifact_id: String,
+    content: String,
+) -> Result<db::ArtifactDetail, String> {
+    if content.trim().is_empty() {
+        return Err("An artifact cannot be saved empty.".to_string());
+    }
+    let limit = crate::tools::MAX_ARTIFACT_CHARS;
+    if content.chars().count() > limit {
+        return Err(format!(
+            "That is longer than the {limit} character limit for one artifact."
+        ));
+    }
+    let conn = state.db.lock().unwrap();
+    db::add_artifact_version(&conn, &artifact_id, &content, "user").map_err(|e| e.to_string())?;
+    db::get_artifact_detail(&conn, &artifact_id, None).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn get_summary(state: State<'_, AppState>, chat_id: String) -> Result<Option<String>, String> {
     let conn = state.db.lock().unwrap();

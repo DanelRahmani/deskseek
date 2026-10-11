@@ -2,6 +2,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ApprovalEvent,
+  Artifact,
+  ArtifactDetail,
+  ArtifactEvent,
   Attachment,
   ChatRow,
   ComputerStateEvent,
@@ -78,6 +81,12 @@ export const api = {
 
   documentsDir: () => invoke<string>("documents_dir"),
 
+  listArtifacts: (chatId: string) => invoke<Artifact[]>("list_artifacts", { chatId }),
+  getArtifact: (artifactId: string, version?: number) =>
+    invoke<ArtifactDetail>("get_artifact", { artifactId, version: version ?? null }),
+  saveArtifactVersion: (artifactId: string, content: string) =>
+    invoke<ArtifactDetail>("save_artifact_version", { artifactId, content }),
+
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
   mcpServers: () => invoke<McpServer[]>("mcp_servers"),
   mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),
@@ -116,6 +125,11 @@ export function onShot(handler: (e: ShotEvent) => void): Promise<UnlistenFn> {
 /** Computer control was stopped or started again. */
 export function onComputer(handler: (e: ComputerStateEvent) => void): Promise<UnlistenFn> {
   return listen<ComputerStateEvent>("computer-state", (event) => handler(event.payload));
+}
+
+/** The model published or updated an artifact, for the side panel. */
+export function onArtifact(handler: (e: ArtifactEvent) => void): Promise<UnlistenFn> {
+  return listen<ArtifactEvent>("chat-artifact", (event) => handler(event.payload));
 }
 
 export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {
