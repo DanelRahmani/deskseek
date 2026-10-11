@@ -87,6 +87,11 @@ pub struct Settings {
     /// but it has no node, no cargo and no python.
     #[serde(default = "default_sandbox_image")]
     pub sandbox_image: String,
+    /// Master switch for reading the desktop (`ui_snapshot`). Off by default:
+    /// the accessibility tree is whatever is on screen, and what is on screen
+    /// may be private.
+    #[serde(default)]
+    pub computer_use: bool,
     /// Set once the first-run setup screen has been finished or dismissed.
     #[serde(default)]
     pub setup_done: bool,
@@ -126,6 +131,7 @@ impl Default for Settings {
             permission_mode: default_permission_mode(),
             sandbox: default_sandbox(),
             sandbox_image: default_sandbox_image(),
+            computer_use: false,
             setup_done: false,
         }
     }

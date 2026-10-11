@@ -258,6 +258,38 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
           }
         />
 
+        <Section
+          title="The user's screen"
+          state={settings.computerUse ? "ok" : "todo"}
+          stateLabel={settings.computerUse ? "On" : "Off"}
+          body={
+            <>
+              Let the agent read the desktop as text — the controls of the window that has
+              focus, and the names of the others. That is how it answers "what is on my
+              screen" and reads a dialog you cannot describe.
+              <span className="mt-1 block">
+                It <span className="text-neutral-400">reads only</span>: no screenshots, no
+                clicking, no typing. Off by default, because whatever is on screen may be
+                private.
+              </span>
+            </>
+          }
+          action={
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                checked={settings.computerUse}
+                disabled={busy}
+                onChange={(e) => save({ computerUse: e.target.checked })}
+                className="mt-0.5 accent-sky-500"
+              />
+              <span className="text-xs text-neutral-400">
+                Let the agent read the desktop (Windows only)
+              </span>
+            </label>
+          }
+        />
+
         <div className="mt-5 flex items-center justify-between gap-2 border-t border-neutral-800 pt-4">
           <button onClick={refresh} className={quiet} disabled={busy}>
             Re-check

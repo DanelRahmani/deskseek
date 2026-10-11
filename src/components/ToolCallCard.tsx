@@ -24,6 +24,7 @@ const ICONS: Record<string, string> = {
   browser_click: "🖱",
   browser_type: "⌨",
   browser_screenshot: "📷",
+  ui_snapshot: "🖥",
 };
 
 function describe(run: ToolRun): string {
@@ -53,6 +54,8 @@ function describe(run: ToolRun): string {
     case "browser_click":
     case "browser_type":
       return pick("selector");
+    case "ui_snapshot":
+      return pick("window") || "the focused window";
     case "git_commit":
       return pick("message");
     case "update_tasks": {

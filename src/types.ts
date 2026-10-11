@@ -74,6 +74,8 @@ export interface Settings {
   sandbox: SandboxMode;
   /** Image the Docker rung runs commands in. It must carry the workspace's toolchain. */
   sandboxImage: string;
+  /** Master switch for reading the desktop (`ui_snapshot`). Off by default. */
+  computerUse: boolean;
   /** Set once the first-run setup screen has been finished or dismissed. */
   setupDone: boolean;
 }

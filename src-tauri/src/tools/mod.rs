@@ -3,6 +3,7 @@
 
 pub mod browse;
 pub mod browser;
+pub mod desktop;
 pub mod exec;
 pub mod guard;
 pub mod sandbox;
@@ -37,6 +38,12 @@ pub enum ToolClass {
 /// `browser_` prefix covers `browser_read` and the whole automation set.
 pub fn is_browsing_tool(name: &str) -> bool {
     matches!(name, "fetch_url" | "web_search") || name.starts_with("browser_")
+}
+
+/// Tools that only exist when the user has switched computer use on. Nothing
+/// else in the toolset starts with these prefixes.
+pub fn is_computer_tool(name: &str) -> bool {
+    name.starts_with("ui_") || name.starts_with("screen_")
 }
 
 fn params(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -306,6 +313,14 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "ui_snapshot",
+                "Read the desktop as text: the controls of the window that has focus, or of another open window you name. Use it to answer what is on the user's screen and to read a dialog. This only reads — it cannot click or type.",
+                params(json!({"window": {"type": "string", "description": "Part of an open window's title (e.g. \"notepad\"). Omit for the window that has focus."}}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
                 "run_command",
                 "Run a shell command in the workspace root. Use for builds, tests and scripts.",
                 params(json!({"command": {"type": "string", "description": "The command line to run"}}), &["command"]),
@@ -417,6 +432,18 @@ mod tests {
         assert!(is_browsing_tool("web_search"));
         assert!(!is_browsing_tool("read_file"));
         assert!(!is_browsing_tool("write_file"));
+    }
+
+    #[test]
+    fn reading_the_desktop_is_a_computer_tool_that_must_be_switched_on() {
+        assert_eq!(class_of("ui_snapshot"), ToolClass::Computer);
+        assert!(is_computer_tool("ui_snapshot"));
+        // The gate must not catch anything that already existed.
+        for name in ["read_file", "browser_open", "run_command", "fetch_url", "update_tasks"] {
+            assert!(!is_computer_tool(name), "{name} must not follow the computer-use switch");
+        }
+        // Available in both sections: reading a window is not a coding tool.
+        assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "ui_snapshot"));
     }
 
     #[test]

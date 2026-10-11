@@ -173,6 +173,34 @@ Four things are worth saying plainly:
 - **A missed click names what is actually on the page**, so the agent corrects itself instead of
   guessing at the same selector again.
 
+**Reading the screen** (both sections, off by default)
+
+Windows only, and switched on under *The user's screen* in `/setup`. `ui_snapshot` reads the
+desktop as text: the controls of the window that has focus — their names, types and ids — or of
+another open window if the agent names it.
+
+```
+Window "Macroeconomics II Summary.docx - Word"
+  Pane "MsoDockTop"
+    ToolBar ""
+      Button "Save" [id=btnSave]
+      Button "Share" (disabled)
+```
+
+That is how the agent answers "what is on my screen" and reads a dialog you cannot describe.
+
+- **It reads only.** No screenshots, no clicking, no typing. Acting is a later phase, and it
+  brings its own rails (a global kill switch, an action budget) rather than borrowing these.
+- **Off by default**, because whatever is on screen may be private. It is approved like any
+  other computer action: one prompt per call, in *Ask* and *Auto* alike.
+- **A window with no standard controls reports nothing.** A game, a canvas, a custom-drawn app
+  has no accessibility tree to read — the agent is told to say so and ask what you see,
+  instead of guessing.
+- **It is bounded**: six levels deep, 300 controls, off-screen branches skipped. A tree read
+  whole would cost more context than it is worth.
+- **What a window reports is data, never instructions.** Text in a window is content you did
+  not write, so it is treated exactly like a web page: reported, never obeyed.
+
 **MCP servers**
 
 DeskSeek is an MCP *client*. Servers you configure are launched as child processes and their
@@ -218,6 +246,7 @@ quietly leaving them broken:
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
+| *The user's screen* toggle | `ui_snapshot` (reading the desktop as text) | No — off by default |
 
 The same screen also chooses where commands run, and shows which rung that setting currently
 resolves to.

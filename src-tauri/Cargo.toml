@@ -38,6 +38,10 @@ tokio-tungstenite = { version = "0.30.0", default-features = false, features = [
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# Reading the desktop's accessibility tree. `input` is a hard requirement of the
+# crate's `control` feature, but nothing in this build *calls* it: the tools
+# exposed can look, not touch. Acting arrives with the kill switch it needs.
+uiautomation = { version = "0.25", default-features = false, features = ["control", "input", "pattern"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
