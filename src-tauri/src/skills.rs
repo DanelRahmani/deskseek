@@ -16,7 +16,6 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub body: String,
-    pub builtin: bool,
 }
 
 /// Splits `---\nkey: value\n---\nbody` into (frontmatter, body).
@@ -51,7 +50,7 @@ fn frontmatter_field(frontmatter: &str, key: &str) -> Option<String> {
     None
 }
 
-pub fn parse_skill(id: &str, raw: &str, builtin: bool) -> Skill {
+pub fn parse_skill(id: &str, raw: &str) -> Skill {
     let (frontmatter, body) = split_frontmatter(raw);
     let name = frontmatter
         .and_then(|fm| frontmatter_field(fm, "name"))
@@ -64,7 +63,6 @@ pub fn parse_skill(id: &str, raw: &str, builtin: bool) -> Skill {
         name,
         description,
         body: body.trim().to_string(),
-        builtin,
     }
 }
 
@@ -83,7 +81,7 @@ pub fn discover(root: &Path) -> Vec<Skill> {
         let Ok(raw) = std::fs::read_to_string(&file) else {
             continue;
         };
-        out.push(parse_skill(&id, &raw, true));
+        out.push(parse_skill(&id, &raw));
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
     out
@@ -155,7 +153,7 @@ mod tests {
     #[test]
     fn parses_frontmatter_fields_and_body() {
         let raw = "---\nname: Code reviewer\ndescription: Critique code.\n---\nDo the thing.\n";
-        let s = parse_skill("code-reviewer", raw, true);
+        let s = parse_skill("code-reviewer", raw);
         assert_eq!(s.name, "Code reviewer");
         assert_eq!(s.description, "Critique code.");
         assert_eq!(s.body, "Do the thing.");
@@ -163,7 +161,7 @@ mod tests {
 
     #[test]
     fn a_file_without_frontmatter_still_loads() {
-        let s = parse_skill("plain", "Just instructions.", false);
+        let s = parse_skill("plain", "Just instructions.");
         assert_eq!(s.name, "plain");
         assert_eq!(s.description, "");
         assert_eq!(s.body, "Just instructions.");
@@ -171,7 +169,7 @@ mod tests {
 
     #[test]
     fn quoted_values_are_unwrapped() {
-        let s = parse_skill("q", "---\nname: \"Quoted\"\n---\nbody", false);
+        let s = parse_skill("q", "---\nname: \"Quoted\"\n---\nbody");
         assert_eq!(s.name, "Quoted");
     }
 
