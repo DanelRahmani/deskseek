@@ -24,9 +24,21 @@ Both sections are functional:
 - **Agentic by default** — the assistant can read, search, write and edit files in your
   documents folder (default `…/documents`, configurable), so it can produce a document for you
   and save it rather than only printing it
-- **Memory** — a single fixed file `MEMORY.md` injected into every request and editable in-app.
-  The model writes to it with a `save_memory` tool, so it never invents a file name or asks to
-  read memory it was already given. *Summarise chat* proposes entries you can accept or reject
+- **Memory** — two tiers, because one file has to be either short or cheap and it cannot be
+  both:
+  - `MEMORY.md` is the **profile**: who the user is and how they want replies — name, language,
+    standing preferences. It is short on purpose, sent with *every* request, and editable in-app.
+  - Everything else is a **kept fact**, stored individually and looked up by keyword (SQLite
+    FTS5) against what you just asked. Only the matching ones are sent, so the store can grow
+    without slowing anything down. Facts are scoped to a project when they were learned inside
+    one, so a note about one client does not turn up in another's chat.
+  - *Summarise chat* proposes entries and tags each one *always sent* or *facts*, so you can see
+    where an Accept will put it. Nothing reaches `MEMORY.md` without being accepted there.
+  - The panel lists kept facts and lets you forget any of them, and warns when `MEMORY.md` has
+    grown past what is worth sending every time.
+  - Honest limit: keyword search matches words, not meaning. Asking about "the car" will not
+    surface a fact stored as "vehicle". Embeddings would fix that; this trades it for requiring
+    no model download and no network.
 - **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
 - **Skills** — drop-in instruction files at `skills/<id>/SKILL.md`, toggled per chat
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,

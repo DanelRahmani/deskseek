@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS memory_proposals (
     chat_id    TEXT NOT NULL,
     text       TEXT NOT NULL,
     status     TEXT NOT NULL DEFAULT 'pending',
+    -- Where an accepted proposal goes: 'profile' (the always-injected
+    -- MEMORY.md) or 'fact' (the tier queried by relevance).
+    target     TEXT NOT NULL DEFAULT 'fact',
     created_at INTEGER NOT NULL
 );
 
@@ -115,6 +118,52 @@ CREATE TABLE IF NOT EXISTS artifact_versions (
     created_at  INTEGER NOT NULL,
     PRIMARY KEY (artifact_id, version)
 );
+
+-- Tier 2 memory: facts that are *retrieved* rather than always injected.
+--
+-- `norm` is the fact's text normalised to lowercase with collapsed whitespace,
+-- and it is UNIQUE: it is the dedup key. A hash would do the same job but would
+-- mean a second crate or an unstable `DefaultHasher`; storing the normalised
+-- text is stable across Rust versions and readable when debugging.
+CREATE TABLE IF NOT EXISTS memory_facts (
+    id              TEXT PRIMARY KEY,
+    -- 'global' or 'project:<workspace path>'.
+    scope           TEXT NOT NULL DEFAULT 'global',
+    kind            TEXT NOT NULL DEFAULT 'fact',
+    text            TEXT NOT NULL,
+    norm            TEXT NOT NULL UNIQUE,
+    tags            TEXT NOT NULL DEFAULT '',
+    -- 1 (worth recalling) to 3 (always worth recalling).
+    importance      INTEGER NOT NULL DEFAULT 1,
+    source_chat_id  TEXT,
+    created_at      INTEGER NOT NULL,
+    updated_at      INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_facts_scope ON memory_facts(scope, updated_at);
+
+-- External-content FTS5: the text lives once, in memory_facts, and the triggers
+-- below keep the index in step so no code path can forget to update it.
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+    text,
+    content='memory_facts',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
+    VALUES ('delete', old.rowid, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
+    INSERT INTO memory_facts_fts(memory_facts_fts, rowid, text)
+    VALUES ('delete', old.rowid, old.text);
+    INSERT INTO memory_facts_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -126,6 +175,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE chats ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'manual'",
+        [],
+    );
+    // Existing proposals predate the profile/fact split; everything so far went
+    // to MEMORY.md, so that is what the default has to be for old rows.
+    let _ = conn.execute(
+        "ALTER TABLE memory_proposals ADD COLUMN target TEXT NOT NULL DEFAULT 'profile'",
         [],
     );
     Ok(conn)
@@ -361,32 +416,48 @@ pub struct MemoryProposalRow {
     pub chat_id: String,
     pub text: String,
     pub status: String,
+    /// `profile` (the always-injected MEMORY.md) or `fact` (the retrieved tier).
+    pub target: String,
     pub created_at: i64,
+}
+
+/// One proposed memory, and where accepting it should file it.
+pub struct ProposalDraft {
+    pub text: String,
+    pub target: String,
 }
 
 pub fn insert_proposals(
     conn: &Connection,
     chat_id: &str,
-    texts: &[String],
+    drafts: &[ProposalDraft],
 ) -> rusqlite::Result<Vec<MemoryProposalRow>> {
     let ts = now_ts();
     let mut out = Vec::new();
-    for text in texts {
-        let text = text.trim();
+    for draft in drafts {
+        let text = draft.text.trim();
         if text.is_empty() {
             continue;
         }
+        // Anything unrecognised is filed as a fact rather than as a line in the
+        // always-injected file.
+        let target = if draft.target == "profile" {
+            "profile"
+        } else {
+            "fact"
+        };
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO memory_proposals (id, chat_id, text, status, created_at)
-             VALUES (?1, ?2, ?3, 'pending', ?4)",
-            params![id, chat_id, text, ts],
+            "INSERT INTO memory_proposals (id, chat_id, text, status, target, created_at)
+             VALUES (?1, ?2, ?3, 'pending', ?4, ?5)",
+            params![id, chat_id, text, target, ts],
         )?;
         out.push(MemoryProposalRow {
             id,
             chat_id: chat_id.to_string(),
             text: text.to_string(),
             status: "pending".to_string(),
+            target: target.to_string(),
             created_at: ts,
         });
     }
@@ -399,7 +470,8 @@ fn map_proposal(r: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryProposalRow> {
         chat_id: r.get(1)?,
         text: r.get(2)?,
         status: r.get(3)?,
-        created_at: r.get(4)?,
+        target: r.get(4)?,
+        created_at: r.get(5)?,
     })
 }
 
@@ -412,7 +484,7 @@ pub fn list_proposals(
     match status {
         Some(status) => {
             let mut stmt = conn.prepare(
-                "SELECT id, chat_id, text, status, created_at FROM memory_proposals
+                "SELECT id, chat_id, text, status, target, created_at FROM memory_proposals
                  WHERE chat_id = ?1 AND status = ?2 ORDER BY created_at DESC",
             )?;
             let rows = stmt.query_map(params![chat_id, status], map_proposal)?;
@@ -422,7 +494,7 @@ pub fn list_proposals(
         }
         None => {
             let mut stmt = conn.prepare(
-                "SELECT id, chat_id, text, status, created_at FROM memory_proposals
+                "SELECT id, chat_id, text, status, target, created_at FROM memory_proposals
                  WHERE chat_id = ?1 ORDER BY created_at DESC",
             )?;
             let rows = stmt.query_map([chat_id], map_proposal)?;
@@ -439,7 +511,7 @@ pub fn proposals_by_ids(conn: &Connection, ids: &[String]) -> rusqlite::Result<V
     for id in ids {
         let row = conn
             .query_row(
-                "SELECT id, chat_id, text, status, created_at FROM memory_proposals WHERE id = ?1",
+                "SELECT id, chat_id, text, status, target, created_at FROM memory_proposals WHERE id = ?1",
                 [id],
                 map_proposal,
             )
@@ -818,12 +890,24 @@ mod tests {
         let made = insert_proposals(
             &conn,
             &chat.id,
-            &["User is called Dan.".to_string(), "  ".to_string()],
+            &[
+                ProposalDraft {
+                    text: "User is called Dan.".to_string(),
+                    target: "profile".to_string(),
+                },
+                ProposalDraft {
+                    text: "  ".to_string(),
+                    target: "fact".to_string(),
+                },
+            ],
         )
         .unwrap();
         assert_eq!(made.len(), 1, "blank entries are dropped");
         let pending = list_proposals(&conn, &chat.id, Some("pending")).unwrap();
         assert_eq!(pending.len(), 1);
+        // The destination survives the round trip, or an accepted profile fact
+        // would silently end up in the retrieved tier instead.
+        assert_eq!(pending[0].target, "profile");
 
         set_proposal_status(&conn, &[made[0].id.clone()], "accepted").unwrap();
         assert!(list_proposals(&conn, &chat.id, Some("pending")).unwrap().is_empty());
@@ -836,7 +920,15 @@ mod tests {
     fn deleting_a_chat_clears_its_proposals_and_skills() {
         let conn = mem();
         let chat = create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
-        insert_proposals(&conn, &chat.id, &["fact".to_string()]).unwrap();
+        insert_proposals(
+            &conn,
+            &chat.id,
+            &[ProposalDraft {
+                text: "fact".to_string(),
+                target: "fact".to_string(),
+            }],
+        )
+        .unwrap();
         set_chat_skills(&conn, &chat.id, &["concise".to_string()]).unwrap();
         delete_chat(&conn, &chat.id).unwrap();
         assert!(list_proposals(&conn, &chat.id, None).unwrap().is_empty());

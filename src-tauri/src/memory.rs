@@ -49,15 +49,22 @@ pub fn append(path: &Path, entries: &[String]) -> io::Result<()> {
 /// the code that parses its output.
 pub const SUMMARY_SYSTEM_PROMPT: &str = "You maintain a long-term memory file for a user's \
 assistant. Given a chat transcript, reply with ONLY a JSON object of the shape \
-{\"topic\": string, \"summary\": string, \"memory\": string[]}.\n\
+{\"topic\": string, \"summary\": string, \"memory\": [{\"text\": string, \"target\": string}]}.\n\
 `topic` is a short label of two to five words for the conversation, in Title Case, \
 with no punctuation — it becomes part of a file name.\n\
 `summary` is one or two sentences describing what the chat was about.\n\
 `memory` lists durable facts worth remembering in future chats: the user's \
-preferences, names, ongoing projects, standing constraints. Prefer zero entries \
-over weak ones. Each entry is a single self-contained sentence, no bullet \
-prefix, no date. Never include secrets, API keys, passwords or private \
-credentials. Return valid JSON only.";
+preferences, names, ongoing projects, standing constraints. Each entry is an object \
+with two keys. `text` is one self-contained sentence, no bullet prefix and no date. \
+`target` is either \"profile\" or \"fact\".\n\
+Use \"profile\" only for who the user is and how they want to be worked with — their \
+name, the language they want replies in, and standing preferences or constraints that \
+apply to every conversation. Use \"fact\" for everything else, including anything that \
+only matters for one project or subject.\n\
+When unsure, choose \"fact\": a profile entry is injected into every single request, so \
+that list has to stay short, while facts are looked up only when they are relevant. \
+Prefer zero entries over weak ones. Never include secrets, API keys, passwords or \
+private credentials. Return valid JSON only.";
 
 #[cfg(test)]
 mod tests {

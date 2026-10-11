@@ -19,7 +19,45 @@ pub struct Summary {
     #[serde(default)]
     summary: String,
     #[serde(default)]
-    memory: Vec<String>,
+    memory: Vec<ProposedMemory>,
+}
+
+/// One proposed memory.
+///
+/// The extractor is asked for `{"text", "target"}` objects. A plain string is
+/// still accepted — an older or sloppier reply should not lose the fact — and is
+/// filed as a fact, never as a profile entry, because only the tagged shape is
+/// allowed to reach the always-injected file.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum ProposedMemory {
+    Tagged {
+        text: String,
+        #[serde(default)]
+        target: String,
+    },
+    Plain(String),
+}
+
+impl ProposedMemory {
+    fn into_draft(self) -> db::ProposalDraft {
+        let (text, target) = match self {
+            ProposedMemory::Tagged { text, target } => (text, target),
+            ProposedMemory::Plain(text) => (text, String::new()),
+        };
+        // Only an explicit `profile` may reach the always-injected file. Blank,
+        // misspelled or absent targets are facts, so the always-injected tier
+        // cannot grow by accident.
+        let target = if target.trim().eq_ignore_ascii_case("profile") {
+            "profile"
+        } else {
+            "fact"
+        };
+        db::ProposalDraft {
+            text,
+            target: target.to_string(),
+        }
+    }
 }
 
 /// Turns a topic into a safe, lowercase file-name fragment.
@@ -152,7 +190,11 @@ pub async fn summarize_chat(
         .await
         .map_err(|e| e.to_string())?;
 
-    let parsed = parse_summary(&raw)?;
+    let mut parsed = parse_summary(&raw)?;
+    let drafts: Vec<db::ProposalDraft> = std::mem::take(&mut parsed.memory)
+        .into_iter()
+        .map(ProposedMemory::into_draft)
+        .collect();
 
     let created = {
         let conn = state.db.lock().unwrap();
@@ -165,7 +207,7 @@ pub async fn summarize_chat(
                 db::list_proposals(&conn, chat_id, Some("pending")).map_err(|e| e.to_string())?;
             let ids: Vec<String> = existing.into_iter().map(|p| p.id).collect();
             db::set_proposal_status(&conn, &ids, "superseded").map_err(|e| e.to_string())?;
-            db::insert_proposals(&conn, chat_id, &parsed.memory).map_err(|e| e.to_string())?
+            db::insert_proposals(&conn, chat_id, &drafts).map_err(|e| e.to_string())?
         }
     };
 
@@ -176,13 +218,14 @@ pub async fn summarize_chat(
         parsed.topic.trim().to_string()
     };
     let date = chrono::Local::now().format("%Y%m%d").to_string();
+    let remembered: Vec<String> = drafts.iter().map(|draft| draft.text.clone()).collect();
     let chatlog = write_chatlog(
         &state.paths.chatlog_dir(),
         &date,
         &topic,
         &chat_title,
         &parsed.summary,
-        &parsed.memory,
+        &remembered,
     )
     .ok()
     .map(|path| format!("{topic}\u{1f}{path}"));
@@ -198,7 +241,61 @@ mod tests {
     fn parses_a_plain_json_payload() {
         let s = parse_summary(r#"{"summary":"about rust","memory":["Likes Rust"]}"#).unwrap();
         assert_eq!(s.summary, "about rust");
-        assert_eq!(s.memory, vec!["Likes Rust".to_string()]);
+        // An untagged plain string is still accepted, as a fact.
+        assert_eq!(s.memory.len(), 1);
+        let draft = s.memory.into_iter().next().unwrap().into_draft();
+        assert_eq!(draft.text, "Likes Rust");
+        assert_eq!(draft.target, "fact");
+    }
+
+    #[test]
+    fn a_tagged_entry_keeps_its_target() {
+        let s = parse_summary(
+            r#"{"summary":"x","memory":[{"text":"Replies in Dutch","target":"profile"},{"text":"Buying a house","target":"fact"}]}"#,
+        )
+        .unwrap();
+        let drafts: Vec<db::ProposalDraft> = s
+            .memory
+            .into_iter()
+            .map(ProposedMemory::into_draft)
+            .collect();
+        assert_eq!(drafts[0].target, "profile");
+        assert_eq!(drafts[0].text, "Replies in Dutch");
+        assert_eq!(drafts[1].target, "fact");
+    }
+
+    #[test]
+    fn an_entry_without_a_target_is_filed_as_a_fact() {
+        let s = parse_summary(r#"{"summary":"x","memory":[{"text":"Something"}]}"#).unwrap();
+        let draft = s.memory.into_iter().next().unwrap().into_draft();
+        assert_eq!(draft.target, "fact");
+    }
+
+    #[test]
+    fn only_an_explicit_profile_target_reaches_the_injected_file() {
+        for reply in [
+            r#"{"summary":"x","memory":[{"text":"a","target":"Profile"}]}"#,
+            r#"{"summary":"x","memory":[{"text":"a","target":" profile "}]}"#,
+        ] {
+            let draft = parse_summary(reply)
+                .unwrap()
+                .memory
+                .into_iter()
+                .next()
+                .unwrap()
+                .into_draft();
+            assert_eq!(draft.target, "profile", "{reply}");
+        }
+
+        // A misspelled or invented target must not become a profile entry.
+        let draft = parse_summary(r#"{"summary":"x","memory":[{"text":"a","target":"user"}]}"#)
+            .unwrap()
+            .memory
+            .into_iter()
+            .next()
+            .unwrap()
+            .into_draft();
+        assert_eq!(draft.target, "fact");
     }
 
     #[test]

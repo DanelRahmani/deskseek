@@ -199,29 +199,68 @@ pub fn list_proposals(
 
 #[tauri::command]
 pub fn accept_proposals(state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
-    let rows = {
+    let pending: Vec<db::MemoryProposalRow> = {
         let conn = state.db.lock().unwrap();
-        db::proposals_by_ids(&conn, &ids).map_err(|e| e.to_string())?
+        db::proposals_by_ids(&conn, &ids)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .filter(|r| r.status == "pending")
+            .collect()
     };
-    let texts: Vec<String> = rows
-        .iter()
-        .filter(|r| r.status == "pending")
-        .map(|r| r.text.clone())
-        .collect();
 
-    memory::append(&state.paths.memory_file(), &texts).map_err(|e| e.to_string())?;
+    // A `profile` entry belongs in MEMORY.md, which is injected on every request;
+    // a `fact` goes to the tier that is looked up only when relevant. Partly
+    // because of that difference the two are stored differently, so an accepted
+    // batch is split rather than appended in one place.
+    let (profile, facts): (Vec<_>, Vec<_>) = pending.iter().partition(|r| r.target == "profile");
+
+    if !profile.is_empty() {
+        let texts: Vec<String> = profile.iter().map(|r| r.text.clone()).collect();
+        memory::append(&state.paths.memory_file(), &texts).map_err(|e| e.to_string())?;
+    }
+
+    if !facts.is_empty() {
+        let conn = state.db.lock().unwrap();
+        for row in &facts {
+            // Scoped to the project the fact was learned in, so a fact about one
+            // client does not surface in another one's chat. Every lookup is per
+            // row: one accepted batch can span chats.
+            let scope = db::get_chat(&conn, &row.chat_id)
+                .ok()
+                .and_then(|chat| chat.workspace)
+                .map(|ws| crate::memory_facts::scope_for(Some(std::path::Path::new(&ws))))
+                .unwrap_or_else(|| crate::memory_facts::scope_for(None));
+            crate::memory_facts::upsert(&conn, &scope, "fact", &row.text, Some(&row.chat_id), 1)
+                .map_err(|e| e.to_string())?;
+        }
+    }
 
     {
         let conn = state.db.lock().unwrap();
         db::set_proposal_status(&conn, &ids, "accepted").map_err(|e| e.to_string())?;
     }
-    Ok(texts.len())
+    Ok(pending.len())
 }
 
 #[tauri::command]
 pub fn reject_proposals(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::set_proposal_status(&conn, &ids, "rejected").map_err(|e| e.to_string())
+}
+
+/// The second tier: everything remembered that is *not* in the always-injected
+/// file. Exposed so the user can see what was kept, and drop what should not
+/// have been.
+#[tauri::command]
+pub fn list_facts(state: State<'_, AppState>) -> Result<Vec<crate::memory_facts::FactRow>, String> {
+    let conn = state.db.lock().unwrap();
+    crate::memory_facts::list(&conn, None).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_fact(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    crate::memory_facts::delete(&conn, &id).map_err(|e| e.to_string())
 }
 
 /// Returns `summary\u{1f}<proposal count>\u{1f}<topic>\u{1f}<chatlog path>`.

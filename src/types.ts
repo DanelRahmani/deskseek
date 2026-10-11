@@ -165,7 +165,22 @@ export interface MemoryProposal {
   chat_id: string;
   text: string;
   status: string;
+  /** `profile` (MEMORY.md) or `fact` (the retrieved tier). */
+  target: string;
   created_at: number;
+}
+
+/** One remembered fact, outside the always-injected MEMORY.md. */
+export interface FactRow {
+  id: string;
+  /** `global` or `project:<workspace>`. */
+  scope: string;
+  kind: string;
+  text: string;
+  importance: number;
+  source_chat_id: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface SkillView {

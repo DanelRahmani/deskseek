@@ -12,6 +12,7 @@ import type {
   DoneEvent,
   ErrorEvent,
   EnvProbe,
+  FactRow,
   FilePreview,
   FsEvent,
   GuardEvent,
@@ -67,6 +68,8 @@ export const api = {
     invoke<MemoryProposal[]>("list_proposals", { chatId, status: status ?? null }),
   acceptProposals: (ids: string[]) => invoke<number>("accept_proposals", { ids }),
   rejectProposals: (ids: string[]) => invoke<void>("reject_proposals", { ids }),
+  listFacts: () => invoke<FactRow[]>("list_facts"),
+  deleteFact: (id: string) => invoke<void>("delete_fact", { id }),
   summarizeChat: (chatId: string) => invoke<string>("summarize_chat", { chatId }),
   compactChat: (chatId: string) => invoke<string>("compact_chat", { chatId }),
 
