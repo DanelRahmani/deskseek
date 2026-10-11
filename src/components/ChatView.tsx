@@ -29,6 +29,10 @@ interface Props {
   error: string | null;
   notice: string | null;
   usage: DoneEvent | null;
+  /** Process-wide: computer control is stopped until the user starts it again. */
+  computerPaused: boolean;
+  computerReason: string | null;
+  onResumeComputer: () => void;
   contextTokens: number;
   contextMax: number;
   onSend: (text: string) => void;
@@ -84,6 +88,9 @@ export function ChatView({
   error,
   notice,
   usage,
+  computerPaused,
+  computerReason,
+  onResumeComputer,
   contextTokens,
   contextMax,
   onSend,
@@ -101,6 +108,13 @@ export function ChatView({
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.
   const tasks = useMemo(() => tasksFrom(tools), [tools]);
+
+  // "The agent is operating your desktop" is derived, not reported: if a
+  // clicking tool is in flight, it is true, and it stops being true the moment
+  // the call returns. Nothing to keep in sync.
+  const acting = tools.some(
+    (t) => t.status === "running" && (t.tool === "ui_click" || t.tool === "ui_type"),
+  );
   // Tracks which draft the user dismissed the menu for, so Esc stays dismissed
   // until they type something new.
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
@@ -357,6 +371,25 @@ export function ChatView({
           <div ref={bottomRef} />
         </div>
       </div>
+
+      {acting && (
+        <div className="mx-4 mb-2 rounded-lg border border-sky-900/60 bg-sky-950/40 px-3 py-2 text-xs text-sky-300">
+          The agent is operating your desktop. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Esc</kbd>{" "}
+          to stop it.
+        </div>
+      )}
+
+      {computerPaused && (
+        <div className="mx-4 mb-2 flex items-center gap-3 rounded-lg border border-amber-900/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+          <span className="flex-1">{computerReason ?? "Computer control is stopped."}</span>
+          <button
+            onClick={onResumeComputer}
+            className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
+          >
+            Start it again
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mx-4 mb-2 rounded-lg border border-red-900/60 bg-red-950/40 px-3 py-2 text-xs text-red-300">

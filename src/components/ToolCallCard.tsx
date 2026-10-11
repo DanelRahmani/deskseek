@@ -25,6 +25,8 @@ const ICONS: Record<string, string> = {
   browser_type: "⌨",
   browser_screenshot: "📷",
   ui_snapshot: "🖥",
+  ui_click: "🖱",
+  ui_type: "⌨",
 };
 
 function describe(run: ToolRun): string {
@@ -56,6 +58,10 @@ function describe(run: ToolRun): string {
       return pick("selector");
     case "ui_snapshot":
       return pick("window") || "the focused window";
+    case "ui_click":
+      return pick("name") || pick("id");
+    case "ui_type":
+      return pick("text");
     case "git_commit":
       return pick("message");
     case "update_tasks": {

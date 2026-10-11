@@ -220,6 +220,13 @@ export interface TreeListing {
   entries: TreeEntry[];
 }
 
+/** Emitted when computer control is stopped or started again. */
+export interface ComputerStateEvent {
+  paused: boolean;
+  /** Why it stopped, or null when it is running. */
+  reason: string | null;
+}
+
 /** A read-only peek at one file. */
 export interface FilePreview {
   path: string;

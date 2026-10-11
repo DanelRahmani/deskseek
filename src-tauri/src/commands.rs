@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
@@ -13,7 +13,7 @@ use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{browse, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
+use crate::tools::{browse, desktop, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -420,6 +420,33 @@ pub fn stop_chat(state: State<'_, AppState>, chat_id: String) -> bool {
 #[tauri::command]
 pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
     state.runs.running()
+}
+
+/// Whether computer control is currently stopped. Read on startup so the banner
+/// is right even if the hotkey was used before the window was focused.
+#[tauri::command]
+pub fn computer_state(state: State<'_, AppState>) -> bool {
+    state.computer.is_paused()
+}
+
+/// Starts or stops computer control from the UI. Emits the same event the kill
+/// switch does, so the banner and the truth never disagree.
+#[tauri::command]
+pub fn set_computer_paused(app: AppHandle, state: State<'_, AppState>, paused: bool) -> bool {
+    if paused {
+        state.computer.pause();
+    } else {
+        state.computer.resume();
+    }
+    let paused = state.computer.is_paused();
+    let _ = app.emit(
+        desktop::EVENT_COMPUTER,
+        serde_json::json!({
+            "paused": paused,
+            "reason": if paused { Some("Computer control is stopped.") } else { None },
+        }),
+    );
+    paused
 }
 
 // ----------------------------------------------------------------- setup

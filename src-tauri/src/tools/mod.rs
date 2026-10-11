@@ -314,8 +314,43 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "ui_snapshot",
-                "Read the desktop as text: the controls of the window that has focus, or of another open window you name. Use it to answer what is on the user's screen and to read a dialog. This only reads — it cannot click or type.",
+                "Read the desktop as text: the controls of the window that has focus, or of another open window you name. Use it to answer what is on the user's screen, to read a dialog, and to see what to press next.",
                 params(json!({"window": {"type": "string", "description": "Part of an open window's title (e.g. \"notepad\"). Omit for the window that has focus."}}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "ui_click",
+                "Press a control on the user's desktop — a button, a menu item, a list item — by its name or its automation id. Look with ui_snapshot first. The user approves each press unless the chat is in skip mode.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "Text on the control. Case-insensitive; part of the name is enough."},
+                        "id": {"type": "string", "description": "The control's automation id, as ui_snapshot reports it"},
+                        "type": {"type": "string", "description": "Narrow the search to a control type, e.g. button or menuitem"},
+                        "window": {"type": "string", "description": "Part of the window's title. Omit for the window that has focus."}
+                    }),
+                    &[],
+                ),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "ui_type",
+                "Type into a field on the user's desktop — an edit box, a search box, a document. Identifies the field the same way ui_click does.",
+                params(
+                    json!({
+                        "text": {"type": "string", "description": "What to type"},
+                        "name": {"type": "string", "description": "Text labelling the field"},
+                        "id": {"type": "string", "description": "The field's automation id, as ui_snapshot reports it"},
+                        "type": {"type": "string", "description": "Narrow the search to a control type, e.g. edit"},
+                        "window": {"type": "string", "description": "Part of the window's title. Omit for the window that has focus."},
+                        "clear": {"type": "boolean", "description": "Select what is already in the field and replace it. Default false."},
+                        "submit": {"type": "boolean", "description": "Press Enter afterwards. Default false."}
+                    }),
+                    &["text"],
+                ),
             ),
             ToolClass::Computer,
         ),
@@ -435,9 +470,15 @@ mod tests {
     }
 
     #[test]
-    fn reading_the_desktop_is_a_computer_tool_that_must_be_switched_on() {
-        assert_eq!(class_of("ui_snapshot"), ToolClass::Computer);
-        assert!(is_computer_tool("ui_snapshot"));
+    fn desktop_tools_are_computer_class_and_must_be_switched_on() {
+        for name in ["ui_snapshot", "ui_click", "ui_type"] {
+            assert_eq!(class_of(name), ToolClass::Computer, "{name}");
+            assert!(is_computer_tool(name), "{name} must follow the computer-use switch");
+        }
+        // Only acting spends the run's action budget.
+        assert!(crate::tools::desktop::is_action("ui_click"));
+        assert!(crate::tools::desktop::is_action("ui_type"));
+        assert!(!crate::tools::desktop::is_action("ui_snapshot"));
         // The gate must not catch anything that already existed.
         for name in ["read_file", "browser_open", "run_command", "fetch_url", "update_tasks"] {
             assert!(!is_computer_tool(name), "{name} must not follow the computer-use switch");

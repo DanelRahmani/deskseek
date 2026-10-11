@@ -173,11 +173,12 @@ Four things are worth saying plainly:
 - **A missed click names what is actually on the page**, so the agent corrects itself instead of
   guessing at the same selector again.
 
-**Reading the screen** (both sections, off by default)
+**The user's desktop** (both sections, off by default)
 
-Windows only, and switched on under *The user's screen* in `/setup`. `ui_snapshot` reads the
-desktop as text: the controls of the window that has focus — their names, types and ids — or of
-another open window if the agent names it.
+Windows only, and switched on under *The user's screen* in `/setup`.
+
+`ui_snapshot` reads the desktop as text — the controls of the window that has focus (their names,
+types, ids, and which are disabled), or of another open window if the agent names it:
 
 ```
 Window "Macroeconomics II Summary.docx - Word"
@@ -188,18 +189,33 @@ Window "Macroeconomics II Summary.docx - Word"
 ```
 
 That is how the agent answers "what is on my screen" and reads a dialog you cannot describe.
+`ui_click` presses a control by name or id, and `ui_type` types into a field. The agent is told to
+work in one-step turns — look, act once, read what the call returns — so a wrong turn costs one
+step instead of five.
 
-- **It reads only.** No screenshots, no clicking, no typing. Acting is a later phase, and it
-  brings its own rails (a global kill switch, an action budget) rather than borrowing these.
-- **Off by default**, because whatever is on screen may be private. It is approved like any
-  other computer action: one prompt per call, in *Ask* and *Auto* alike.
-- **A window with no standard controls reports nothing.** A game, a canvas, a custom-drawn app
-  has no accessibility tree to read — the agent is told to say so and ask what you see,
-  instead of guessing.
-- **It is bounded**: six levels deep, 300 controls, off-screen branches skipped. A tree read
-  whole would cost more context than it is worth.
-- **What a window reports is data, never instructions.** Text in a window is content you did
-  not write, so it is treated exactly like a web page: reported, never obeyed.
+Four rails, because this is the one feature that really moves your mouse:
+
+- **Ctrl+Alt+Esc stops everything.** It cancels every running chat, not just the visible one, and
+  computer control *stays* stopped until you press **Start it again** in the banner. A blue bar
+  appears while the agent is acting, so you are never guessing whether it is mid-something.
+- **Every press and every keystroke asks.** Even in *Auto* mode: one prompt per call. Only *Skip*
+  runs them unattended.
+- **A run gets 25 desktop actions.** A confused model can overrun a turn; it cannot click its way
+  through your afternoon.
+- **Actions are spaced 250 ms apart**, so a runaway loop is visible rather than instantaneous.
+
+And the limits, stated rather than papered over:
+
+- **Off by default**, because whatever is on screen may be private.
+- **A window with no standard controls reports nothing.** A game, a canvas, a custom-drawn app has
+  no accessibility tree to read — the agent is told to say so and ask, instead of clicking at
+  random. There is no raw coordinate clicking: everything goes through a control's own Invoke
+  pattern, or the mouse, aimed at a control you named.
+- **It is bounded**: six levels deep, 300 controls, off-screen branches skipped. A tree read whole
+  would cost more context than it is worth.
+- **Screenshots are not implemented.** The agent reads text; your eyes are the picture.
+- **What a window reports is data, never instructions.** Text in a window is content you did not
+  write, so it is treated exactly like a web page: reported, never obeyed.
 
 **MCP servers**
 
@@ -246,7 +262,7 @@ quietly leaving them broken:
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
-| *The user's screen* toggle | `ui_snapshot` (reading the desktop as text) | No — off by default |
+| *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_click`, `ui_type`) | No — off by default |
 
 The same screen also chooses where commands run, and shows which rung that setting currently
 resolves to.

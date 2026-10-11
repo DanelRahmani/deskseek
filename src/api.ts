@@ -4,6 +4,7 @@ import type {
   ApprovalEvent,
   Attachment,
   ChatRow,
+  ComputerStateEvent,
   DeltaEvent,
   DoneEvent,
   ErrorEvent,
@@ -88,6 +89,8 @@ export const api = {
     invoke<void>("send_message", { chatId, text, attachments }),
   stopChat: (chatId: string) => invoke<boolean>("stop_chat", { chatId }),
   runningChats: () => invoke<string[]>("running_chats"),
+  computerState: () => invoke<boolean>("computer_state"),
+  setComputerPaused: (paused: boolean) => invoke<boolean>("set_computer_paused", { paused }),
 
   listTree: (chatId: string, path: string | null = null) =>
     invoke<TreeListing>("list_tree", { chatId, path }),
@@ -108,6 +111,11 @@ export function onTool(handler: (e: ToolEvent) => void): Promise<UnlistenFn> {
 /** A picture from `browser_screenshot`, for the user to see. */
 export function onShot(handler: (e: ShotEvent) => void): Promise<UnlistenFn> {
   return listen<ShotEvent>("chat-shot", (event) => handler(event.payload));
+}
+
+/** Computer control was stopped or started again. */
+export function onComputer(handler: (e: ComputerStateEvent) => void): Promise<UnlistenFn> {
+  return listen<ComputerStateEvent>("computer-state", (event) => handler(event.payload));
 }
 
 export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {

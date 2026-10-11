@@ -12,7 +12,8 @@ mod tools;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 pub struct AppState {
     pub db: Mutex<rusqlite::Connection>,
@@ -31,6 +32,10 @@ pub struct AppState {
     /// The automation browser, started on first use and kept for the session so
     /// a page opened in one turn is still there in the next.
     pub browser: tools::browser::Browser,
+    /// Stopping everything that touches the desktop, plus the pacing between
+    /// actions. Process-wide on purpose: the chat you cannot see is the one you
+    /// most want stopped.
+    pub computer: tools::desktop::Gate,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
@@ -40,6 +45,37 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    // The press is the event; the release is just the key coming up.
+                    if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
+                    let Some(state) = app.try_state::<AppState>() else {
+                        return;
+                    };
+                    let stopped = state.runs.cancel_all();
+                    let just_paused = state.computer.pause();
+                    // A second press with nothing running is not news worth showing.
+                    if !just_paused && stopped == 0 {
+                        return;
+                    }
+                    let also = if stopped > 0 {
+                        format!(" and stopped {stopped} run(s)")
+                    } else {
+                        String::new()
+                    };
+                    let _ = app.emit(
+                        tools::desktop::EVENT_COMPUTER,
+                        serde_json::json!({
+                            "paused": true,
+                            "reason": format!("Computer control was stopped with Ctrl+Alt+Esc{also}."),
+                        }),
+                    );
+                })
+                .build(),
+        )
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             let paths = store::paths::AppPaths::new(root);
@@ -73,8 +109,24 @@ pub fn run() {
                 files: fs_watch::FileWatcher::new(app.handle().clone()),
                 sandbox,
                 browser: tools::browser::Browser::default(),
+                computer: tools::desktop::Gate::default(),
                 mcp: mcp_manager.clone(),
             });
+
+            // Ctrl+Alt+Esc stops everything that touches the desktop, including a
+            // run that has taken the mouse. Registering it can fail (another app
+            // may already own the combination), and that must not stop the app
+            // starting — it is reported and the run is simply not guardable.
+            let kill_switch = tauri_plugin_global_shortcut::Shortcut::new(
+                Some(
+                    tauri_plugin_global_shortcut::Modifiers::CONTROL
+                        | tauri_plugin_global_shortcut::Modifiers::ALT,
+                ),
+                tauri_plugin_global_shortcut::Code::Escape,
+            );
+            if let Err(err) = app.global_shortcut().register(kill_switch) {
+                eprintln!("could not register the Ctrl+Alt+Esc kill switch: {err}");
+            }
 
             // Starting MCP servers can involve downloading a package, so it
             // happens in the background: the window opens immediately.
@@ -127,6 +179,8 @@ pub fn run() {
             commands::stop_chat,
             commands::running_chats,
             commands::probe_environment,
+            commands::computer_state,
+            commands::set_computer_paused,
             commands::list_tree,
             commands::read_preview,
             commands::watch_workspace,

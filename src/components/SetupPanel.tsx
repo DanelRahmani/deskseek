@@ -264,13 +264,13 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
           stateLabel={settings.computerUse ? "On" : "Off"}
           body={
             <>
-              Let the agent read the desktop as text — the controls of the window that has
-              focus, and the names of the others. That is how it answers "what is on my
-              screen" and reads a dialog you cannot describe.
+              Let the agent read and operate the desktop — the controls of the window that has
+              focus, and the names of the others. That is how it answers "what is on my screen",
+              reads a dialog you cannot describe, and presses a button when you ask it to.
               <span className="mt-1 block">
-                It <span className="text-neutral-400">reads only</span>: no screenshots, no
-                clicking, no typing. Off by default, because whatever is on screen may be
-                private.
+                It asks before every press and every keystroke, and{" "}
+                <span className="text-neutral-400">Ctrl+Alt+Esc</span> stops it immediately. Off by
+                default, because whatever is on screen may be private.
               </span>
             </>
           }

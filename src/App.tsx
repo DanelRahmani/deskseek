@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { api, onApproval, onDelta, onDone, onError, onGuard, onShot, onTool } from "./api";
+import { api, onApproval, onComputer, onDelta, onDone, onError, onGuard, onShot, onTool } from "./api";
 import { filesToAttachments } from "./lib/attachments";
 import type {
   ApprovalEvent,
@@ -74,6 +74,12 @@ export default function App() {
   // Live turn state, keyed by chat — so a run in a background chat keeps
   // streaming while the user reads a different conversation.
   const [sessions, setSessions] = useState<Record<string, SessionRuntime>>({});
+  // Process-wide, not per chat: the kill switch stops everything, so one banner
+  // in every pane is the truth rather than a per-chat guess.
+  const [computer, setComputer] = useState<{ paused: boolean; reason: string | null }>({
+    paused: false,
+    reason: null,
+  });
 
   const patch = useCallback((chatId: string, fn: (rt: SessionRuntime) => SessionRuntime) => {
     setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
@@ -105,18 +111,21 @@ export default function App() {
   // Startup only: load settings and every chat, then restore the saved shell.
   useEffect(() => {
     (async () => {
-      const [s, m, k, docs, chatList, codingList] = await Promise.all([
+      const [s, m, k, docs, chatList, codingList, paused] = await Promise.all([
         api.getSettings(),
         api.listModels(),
         api.maskedApiKey(),
         api.documentsDir(),
         api.listChats("chat"),
         api.listChats("coding"),
+        // The hotkey may have been pressed before the window was listening.
+        api.computerState(),
       ]);
       setSettings(s);
       setModels(m);
       setKeyMask(k);
       setDocumentsDir(docs);
+      setComputer({ paused, reason: paused ? "Computer control is stopped." : null });
 
       // Both sections, so a tab restored from the last session has a title even
       // when it belongs to the other one.
@@ -201,6 +210,7 @@ export default function App() {
           tools: rt.tools.map((t) => (t.id === e.callId ? { ...t, shot: e.dataUrl } : t)),
         }));
       }),
+      onComputer((e) => setComputer({ paused: e.paused, reason: e.reason })),
       onDone((e) => {
         patch(e.chatId, (rt) => ({ ...rt, busy: false, usage: e }));
       }),
@@ -630,6 +640,9 @@ export default function App() {
                     error={rt.error ?? (pane === focus ? error : null)}
                     notice={pane === focus ? notice : null}
                     usage={rt.usage}
+                    computerPaused={computer.paused}
+                    computerReason={computer.reason}
+                    onResumeComputer={() => api.setComputerPaused(false)}
                     contextTokens={id ? tokensFor(id) : 0}
                     contextMax={max}
                     onSend={(text) => send(text, id, pane)}

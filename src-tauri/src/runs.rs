@@ -96,6 +96,18 @@ impl Runs {
         }
     }
 
+    /// Cancels every live run. This is what the kill switch pulls: with the
+    /// agent driving the mouse, "stop the chat I am looking at" is not enough.
+    /// Returns how many runs were live. Cancelling does not evict them — each
+    /// run leaves the map itself when it reports finished.
+    pub fn cancel_all(&self) -> usize {
+        let active = self.active.lock().unwrap();
+        for run in active.values() {
+            run.cancel.cancel();
+        }
+        active.len()
+    }
+
     pub fn running(&self) -> Vec<String> {
         let mut ids: Vec<String> = self.active.lock().unwrap().keys().cloned().collect();
         ids.sort();
@@ -122,6 +134,18 @@ mod tests {
         assert!(runs.cancel("chat-1"));
         assert!(cancel.is_cancelled());
         assert!(!runs.cancel("chat-2"), "nothing was running for chat-2");
+    }
+
+    #[test]
+    fn the_kill_switch_stops_every_chat_not_just_the_visible_one() {
+        let runs = Runs::default();
+        let (_, first) = runs.begin("chat-1");
+        let (_, second) = runs.begin("chat-2");
+        assert_eq!(runs.cancel_all(), 2);
+        assert!(first.is_cancelled() && second.is_cancelled());
+        // Pressing again before they wind up is harmless: cancelling is
+        // idempotent, and the runs stay listed until they report finished.
+        assert_eq!(runs.cancel_all(), 2);
     }
 
     #[test]
