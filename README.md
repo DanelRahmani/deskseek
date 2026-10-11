@@ -147,8 +147,11 @@ Each conversation carries its own **mode**, chosen in the header and cycled with
   would need a file, the web or a command, instead of implying it looked
 - **Standard** — every tool the section offers, with the approval mode below deciding what is
   asked about
-- **Plan** — read-only: it can read, search and publish a plan, and it cannot change anything.
-  Useful for "tell me what you would do" on a codebase you have not handed over yet
+- **Plan** — reads only: files and searches, plus lookups on the web (`fetch_url`, `web_search`,
+  and the browser's *reading* tools for pages JavaScript builds or pages you have to page
+  through). It cannot write, run or click anything — `browser_click`, `browser_type` and
+  `browser_eval` are all actions on someone else's site, so they wait until the chat is allowed
+  to act. Useful for "tell me what you would do" on a codebase you have not handed over yet
 - **Agent** — every tool, and nothing asks: it works until the job is done. The guard still
   refuses the catastrophic tier, so autonomous is not unchecked
 
@@ -259,6 +262,8 @@ a chord can never fire for the wrong key.
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
   JavaScript-built pages work), and `web_search` queries a **SearXNG** instance
 - All three are read-only, so they never prompt; turn them off in **Settings → Browsing**
+- `browser_open` and `browser_extract` are reads too — the same lookup, spread over two calls
+  when a page needs poking at — so they prompt for nothing either
 - `browser_read` drives the Chromium-family browser already on your machine — nothing to
   download. Point it at Chrome or Edge explicitly if auto-detection picks the wrong one
 
@@ -269,8 +274,8 @@ through to a result, checking what a site really does — the agent can drive th
 
 | Tool | What it does |
 | --- | --- |
-| `browser_open` | Open a URL and read the page. The browser keeps its state, so open once and work on it |
-| `browser_extract` | Read the page that is already open |
+| `browser_open` | Open a URL and read the page. A read, so it does not prompt. The browser keeps its state, so open once and work on it |
+| `browser_extract` | Read the page that is already open — also a read |
 | `browser_eval` | Run a JavaScript expression in the page and get the value back |
 | `browser_click` / `browser_type` | Click an element or fill a field by CSS selector, then read the page back |
 | `browser_screenshot` | Show **you** a picture of the page, in the chat |
@@ -283,8 +288,10 @@ module speaks it directly.
 
 Four things are worth saying plainly:
 
-- **These always ask, even in *Auto* mode.** No string rule can tell a harmless click from a
-  purchase, so the app does not pretend to. Only *Skip* runs them unattended.
+- **The four that act always ask, even in *Auto* mode.** `browser_eval`, `browser_click`,
+  `browser_type` and `browser_screenshot` — no string rule can tell a harmless click from a
+  purchase, so the app does not pretend to. Only *Skip* runs them unattended. Opening and reading
+  a page is a lookup and is classed as a read, like `browser_read`
 - **Page content is data, never instructions.** A page that tells the model to run a command or
   ignore what you asked is a prompt injection — the agent is told to stop and report it.
 - **Screenshots go to your eyes, not the model's.** The result the model receives is text, because

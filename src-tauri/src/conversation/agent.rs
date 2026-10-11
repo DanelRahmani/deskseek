@@ -380,14 +380,26 @@ This chat has no tools. Answer from what you know, and say plainly when somethin
 the web or a command rather than implying you looked. If the user wants you to act, they switch \
 the chat to Plan, Standard or Agent.",
         ),
-        tools::AgentMode::Plan => base.push_str(
-            "\n\n# Mode: plan\n\n\
-You are planning, not doing. You can read, search, and publish a plan with `update_tasks`; you \
-cannot write, edit or run anything, and a missing tool is this mode rather than a fault. \
-Investigate enough to be specific, publish the plan, then stop: say what you would change and \
-that switching to Standard or Agent has you carry it out. Do not ask the user to approve single \
-steps — the plan is the thing they approve.",
-        ),
+        tools::AgentMode::Plan => {
+            // Only promise the web when it is switched on: naming tools the user
+            // has turned off turns a plan into a list of apologies.
+            let reach = if settings.browsing_enabled {
+                "the workspace, and anything on the internet (`fetch_url`, `web_search`, and \
+                 `browser_open` with `browser_extract` for pages JavaScript builds, or pages you \
+                 have to page through)"
+            } else {
+                "the workspace — internet access is switched off on this machine"
+            };
+            base.push_str(&format!(
+                "\n\n# Mode: plan\n\n\
+You are planning, not doing. You can read and search {reach}. You cannot write, edit, run or \
+click anything, and a missing tool is this mode rather than a fault. Investigate enough to be \
+specific, publish the plan with `update_tasks`, then stop: say what you would change, name the \
+files it touches and the sources you checked, and note that switching to Standard or Agent has \
+you carry it out. Do not ask the user to approve single steps — the plan is the thing they \
+approve."
+            ));
+        }
         tools::AgentMode::Agent => base.push_str(
             "\n\n# Mode: agent\n\n\
 Work autonomously until the job is done. Nothing asks for approval, so narrate one short line per \

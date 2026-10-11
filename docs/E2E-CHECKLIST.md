@@ -115,7 +115,10 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 - [ ] `Shift+Tab` in the composer cycles Ask → Standard → Plan → Agent and back
 - [ ] `Ask` sends no tools at all: the context breakdown lists none
-- [ ] In `Plan` mode a write or command is not offered and the reply proposes a plan
+- [ ] In `Plan` mode reads and web lookups are offered, while write, run, `browser_click` and
+      `browser_eval` are not
+- [ ] In `Plan` mode the reply names the files it would touch and the sources it checked
+- [ ] In `Plan` mode with browsing switched off, the prompt does not promise the web
 - [ ] In `Agent` mode a write runs without a prompt, and the guard still refuses `rm -rf /`
 - [ ] The approval control (`Ask first` / `Auto` / `Skip`) appears in Standard mode only
 - [ ] `/mode plan` switches the chat and says so

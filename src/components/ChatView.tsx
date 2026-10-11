@@ -80,7 +80,7 @@ export const AGENT_MODES: { id: string; label: string; hint: string }[] = [
   {
     id: "plan",
     label: "Plan",
-    hint: "Read-only: investigate and propose a plan, change nothing",
+    hint: "Reads only: read files, look things up on the web, and propose a plan — it changes nothing",
   },
   {
     id: "agent",

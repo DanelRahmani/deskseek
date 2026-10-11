@@ -30,10 +30,16 @@ pub enum ToolClass {
     Write,
     /// Executes something; the user approves each call.
     Command,
-    /// Acts on the world outside the workspace — a real browser today. Approved
-    /// on every call in manual *and* auto mode: the agent is acting as the user
-    /// on sites neither of us controls, and no string heuristic can tell a
-    /// harmless click from a purchase.
+    /// Acts on the world outside the workspace: clicking, typing or running
+    /// script in a real browser, which can submit a form or buy something, and
+    /// reading the user's desktop. Approved on every call in manual *and* auto
+    /// mode: the agent is acting as the user on a site neither of us controls,
+    /// and no string heuristic can tell a harmless click from a purchase.
+    ///
+    /// *Reading* a page through the browser is not in here — `browser_read`,
+    /// `browser_open` and `browser_extract` are `Read`, because they do what
+    /// `fetch_url` does (in a browser, so JavaScript has run first) and the app
+    /// never touches the browser the user is signed into.
     Computer,
 }
 
@@ -57,7 +63,9 @@ pub enum AgentMode {
     Ask,
     /// Everything the section offers; approvals follow the chat's permission mode.
     Standard,
-    /// Reads only: investigate, publish a plan, change nothing.
+    /// Reads and lookups only: files, and the web through `fetch_url`,
+    /// `web_search` and the browser's reading tools. Nothing is written, run or
+    /// clicked, so the mode can promise that nothing has changed.
     Plan,
     /// Everything, and nothing asks for approval: work until it is done.
     Agent,
@@ -90,7 +98,8 @@ impl AgentMode {
             Self::Ask => false,
             // Internal tools are the app's own bookkeeping — the plan, memory, an
             // artifact — and none of them touches the user's files, which is what
-            // plan mode is protecting.
+            // plan mode is protecting. Reading the web is a lookup, so it is in
+            // here too; clicking or typing on a page is not.
             Self::Plan => matches!(class, ToolClass::Read | ToolClass::Internal),
             Self::Standard | Self::Agent => true,
         }
@@ -574,7 +583,7 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                 "Open a URL in a real browser and read the page. Use this instead of fetch_url when the page is built by JavaScript, or when you will need to click or type on it afterwards. The browser keeps its state between calls, so opening a page once is enough.",
                 params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
             ),
-            ToolClass::Computer,
+            ToolClass::Read,
         ),
         (
             Tool::function(
@@ -582,7 +591,7 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                 "Read the page currently open in the browser: its title, address and visible text.",
                 params(json!({}), &[]),
             ),
-            ToolClass::Computer,
+            ToolClass::Read,
         ),
         (
             Tool::function(
@@ -753,7 +762,27 @@ mod tests {
         assert!(tools_for_mode("coding", AgentMode::Ask).is_empty());
         assert!(tools_for_mode("chat", AgentMode::Ask).is_empty());
 
-        for (tool, class) in tools_for_mode("coding", AgentMode::Plan) {
+        // Plan reads: files, and the web both as a plain fetch and through the
+        // browser, so a page JavaScript built is still available to look at.
+        let plan = tools_for_mode("coding", AgentMode::Plan);
+        let names: Vec<&str> = plan.iter().map(|(t, _)| t.function.name.as_str()).collect();
+        for name in ["read_file", "grep", "fetch_url", "web_search", "browser_open", "browser_extract"] {
+            assert!(names.contains(&name), "plan mode should offer {name}");
+        }
+        // Anything that can change something, or act on someone else's site,
+        // stays out — browser_eval included: arbitrary script in a live page is
+        // one `form.submit()` away from an action.
+        for name in [
+            "write_file",
+            "edit_file",
+            "run_command",
+            "browser_click",
+            "browser_type",
+            "browser_eval",
+        ] {
+            assert!(!names.contains(&name), "plan mode must not offer {name}");
+        }
+        for (tool, class) in &plan {
             assert!(
                 matches!(class, ToolClass::Read | ToolClass::Internal),
                 "plan mode offered {} ({:?}), which can change something",
@@ -761,7 +790,7 @@ mod tests {
                 class
             );
         }
-        assert!(tools_for_mode("coding", AgentMode::Plan).len() < builtin_tools().len());
+        assert!(plan.len() < builtin_tools().len());
 
         // Standard and agent differ in whether they ask, not in what they may
         // reach, so both offer the section's whole list.
@@ -798,10 +827,24 @@ mod tests {
     }
 
     #[test]
-    fn browser_tools_are_computer_class_and_are_always_asked_about() {
+    fn reading_a_page_through_the_browser_is_a_read() {
+        // A lookup, not an action: same class as fetch_url, so it follows the
+        // browsing switch, exists in both sections, and is never prompted for.
+        // `browser_read` was already classed this way in isolation; opening a page
+        // and reading it is the same operation spread over two calls.
+        for name in ["browser_read", "browser_open", "browser_extract"] {
+            assert_eq!(class_of(name), ToolClass::Read, "{name}");
+            assert!(is_browsing_tool(name), "{name} must follow the browsing switch");
+            assert!(
+                tools_for("chat").iter().any(|(t, _)| t.function.name == name),
+                "{name} missing from chat mode"
+            );
+        }
+    }
+
+    #[test]
+    fn browser_tools_that_act_are_computer_class_and_are_always_asked_about() {
         for name in [
-            "browser_open",
-            "browser_extract",
             "browser_eval",
             "browser_click",
             "browser_type",
@@ -809,7 +852,7 @@ mod tests {
         ] {
             assert_eq!(class_of(name), ToolClass::Computer, "{name}");
             assert!(is_browsing_tool(name), "{name} must follow the browsing switch");
-            // Both sections get them: reading a web page is not a shell tool.
+            // Both sections get them: driving a web page is not a shell tool.
             assert!(
                 tools_for("chat").iter().any(|(t, _)| t.function.name == name),
                 "{name} missing from chat mode"
@@ -817,7 +860,6 @@ mod tests {
         }
         // The plain fetchers follow the same switch, and nothing else does.
         assert!(is_browsing_tool("fetch_url"));
-        assert!(is_browsing_tool("browser_read"));
         assert!(is_browsing_tool("web_search"));
         assert!(!is_browsing_tool("read_file"));
         assert!(!is_browsing_tool("write_file"));
