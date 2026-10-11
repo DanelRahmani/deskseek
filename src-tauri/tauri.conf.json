@@ -26,12 +26,22 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Danel Rahmani",
+    "copyright": "© 2026 Danel Rahmani",
+    "category": "Productivity",
+    "shortDescription": "A desktop client for the DeepSeek API.",
+    "longDescription": "DeskSeek is a lightweight desktop client for the DeepSeek API. Chat with a streaming assistant that keeps a memory across conversations, or point an agent at a folder and let it read, search, edit and run commands — behind approvals, a path sandbox and a safety guard.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
   }
 }

@@ -151,6 +151,27 @@ as a tab.
 Guard refusals and errors belong to their chat, so a refusal in the pane you are not looking at
 is still there when you look at it.
 
+**Keyboard shortcuts**
+
+The keyboard does the same things the buttons do, and nothing more — every key here
+reaches the state change its button already makes:
+
+| Shortcut | Does |
+| --- | --- |
+| `Ctrl+N` | New conversation |
+| `Ctrl+W` | Close the focused tab |
+| `Ctrl+B` | Show or hide the file tree |
+| `Ctrl+M` | Memory panel |
+| `Ctrl+,` | Settings |
+| `Ctrl+\` | Split into two panes, or back to one |
+| `Ctrl+1` / `Ctrl+2` | Move focus to the left / right pane |
+| `Escape` | Close the open panel or dialog |
+
+`Cmd` works in place of `Ctrl` on macOS. `Escape` belongs to whatever field has
+focus: in the composer it dismisses the slash-command menu and leaves the panel
+alone. The map is a pure function (`src/lib/shortcuts.ts`) with its own checks, so
+a chord can never fire for the wrong key.
+
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
@@ -400,10 +421,16 @@ cd src-tauri && cargo test
 ```
 
 `npm run check` is the frontend's own checks (plain Node, no test framework). It pins the tab and
-pane rules in `src/lib/shell.ts` — the panes must never show the same chat twice, and closing a
-tab must never leave a pane blank while another tab is still open — and the task-list reader in
-`src/lib/tasks.ts`, which parses arguments the model wrote and must therefore survive every
-malformed shape it can produce.
+pane rules in `src/lib/shell.ts`; the task-list reader in `src/lib/tasks.ts`, which parses
+arguments the model wrote and must therefore survive every malformed shape it can produce; the
+artifact and document readers; and the shortcut map in `src/lib/shortcuts.ts`, so a chord cannot
+silently fire for the wrong key or stop firing for the right one.
+
+Before a release, `npm run tauri build` produces the installers (Windows NSIS + MSI, macOS
+`.app`/`.dmg`, Linux `.deb`/`.rpm`/AppImage). The behaviour that cannot be tested automatically
+is written down as a tick-list in [`docs/E2E-CHECKLIST.md`](docs/E2E-CHECKLIST.md) — run it once
+against the built app before publishing. Pushing a `v*` tag runs the same build in CI and drafts
+the release, so the tag is the publish button.
 
 **Windows: `cargo test` dies with `0xc0000139`?** That is a loader error, not a test failure: the
 test harness links `TaskDialogIndirect`, which only `comctl32` **v6** exports, but a test binary

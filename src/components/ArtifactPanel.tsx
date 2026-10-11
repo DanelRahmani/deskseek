@@ -23,9 +23,22 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(detail.content);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isCurrent = version === artifact.current_version;
+
+  /** The panel is a reading surface, so the common next move is to take the
+   *  document somewhere else. Copy the version on screen, not the current one. */
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError("Couldn't reach the clipboard.");
+    }
+  }
 
   async function selectVersion(next: number) {
     setEditing(false);
@@ -142,6 +155,15 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
               className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-800"
             >
               Edit
+            </button>
+          )}
+          {!editing && (
+            <button
+              onClick={copy}
+              className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-800"
+              title="Copy this version to the clipboard"
+            >
+              {copied ? "Copied" : "Copy"}
             </button>
           )}
         </div>

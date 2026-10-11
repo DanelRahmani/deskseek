@@ -39,6 +39,7 @@ import { ArtifactPanel } from "./components/ArtifactPanel";
 import { TabStrip } from "./components/TabStrip";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
+import { resolveShortcut } from "./lib/shortcuts";
 
 type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact";
 
@@ -545,6 +546,54 @@ export default function App() {
       [key]: (prev[key] ?? []).filter((_, i) => i !== index),
     }));
   }, []);
+
+  // One window listener, resolved by the pure map in lib/shortcuts.ts. Every
+  // action below is the same state change its button makes, so the keyboard can
+  // never do something the UI cannot.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      const typing =
+        !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+      const action = resolveShortcut(e, typing);
+      if (!action) return;
+      e.preventDefault();
+      switch (action) {
+        case "new-chat":
+          void newChat();
+          return;
+        case "close-tab":
+          if (activeId) closeTab(activeId);
+          return;
+        case "toggle-files":
+          setPanel((current) => (current === "files" ? "none" : "files"));
+          return;
+        case "open-memory":
+          setPanel("memory");
+          return;
+        case "open-settings":
+          setShowSettings(true);
+          return;
+        case "toggle-split":
+          toggleSplit();
+          return;
+        case "focus-pane-0":
+        case "focus-pane-1": {
+          const pane = action === "focus-pane-0" ? 0 : 1;
+          setShell((s) => (pane < s.panes.length ? { ...s, focus: pane } : s));
+          return;
+        }
+        case "dismiss":
+          // Topmost first: a dialog covers a panel.
+          if (showSettings) setShowSettings(false);
+          else if (showSetup) setShowSetup(false);
+          else setPanel("none");
+          return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeId, closeTab, newChat, showSettings, showSetup, toggleSplit]);
 
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),
