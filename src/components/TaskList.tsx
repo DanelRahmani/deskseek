@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Task } from "../lib/tasks";
+import { Icon } from "./Icon";
 
 const MARKS: Record<Task["status"], string> = {
   pending: "○",
@@ -37,7 +38,11 @@ export function TaskList({ tasks }: { tasks: Task[] }) {
         {working && (
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" title="Working" />
         )}
-        <span className="ml-auto text-neutral-600">{open ? "▾" : "▸"}</span>
+        <Icon
+          name="chevron"
+          size={12}
+          className={`ml-auto text-neutral-600 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+        />
       </button>
       {open && (
         <ul className="space-y-1 border-t border-neutral-800 px-3 py-2">

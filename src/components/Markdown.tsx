@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyText } from "../lib/clipboard";
+import { IconButton } from "./Icon";
 
 /** The rehype plugin's type, without importing it for real (type queries erase). */
 type Highlighter = typeof import("rehype-highlight").default;
@@ -21,21 +22,25 @@ function textOf(node: unknown): string {
   return props ? textOf(props.children) : "";
 }
 
-/** A copy button that says so for a moment, so a click is never silent. */
+/**
+ * Copy, with a tick for a second so a click is never silent.
+ *
+ * The icon carries the meaning and the tooltip carries the words: a bordered
+ * box saying "Copy" is heavier than the thing it copies.
+ */
 export function CopyButton({ text, label }: { text: string; label: string }) {
   const [done, setDone] = useState(false);
   return (
-    <button
+    <IconButton
+      icon={done ? "check" : "copy"}
+      label={done ? "Copied" : label}
+      tone={done ? "ok" : "plain"}
       onClick={() => {
         void copyText(text);
         setDone(true);
         window.setTimeout(() => setDone(false), 1200);
       }}
-      className="rounded border border-neutral-700 bg-neutral-900/80 px-1.5 py-0.5 text-[10px] text-neutral-400 transition hover:border-neutral-600 hover:text-neutral-200"
-      title={label}
-    >
-      {done ? "Copied" : "Copy"}
-    </button>
+    />
   );
 }
 
@@ -66,11 +71,13 @@ export function Markdown({ children }: { children: string }) {
         rehypePlugins={highlight ? [highlight] : []}
         components={{
           // Every fenced block gets its own copy button: taking a snippet out of
-          // an answer is the most common thing anyone does with one.
+          // an answer is the most common thing anyone does with one. It sits on
+          // the wrapper rather than inside the `pre`, so scrolling a long line
+          // sideways does not carry the button off the edge.
           pre({ children }) {
             return (
-              <div className="relative">
-                <div className="absolute top-1 right-1 opacity-60 transition hover:opacity-100">
+              <div className="group relative">
+                <div className="absolute top-1.5 right-1.5 z-10 opacity-55 transition duration-150 group-hover:opacity-100 focus-within:opacity-100">
                   <CopyButton text={textOf(children).replace(/\n$/, "")} label="Copy this block" />
                 </div>
                 <pre>{children}</pre>

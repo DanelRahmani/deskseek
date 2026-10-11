@@ -119,8 +119,11 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
         <span>{ICONS[run.tool] ?? "🔧"}</span>
         <span className="font-medium">{run.tool}</span>
         <span className="truncate text-neutral-500">{describe(run)}</span>
-        <span className="ml-auto shrink-0 text-[10px] uppercase tracking-wide opacity-70">
-          {run.status === "running" ? "running…" : run.status}
+        {/* The status in lower case, not the tracked-caps label it used to be:
+            one quiet word after the description reads as state, where uppercase
+            tracking reads as a badge. */}
+        <span className="ml-auto shrink-0 text-[10px] opacity-70">
+          {run.status === "running" ? "running…" : run.status === "ok" ? "done" : "failed"}
         </span>
       </button>
       {open && run.shot && (

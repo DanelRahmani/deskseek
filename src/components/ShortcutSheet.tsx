@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { SHORTCUTS } from "../lib/shortcuts";
+import { Icon } from "./Icon";
 
 /**
  * Every chord in one place, on top of everything.
@@ -46,7 +47,7 @@ export function ShortcutSheet({ onClose }: { onClose: () => void }) {
             className="ml-auto text-sm text-neutral-500 transition hover:text-neutral-200"
             title="Close"
           >
-            ×
+            <Icon name="close" size={15} />
           </button>
         </div>
         <ul className="max-h-80 overflow-y-auto p-3">

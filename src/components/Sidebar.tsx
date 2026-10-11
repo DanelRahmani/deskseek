@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { ChatRow, MessageHit, SectionKind } from "../types";
+import { Icon } from "./Icon";
 
 interface Props {
   kind: SectionKind;
@@ -180,14 +181,14 @@ export function Sidebar({
               className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-sky-400 group-hover:block"
               title="Archive — keeps it, out of the way"
             >
-              ↓
+              <Icon name="archive" />
             </button>
             <button
               onClick={() => onDelete(c.id)}
               className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-red-400 group-hover:block"
               title="Delete"
             >
-              ×
+              <Icon name="close" />
             </button>
           </div>
         ))}
@@ -199,7 +200,11 @@ export function Sidebar({
               className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-neutral-500 transition hover:text-neutral-300"
               title="Archived chats are only hidden, never deleted"
             >
-              <span className="text-[8px]">{showArchived ? "▼" : "▶"}</span>
+              <Icon
+                name="chevron"
+                size={11}
+                className={`transition-transform duration-150 ${showArchived ? "rotate-90" : ""}`}
+              />
               Archived ({archived.length})
             </button>
             {showArchived &&
@@ -217,14 +222,14 @@ export function Sidebar({
                     className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-sky-400 group-hover:block"
                     title="Take out of the archive"
                   >
-                    ↑
+                    <Icon name="restore" />
                   </button>
                   <button
                     onClick={() => onDelete(c.id)}
                     className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-red-400 group-hover:block"
                     title="Delete"
                   >
-                    ×
+                    <Icon name="close" />
                   </button>
                 </div>
               ))}

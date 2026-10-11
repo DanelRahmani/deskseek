@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { Icon } from "./Icon";
 import type { MemoryCategoryView, MemoryProposal } from "../types";
 
 interface Props {
@@ -220,7 +221,7 @@ export function MemorySection({ chatId, onChanged }: Props) {
                         className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
                         title="Forget this"
                       >
-                        ×
+                        <Icon name="close" />
                       </button>
                     </div>
                   ))}

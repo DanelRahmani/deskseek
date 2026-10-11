@@ -845,12 +845,25 @@ pub fn skills_dir(state: State<'_, AppState>) -> String {
     state.paths.skills_dir().display().to_string()
 }
 
+/// Writes a skill body to `skills/<id>/SKILL.md`, refusing an id that is taken.
+///
+/// An id that already exists is refused rather than overwritten: installing
+/// twice should not quietly replace a skill the user may have edited. Shared by
+/// both install routes so they cannot drift on that rule.
+fn write_skill(root: &std::path::Path, id: &str, raw: &str) -> Result<String, String> {
+    let dir = root.join(id);
+    if dir.exists() {
+        return Err(format!("A skill called \"{id}\" is already installed."));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("SKILL.md"), raw).map_err(|e| e.to_string())?;
+    Ok(id.to_string())
+}
+
 /// Install a skill from a markdown file the user picked.
 ///
 /// The file is copied to `skills/<id>/SKILL.md`, where the id comes from the
-/// file's frontmatter `name` or, failing that, its own name. An id that is
-/// already taken is refused rather than overwritten: installing twice should
-/// not quietly replace a skill the user may have edited.
+/// file's frontmatter `name` or, failing that, its own name.
 #[tauri::command]
 pub fn install_skill(state: State<'_, AppState>, path: String) -> Result<String, String> {
     let source = std::path::Path::new(&path);
@@ -859,13 +872,28 @@ pub fn install_skill(state: State<'_, AppState>, path: String) -> Result<String,
     }
     let raw = std::fs::read_to_string(source).map_err(|e| e.to_string())?;
     let id = skills::id_for(source, &raw);
-    let dir = state.paths.skills_dir().join(&id);
-    if dir.exists() {
-        return Err(format!("A skill called \"{id}\" is already installed."));
+    write_skill(&state.paths.skills_dir(), &id, &raw)
+}
+
+/// Install a skill pasted into the panel instead of picked from a file.
+///
+/// The shortcut that matters: a skill usually arrives as text — out of a chat, a
+/// gist, a repository page — and saving it to disk first only to pick it back up
+/// is the part people do not finish. The pasted text names itself.
+#[tauri::command]
+pub fn install_skill_text(state: State<'_, AppState>, text: String) -> Result<String, String> {
+    if text.trim().is_empty() {
+        return Err("There is nothing to install.".to_string());
     }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    std::fs::write(dir.join("SKILL.md"), raw).map_err(|e| e.to_string())?;
-    Ok(id)
+    let id = skills::id_from_text(&text);
+    write_skill(&state.paths.skills_dir(), &id, &text)
+}
+
+/// Put back the bundled examples the user does not have. Returns the ids added,
+/// which is empty when there was nothing missing.
+#[tauri::command]
+pub fn install_examples(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    skills::write_missing_examples(&state.paths.skills_dir()).map_err(|e| e.to_string())
 }
 
 /// Remove a skill directory. The id must be a plain directory name — a value

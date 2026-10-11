@@ -1,4 +1,5 @@
 import type { ChatRow } from "../types";
+import { Icon } from "./Icon";
 
 interface Props {
   tabs: ChatRow[];
@@ -63,7 +64,7 @@ export function TabStrip({
                 className="shrink-0 rounded px-1 text-neutral-600 opacity-0 transition group-hover:opacity-100 hover:text-red-400"
                 title="Close tab"
               >
-                ×
+                <Icon name="close" size={13} />
               </button>
             </div>
           );
@@ -76,7 +77,10 @@ export function TabStrip({
         }`}
         title={split ? "Close the second pane" : "Split into two panes"}
       >
-        ◫ {split ? "Unsplit" : "Split"}
+        <span className="flex items-center gap-1.5">
+          <Icon name="split" size={15} />
+          {split ? "Unsplit" : "Split"}
+        </span>
       </button>
     </div>
   );

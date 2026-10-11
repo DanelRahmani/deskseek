@@ -146,9 +146,82 @@ pub fn bundle_examples(root: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// The id a skill that arrived as *text* should live under: the frontmatter
+/// `name`, else its first markdown heading, else a plain `skill`.
+///
+/// There is no file to borrow a name from — pasting is the point — so the text
+/// has to name itself. Slugged like every other id, because this becomes a
+/// directory name.
+pub fn id_from_text(raw: &str) -> String {
+    let (frontmatter, body) = split_frontmatter(raw);
+    let from_name = frontmatter.and_then(|fm| frontmatter_field(fm, "name"));
+    let from_heading = body
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("# "))
+        .map(str::to_string);
+    let candidate = from_name
+        .filter(|name| !name.trim().is_empty())
+        .or(from_heading)
+        .unwrap_or_default();
+    crate::tools::docs::slug_with(&candidate, "skill")
+}
+
+/// Writes the bundled examples that are missing, returning the ids it added.
+///
+/// The deliberate opposite of `bundle_examples`, which runs once and never
+/// again: this one is the user asking, so it works in a directory that already
+/// exists — and still refuses to overwrite a skill, because an edited example
+/// is the user's now.
+pub fn write_missing_examples(root: &Path) -> io::Result<Vec<String>> {
+    std::fs::create_dir_all(root)?;
+    let mut added = Vec::new();
+    for (id, content) in EXAMPLES {
+        let dir = root.join(id);
+        if dir.join("SKILL.md").exists() {
+            continue;
+        }
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join("SKILL.md"), content)?;
+        added.push((*id).to_string());
+    }
+    Ok(added)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pasted_skill_names_itself_from_the_frontmatter_then_the_heading() {
+        // Pasting has no file to borrow a name from, so the text has to say what
+        // it is — and whatever it says has to survive being a directory name.
+        assert_eq!(
+            id_from_text("---\nname: Code Reviewer\n---\nBody."),
+            "code-reviewer"
+        );
+        assert_eq!(id_from_text("# Trip planner\n\nSteps."), "trip-planner");
+        // Nothing usable still lands somewhere safe rather than at an empty id.
+        assert_eq!(id_from_text("just some notes"), "skill");
+        assert_eq!(id_from_text("---\nname: ../evil\n---\nx"), "evil");
+    }
+
+    #[test]
+    fn the_examples_can_be_put_back_without_clobbering_an_edit() {
+        let dir = std::env::temp_dir().join(format!("deskseek-skills-{}", uuid::Uuid::new_v4()));
+        bundle_examples(&dir).unwrap();
+        std::fs::remove_dir_all(dir.join("explain")).unwrap();
+        std::fs::write(dir.join("concise").join("SKILL.md"), "---\nname: Mine\n---\nEdited.").unwrap();
+
+        // Only the missing one comes back, and the edited one is left alone.
+        assert_eq!(write_missing_examples(&dir).unwrap(), vec!["explain".to_string()]);
+        let skills = discover(&dir);
+        assert_eq!(skills.len(), 3);
+        let concise = skills.iter().find(|s| s.id == "concise").unwrap();
+        assert_eq!(concise.name, "Mine");
+        // Asking again has nothing left to do.
+        assert!(write_missing_examples(&dir).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn parses_frontmatter_fields_and_body() {

@@ -6,6 +6,7 @@ import { SHORTCUTS } from "../lib/shortcuts";
 import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
 import { MemorySection } from "./MemorySection";
+import { Icon } from "./Icon";
 import type { EnvProbe, Instruction, ModelInfo, Settings, ToolGrant } from "../types";
 
 /**
@@ -56,7 +57,7 @@ function Grants() {
             className="ml-auto shrink-0 text-neutral-500 transition hover:text-red-400"
             title="Take this back: the tool asks again in this folder"
           >
-            ×
+            <Icon name="close" />
           </button>
         </li>
       ))}
@@ -507,8 +508,8 @@ export function SettingsDialog({
             spellCheck={false}
             className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-neutral-700"
           />
-          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200">
-            ×
+          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
+            <Icon name="close" size={15} />
           </button>
         </div>
 
@@ -1003,7 +1004,7 @@ export function SettingsDialog({
                       className="text-neutral-500 hover:text-red-400"
                       title="Remove"
                     >
-                      ×
+                      <Icon name="close" />
                     </button>
                   </div>
                   <textarea

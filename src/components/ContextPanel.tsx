@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { Icon } from "./Icon";
 import { formatTokens, tokensFromChars } from "../lib/context";
 import type { ContextBreakdown } from "../types";
 
@@ -117,8 +118,8 @@ export function ContextPanel({ chatId, limit, onClose }: Props) {
     <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <span className="text-xs font-semibold text-neutral-200">Context</span>
-        <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200">
-          ×
+        <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
+          <Icon name="close" size={15} />
         </button>
       </header>
 

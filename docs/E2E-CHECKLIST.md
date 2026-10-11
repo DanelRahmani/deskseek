@@ -23,6 +23,9 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Chat
 
 - [ ] A message streams in; the *thinking* pane appears and collapses
+- [ ] The caret sits at the end of the text while it is still arriving
+- [ ] *Copy* under an answer puts the Markdown on the clipboard; *Retry* next to it asks again
+- [ ] *Edit* under your own last message changes it and asks again
 - [ ] Markdown, a table and a fenced code block all render
 - [ ] Dropping an image attaches it and the reply accounts for it
 - [ ] `Stop` mid-stream keeps the partial reply and ends the turn
@@ -107,6 +110,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] `ui_snapshot` reads the focused window's controls as text
 - [ ] `ui_click` asks, even in *Auto*
 - [ ] `Ctrl+Alt+Esc` cancels every run and the banner stays until restarted
+
+## Skills
+
+- [ ] Pasting a SKILL.md into the panel installs it under `skills/<id>/` and lists it
+- [ ] The id comes from the frontmatter name, or from the first heading when there is none
+- [ ] Installing a name that already exists is refused rather than overwriting
+- [ ] Switching a skill on puts its text in that chat's context breakdown
+- [ ] *Restore examples* brings back a deleted example and leaves an edited one alone
 
 ## Memory
 

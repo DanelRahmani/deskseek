@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { Icon } from "./Icon";
 import { frameDoc, KIND_LABELS, SANDBOX } from "../lib/artifact";
 import type { ArtifactDetail } from "../types";
 import { Markdown } from "./Markdown";
@@ -100,7 +101,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
           className="ml-auto text-sm text-neutral-500 transition hover:text-neutral-200"
           title="Close the artifact"
         >
-          ×
+          <Icon name="close" size={15} />
         </button>
       </header>
 

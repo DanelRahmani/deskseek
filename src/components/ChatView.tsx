@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { tasksFrom } from "../lib/tasks";
 import { CopyButton, Markdown } from "./Markdown";
+import { IconButton } from "./Icon";
 import { formatTokens } from "../lib/context";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
@@ -129,6 +130,20 @@ export function ChatView({
     return null;
   }, [messages]);
 
+  // The newest answer, which is the only one a retry can replace. Walking in
+  // order resets at each user turn, so an answer that is already followed by a
+  // newer question is not the one offered: retrying it would throw that question
+  // and this reply away. A tool-call turn carries no content and is not an answer
+  // either.
+  const retryId = useMemo(() => {
+    let answer: string | null = null;
+    for (const message of messages) {
+      if (message.role === "user") answer = null;
+      else if (message.role === "assistant" && message.content) answer = message.id;
+    }
+    return answer;
+  }, [messages]);
+
   // "The agent is operating your desktop" is derived, not reported: if a
   // clicking tool is in flight, it is true, and it stops being true the moment
   // the call returns. Nothing to keep in sync.
@@ -223,10 +238,10 @@ export function ChatView({
         {chat?.kind === "coding" && (
           <button
             onClick={onPickWorkspace}
-            className={`rounded-md border px-2 py-1 text-xs transition ${
+            className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
               needsFolder
-                ? "border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
-                : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                ? "border border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
+                : "text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
             }`}
             title={chat.workspace ?? "Choose a folder to work in"}
           >
@@ -239,10 +254,10 @@ export function ChatView({
         {(!mcp.ready || mcp.toolCount > 0 || mcp.failedCount > 0) && (
           <button
             onClick={onMcp}
-            className={`rounded-md border px-2 py-1 text-xs transition ${
+            className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
               mcp.failedCount > 0
-                ? "border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
-                : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+                ? "border border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
+                : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
             }`}
             title={
               !mcp.ready
@@ -263,7 +278,7 @@ export function ChatView({
           {chat && (
             <button
               onClick={onFiles}
-              className="rounded-md border border-neutral-800 px-2 py-1 text-xs text-neutral-400 transition hover:border-neutral-700 hover:text-neutral-200"
+              className="rounded-md px-2 py-1 text-xs text-neutral-400 transition duration-150 hover:bg-neutral-800 hover:text-neutral-200"
               title="Show or hide the file tree"
             >
               Files
@@ -333,10 +348,10 @@ export function ChatView({
               </select>
               <button
                 onClick={() => onModelChange(chat.model, !chat.thinking, chat.effort)}
-                className={`rounded-md border px-2 py-1 text-xs transition ${
+                className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
                   chat.thinking
-                    ? "border-sky-800 bg-sky-500/10 text-sky-300"
-                    : "border-neutral-800 text-neutral-500 hover:text-neutral-300"
+                    ? "bg-sky-500/15 text-sky-300"
+                    : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
                 }`}
                 title="Toggle thinking mode"
               >
@@ -358,10 +373,10 @@ export function ChatView({
               {chat.kind === "chat" && (
                 <button
                   onClick={() => onToolsChange(!chat.tools_enabled)}
-                  className={`rounded-md border px-2 py-1 text-xs transition ${
+                  className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
                     chat.tools_enabled
-                      ? "border-sky-800 bg-sky-500/10 text-sky-300"
-                      : "border-neutral-800 text-neutral-500 hover:text-neutral-300"
+                      ? "bg-sky-500/15 text-sky-300"
+                      : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
                   }`}
                   title={
                     chat.tools_enabled
@@ -392,19 +407,19 @@ export function ChatView({
       )}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="mx-auto flex max-w-3xl flex-col gap-5 py-6">
+        <div className="mx-auto flex max-w-3xl flex-col gap-6 py-6">
           {messages.length === 0 && !stream && (
-            <div className="mt-24 text-center text-neutral-600">
-              <p className="text-lg text-neutral-500">
-                {chat?.kind === "coding" ? "Coding section" : "Start a conversation"}
+            <div className="mt-24 text-center">
+              <p className="text-[15px] text-neutral-300">
+                {chat?.kind === "coding" ? "Point it at a folder" : "Start a conversation"}
               </p>
-              <p className="mt-1 text-xs">
+              <p className="mx-auto mt-2 max-w-sm text-xs leading-relaxed text-neutral-500">
                 {chat?.kind === "coding"
-                  ? "Point it at a folder, then ask for a change. Every write and command asks first."
-                  : "Attach an image or ask for a document — chat can read and write files in your documents folder."}
+                  ? "Choose a folder in the header, then ask for a change. Every write and command asks first."
+                  : "Ask anything, attach an image, or ask for a document — it can read and write files in your documents folder."}
               </p>
-              <p className="mt-3 text-xs text-neutral-700">
-                Commands: {COMMANDS.map((command) => command.name).join(" ")}
+              <p className="mx-auto mt-5 max-w-md font-mono text-[11px] leading-relaxed text-neutral-600">
+                {COMMANDS.map((command) => command.name).join("  ")}
               </p>
             </div>
           )}
@@ -414,6 +429,7 @@ export function ChatView({
               key={m.id}
               message={m}
               onEdit={m.id === lastUserId ? onResend : undefined}
+              onRetry={m.id === retryId && !busy ? () => onResend(null) : undefined}
             />
           ))}
 
@@ -423,25 +439,17 @@ export function ChatView({
 
           {stream && (
             <div className="flex flex-col">
-              <Role role="assistant" />
               <ThinkingBlock text={stream.reasoning} streaming={busy} />
               {stream.content ? (
-                <Markdown>{stream.content}</Markdown>
+                <div className="flex items-end gap-1">
+                  <div className="min-w-0 flex-1">
+                    <Markdown>{stream.content}</Markdown>
+                  </div>
+                  {busy && <span className="caret mb-1.5" aria-hidden />}
+                </div>
               ) : (
                 <span className="text-neutral-600">…</span>
               )}
-            </div>
-          )}
-
-          {!busy && lastUserId && (
-            <div className="flex justify-center">
-              <button
-                onClick={() => onResend(null)}
-                className="rounded-md px-2 py-1 text-[11px] text-neutral-500 transition hover:text-neutral-300"
-                title="Ask the same question again, replacing the answer above"
-              >
-                ↻ Regenerate
-              </button>
             </div>
           )}
 
@@ -556,7 +564,7 @@ export function ChatView({
             </div>
           )}
 
-          <div className="flex items-end gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 focus-within:border-neutral-700">
+          <div className="flex items-end gap-2 rounded-2xl border border-neutral-800 bg-neutral-900 p-2 transition duration-200 focus-within:border-neutral-600">
             <input
               ref={fileRef}
               type="file"
@@ -569,7 +577,7 @@ export function ChatView({
             />
             <button
               onClick={() => fileRef.current?.click()}
-              className="rounded-lg px-2 py-1.5 text-neutral-500 hover:text-neutral-200"
+              className="rounded-lg px-2 py-1.5 text-neutral-500 transition duration-150 hover:bg-neutral-800 hover:text-neutral-200"
               title="Attach files or images"
             >
               📎
@@ -582,12 +590,12 @@ export function ChatView({
               onPaste={onPaste}
               rows={1}
               placeholder="Send a message, or type / for commands…"
-              className="max-h-[200px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+              className="max-h-[200px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-neutral-100 outline-none"
             />
             <button
               onClick={submit}
               disabled={busy || (!draft.trim() && attachments.length === 0)}
-              className={`rounded-lg px-3 py-1.5 text-sm font-medium text-accent-fg transition disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 ${
+              className={`rounded-xl px-3 py-1.5 text-sm font-medium text-accent-fg transition duration-150 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600 ${
                 busy ? "hidden" : "bg-sky-600 hover:bg-sky-500"
               }`}
             >
@@ -596,7 +604,7 @@ export function ChatView({
             {busy && (
               <button
                 onClick={onStop}
-                className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 transition hover:border-red-800 hover:bg-red-950/40 hover:text-red-300"
+                className="rounded-xl border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 transition duration-150 hover:border-red-800 hover:bg-red-950/40 hover:text-red-300"
                 title="Stop this run"
               >
                 Stop
@@ -609,21 +617,16 @@ export function ChatView({
   );
 }
 
-function Role({ role }: { role: string }) {
-  return (
-    <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
-      {role === "assistant" ? "DeskSeek" : role}
-    </div>
-  );
-}
-
 function Bubble({
   message,
   onEdit,
+  onRetry,
 }: {
   message: MessageRow;
   /** Set on the newest user turn, which can be edited and sent again. */
   onEdit?: (text: string) => void;
+  /** Set on the newest answer, which can be asked for again. */
+  onRetry?: () => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   let attachments: Attachment[] = [];
@@ -648,7 +651,7 @@ function Bubble({
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onEdit(draft);
             }}
             rows={3}
-            className="w-[85%] resize-y rounded-2xl border border-neutral-700 bg-neutral-900 px-4 py-2.5 text-sm whitespace-pre-wrap text-neutral-100 outline-none"
+            className="w-[85%] resize-y rounded-2xl rounded-br-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap text-neutral-100 outline-none"
           />
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-neutral-600">Ctrl+Enter to resend</span>
@@ -693,26 +696,32 @@ function Bubble({
           </div>
         )}
         {message.content && (
-          <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
+          <div className="max-w-[85%] rounded-2xl rounded-br-lg bg-neutral-800 px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap text-neutral-100">
             {message.content}
           </div>
         )}
-        {onEdit && (
-          <button
-            onClick={() => setDraft(message.content ?? "")}
-            className="rounded px-2 py-0.5 text-[11px] text-neutral-600 transition hover:text-neutral-300"
-            title="Edit this message and ask again — the answers after it are replaced"
-          >
-            Edit &amp; resend
-          </button>
-        )}
+        {/* Always in the DOM, never hover-only: an affordance that appears when
+            pointed at is invisible to the keyboard and to anyone who has not
+            found it yet. It is quiet instead — 70% until you reach for it. */}
+        <div className="flex items-center gap-0.5 opacity-70 transition duration-150 hover:opacity-100">
+          {message.content && (
+            <CopyButton text={message.content} label="Copy this message" />
+          )}
+          {onEdit && (
+            <IconButton
+              icon="edit"
+              label="Edit this message and ask again — the answers after it are replaced"
+              onClick={() => setDraft(message.content ?? "")}
+            />
+          )}
+        </div>
       </div>
     );
   }
 
   if (message.role === "tool") {
     return (
-      <details className="rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2">
+      <details className="rounded-xl border border-neutral-800/80 bg-neutral-900/40 px-3 py-2">
         <summary className="cursor-pointer text-xs text-neutral-500">tool result</summary>
         <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-neutral-400">
           {message.content}
@@ -723,14 +732,20 @@ function Bubble({
 
   return (
     <div className="flex flex-col">
-      <Role role="assistant" />
       {message.reasoning_content && (
         <ThinkingBlock text={message.reasoning_content} streaming={false} />
       )}
       <Markdown>{message.content ?? ""}</Markdown>
       {message.content && (
-        <div className="mt-1">
+        <div className="mt-1 flex items-center gap-0.5 opacity-70 transition duration-150 hover:opacity-100">
           <CopyButton text={message.content} label="Copy this answer as Markdown" />
+          {onRetry && (
+            <IconButton
+              icon="retry"
+              label="Ask the same question again, replacing this answer"
+              onClick={onRetry}
+            />
+          )}
         </div>
       )}
     </div>

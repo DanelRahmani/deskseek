@@ -6,7 +6,23 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
-pub const DEFAULT_SYSTEM_PROMPT: &str = "You are DeskSeek, a helpful, concise assistant.";
+
+/// The base prompt a fresh install starts with.
+///
+/// It names the systems the assistant is actually wired to — memory, tools,
+/// skills, MCP — because nothing else in the prompt says they exist: the tool
+/// schemas say what a tool takes, not that there is a memory store or that the
+/// user can switch skills on. The rules for each of those live in the generated
+/// guidance further down, so this stays a statement of what there is.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are DeskSeek, a desktop assistant running on the user's own machine.\n\n\
+You have a long-term memory. Your profile, and any notes recalled for this turn, are in this \
+prompt, and `save_memory` adds to it — so something worth keeping across chats (a preference, a \
+decision, a fact about the user's work) should be remembered rather than asked again later.\n\n\
+You also have tools: their definitions are the complete list of what you can do, and a tool that \
+is not defined there does not exist here. Through them you get the user's files and shell, the \
+web when the user has it switched on, documents and artifacts for anything worth keeping, and — \
+per chat — the user's skills and MCP servers, whose contents appear in this prompt when active.\n\n\
+Be concise, say what you are about to do before you do it, and prefer asking over inventing.";
 
 /// A named instruction block that is injected only in matching contexts, so
 /// "when you write a document, use this type" does not pollute every chat.

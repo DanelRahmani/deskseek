@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { Icon } from "./Icon";
 import type { SkillView } from "../types";
 
 interface Props {
@@ -10,6 +11,7 @@ interface Props {
 export function SkillsPanel({ chatId, onClose }: Props) {
   const [skills, setSkills] = useState<SkillView[]>([]);
   const [dir, setDir] = useState("");
+  const [pasted, setPasted] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -40,6 +42,38 @@ export function SkillsPanel({ chatId, onClose }: Props) {
       const id = await api.installSkill(picked);
       await reload();
       setStatus(`Installed "${id}".`);
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Install what is in the box. The common case by far: a skill arrives as text. */
+  const installPasted = async () => {
+    setBusy(true);
+    try {
+      const id = await api.installSkillText(pasted);
+      setPasted("");
+      await reload();
+      setStatus(`Installed "${id}". Switch it on for this chat with the toggle.`);
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const addExamples = async () => {
+    setBusy(true);
+    try {
+      const added = await api.installExamples();
+      await reload();
+      setStatus(
+        added.length === 0
+          ? "Every bundled example is already installed."
+          : `Added ${added.join(", ")}.`,
+      );
     } catch (e) {
       setStatus(String(e));
     } finally {
@@ -81,28 +115,63 @@ export function SkillsPanel({ chatId, onClose }: Props) {
     <aside className="flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Skills</h2>
-        <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200">
-          ×
+        <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
+          <Icon name="close" size={15} />
         </button>
       </header>
 
       <div className="flex-1 space-y-2 overflow-y-auto p-4">
-        <p className="text-xs text-neutral-600">
-          Skills add instructions to this chat's system prompt. Each one is a folder of its own
-          under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>.
+        <p className="text-xs leading-relaxed text-neutral-500">
+          A skill is an instruction file that joins this chat's system prompt while it is switched
+          on. Each one is a folder under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>, so
+          they are yours to edit or copy between machines.
         </p>
+
+        <div className="space-y-2 rounded-xl border border-neutral-800/80 bg-neutral-900/40 p-3">
+          <label className="block text-xs text-neutral-500">Paste a skill</label>
+          <textarea
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            rows={4}
+            spellCheck={false}
+            placeholder={
+              "---\nname: Concise\ndescription: Answer in as few words as possible.\n---\nBe terse. Skip pleasantries."
+            }
+            className="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-2 font-mono text-[11px] leading-relaxed text-neutral-300 outline-none transition duration-150 focus:border-neutral-700"
+          />
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] text-neutral-600">
+              The name comes from the frontmatter, or the first heading.
+            </span>
+            <button
+              onClick={() => void installPasted()}
+              disabled={busy || !pasted.trim()}
+              className="ml-auto rounded-lg bg-sky-600 px-3 py-1.5 text-xs font-medium text-accent-fg transition duration-150 hover:bg-sky-500 disabled:bg-neutral-800 disabled:text-neutral-600"
+            >
+              Install
+            </button>
+          </div>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={addSkill}
+            onClick={() => void addSkill()}
             disabled={busy}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-50"
+            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 transition duration-150 hover:border-neutral-700 disabled:opacity-50"
           >
-            Add skill…
+            Add from file…
+          </button>
+          <button
+            onClick={() => void addExamples()}
+            disabled={busy}
+            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 transition duration-150 hover:border-neutral-700 disabled:opacity-50"
+          >
+            Restore examples
           </button>
           <button
             onClick={() => dir && api.revealPath(dir)}
             disabled={!dir}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-50"
+            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 transition duration-150 hover:border-neutral-700 disabled:opacity-50"
           >
             Open folder
           </button>
@@ -140,7 +209,7 @@ export function SkillsPanel({ chatId, onClose }: Props) {
               title="Delete this skill's folder"
               className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
             >
-              ×
+              <Icon name="close" />
             </button>
           </div>
         ))}

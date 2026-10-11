@@ -193,6 +193,8 @@ pub fn run() {
             commands::set_chat_skills,
             commands::skills_dir,
             commands::install_skill,
+            commands::install_skill_text,
+            commands::install_examples,
             commands::delete_skill,
             commands::attach_path,
             commands::respond_approval,

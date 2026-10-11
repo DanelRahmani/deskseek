@@ -427,6 +427,9 @@ to be worked with, and it is deliberately kept short.\n\n\
 Those files are not read for you in full. Entries that match what the user just asked appear \
 below under \"Possibly relevant memory\", each tagged with its category; if that section is \
 absent, nothing matched. That list changes from turn to turn, so never treat it as complete.\n\n\
+Memory outlives this conversation: what you save now is in front of you in a later chat when it \
+is relevant, so never ask the user to repeat something they have already told you — and when a \
+job turns up a fact worth keeping, save it while you are there rather than at the end.\n\n\
 Do not create, rename or move files for memory — a category is a name you pass, not a file you \
 touch. When the user tells you something durable, call `save_memory` with `category` set to \
 whichever line above fits best; use `profile` only for who the user is or how they want to be \
@@ -443,17 +446,40 @@ first — the app handles it.",
         let conn = state.db.lock().unwrap();
         db::get_chat_skills(&conn, &chat.id).unwrap_or_default()
     };
-    if !enabled.is_empty() {
-        let available = crate::skills::discover(&state.paths.skills_dir());
-        for skill in available.iter().filter(|s| enabled.contains(&s.id)) {
-            let text = format!("\n\n# Skill: {}\n\n{}", skill.name, skill.body);
-            parts.push(part(
-                format!("Skill: {}", skill.name),
-                "skills",
-                text.chars().count(),
-            ));
-            base.push_str(&text);
-        }
+    let installed = crate::skills::discover(&state.paths.skills_dir());
+    for skill in installed.iter().filter(|s| enabled.contains(&s.id)) {
+        let text = format!("\n\n# Skill: {}\n\n{}", skill.name, skill.body);
+        parts.push(part(
+            format!("Skill: {}", skill.name),
+            "skills",
+            text.chars().count(),
+        ));
+        base.push_str(&text);
+    }
+
+    // Skills used to exist only in the prompt once one was switched on, so a chat
+    // with none could not tell the user the feature was there at all. Saying what
+    // is installed but off is also the honest version: the model must not believe
+    // it is already following a skill nobody turned on.
+    if enabled.is_empty() && !installed.is_empty() {
+        let names = installed
+            .iter()
+            .map(|s| {
+                if s.description.trim().is_empty() {
+                    s.name.clone()
+                } else {
+                    format!("{} ({})", s.name, s.description.trim())
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        base.push_str(&format!(
+            "\n\n# Skills\n\n\
+None are switched on for this chat. The user has {} installed: {names}. A skill is a reusable \
+instruction file the user turns on per chat with `/skills`; when a job would clearly go better \
+with one, say so instead of assuming you are already following it.",
+            installed.len()
+        ));
     }
 
     let memory = crate::memory::read(&state.paths.memory_file());

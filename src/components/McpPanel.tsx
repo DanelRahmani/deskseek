@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, onMcpLog } from "../api";
+import { Icon } from "./Icon";
 import type { McpServer, McpStatus, ToolLog } from "../types";
 
 interface Props {
@@ -162,8 +163,8 @@ export function McpPanel({ onClose }: Props) {
                 : "Loading…"}
             </p>
           </div>
-          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200">
-            ×
+          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
+            <Icon name="close" size={15} />
           </button>
         </div>
 
@@ -344,7 +345,7 @@ export function McpPanel({ onClose }: Props) {
                     className="shrink-0 text-neutral-500 hover:text-red-400"
                     title="Remove"
                   >
-                    ×
+                    <Icon name="close" />
                   </button>
                 </div>
 

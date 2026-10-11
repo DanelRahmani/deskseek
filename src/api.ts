@@ -107,6 +107,10 @@ export const api = {
     invoke<void>("set_chat_skills", { chatId, skillIds }),
   skillsDir: () => invoke<string>("skills_dir"),
   installSkill: (path: string) => invoke<string>("install_skill", { path }),
+  /** Install a skill from pasted text; the text names itself. */
+  installSkillText: (text: string) => invoke<string>("install_skill_text", { text }),
+  /** Put back any bundled example the user is missing; returns what it added. */
+  installExamples: () => invoke<string[]>("install_examples"),
   deleteSkill: (id: string) => invoke<void>("delete_skill", { id }),
 
   respondApproval: (requestId: string, decision: string) =>

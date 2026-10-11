@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, onFsChanged } from "../api";
+import { Icon } from "./Icon";
 import type { FilePreview, TreeEntry } from "../types";
 
 interface Props {
@@ -140,8 +141,14 @@ export function FilesPanel({ chatId, onClose }: Props) {
             }`}
             title={entry.path}
           >
-            <span className="w-2 shrink-0 text-[9px] text-neutral-600">
-              {entry.isDir ? (expanded ? "▾" : "▸") : ""}
+            <span className="grid w-3 shrink-0 place-items-center text-neutral-600">
+              {entry.isDir && (
+                <Icon
+                  name="chevron"
+                  size={11}
+                  className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+                />
+              )}
             </span>
             <span className={`truncate ${entry.isDir ? "" : "text-neutral-500"}`}>
               {entry.name}
@@ -172,7 +179,7 @@ export function FilesPanel({ chatId, onClose }: Props) {
             className="text-sm text-neutral-500 transition hover:text-neutral-200"
             title="Hide the file tree"
           >
-            ×
+            <Icon name="close" size={15} />
           </button>
         </div>
         <input
@@ -217,7 +224,7 @@ export function FilesPanel({ chatId, onClose }: Props) {
               className="ml-auto text-sm text-neutral-500 transition hover:text-neutral-200"
               title="Close the file"
             >
-              ×
+              <Icon name="close" size={15} />
             </button>
           </div>
           {file.text != null ? (

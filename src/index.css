@@ -168,6 +168,9 @@ body {
 }
 .md p {
   margin: 0.6em 0;
+  /* Stops the last line of a paragraph being one word, which is the most
+     visible thing about a wall of generated prose. */
+  text-wrap: pretty;
 }
 .md h1,
 .md h2,
@@ -176,6 +179,7 @@ body {
   font-weight: 600;
   margin: 1.1em 0 0.5em;
   line-height: 1.3;
+  text-wrap: balance;
 }
 .md h1 {
   font-size: 1.4em;
@@ -327,12 +331,37 @@ body {
   text-decoration: underline;
 }
 
+/* The caret after a streaming answer. This is state, not decoration: it is the
+   one thing the transcript cannot say for itself — that more is still coming. */
+.caret {
+  display: inline-block;
+  width: 0.45ch;
+  height: 1em;
+  border-radius: 1px;
+  background: var(--n-400);
+  animation: caret-blink 1.1s steps(2, start) infinite;
+}
+
+@keyframes caret-blink {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  61%,
+  100% {
+    opacity: 0.1;
+  }
+}
+
 /* Reduced motion.
 
    The OS preference is honoured whether or not the setting is on, and the
    setting forces it for anyone whose OS preference is unset. One blanket rule
    because every animation in this app is a Tailwind `transition` or an
-   `animate-pulse`, and there is no case for keeping some of them. */
+   `animate-pulse`, and there is no case for keeping some of them.
+
+   The caret is the exception: stopped, it must still be visible, and the
+   blanket rule would leave it parked on the blank half of its blink. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -340,6 +369,10 @@ body {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  .caret {
+    animation: none !important;
+    opacity: 1;
   }
 }
 
@@ -349,4 +382,20 @@ body {
   animation-duration: 0.01ms !important;
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
+}
+
+[data-reduce-motion="true"] .caret {
+  animation: none !important;
+  opacity: 1;
+}
+
+/* Keyboard focus.
+
+   One rule rather than a focus class on every control: nothing in the app
+   styles focus, so the browser default was showing through, and a thin dotted
+   line on a dark surface is close to invisible. `:focus-visible` keeps it off
+   mouse clicks, which is what it is for. */
+:where(button, a, [role="button"]):focus-visible {
+  outline: 2px solid var(--accent-solid);
+  outline-offset: 1px;
 }

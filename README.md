@@ -20,7 +20,7 @@ Both sections are functional:
 **Chat**
 
 - Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code — and every
-  fenced block, and every answer, carries a **Copy** button, so a snippet does not have to be
+  fenced block, and every answer, carries a quiet **copy** button, so a snippet does not have to be
   drag-selected out of the page
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
   one. An image is downscaled and sent to the model as a multimodal content part; a text file
@@ -56,10 +56,19 @@ Both sections are functional:
     download and network at query time. Every category file is also scanned in full on a lookup,
     which is fine for thousands of lines and not for millions.
 - **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
-- **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat; install one from
-  the panel's file picker and remove one from the same list (the panel also opens the folder)
+- **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat. Install one by
+  pasting its text into the panel (the name comes from the frontmatter, or the first heading),
+  from a file, or by putting back the bundled examples you deleted — and remove one from the same
+  list (the panel also opens the folder)
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
+- **The system prompt is assembled, not written once** — the base prompt says what you have
+  (memory, tools, skills, MCP servers); the app appends the guidance that matches what is actually
+  switched on for that chat: planning, artifacts and documents, where a command really runs, the
+  internet, the desktop, MCP, the approval mode, the project's own context files, your scoped
+  instructions, then memory — and the skills this chat has on, whose text joins the prompt as its
+  own section. **Settings → Models & prompt** shows the base prompt; *Context* in a chat shows the
+  assembled result part by part
 - `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`
   and `/export`
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
@@ -90,9 +99,10 @@ Both sections are functional:
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
   ends a run between steps once its cost crosses the figure, and says so in the chat rather than
   going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
-- **Regenerate, and edit-and-resend** — *Regenerate* under the last answer asks again; *Edit &
-  resend* on the last thing you said changes it and asks again. Either way everything after that
-  turn is dropped first, so the model is never shown the answer it is replacing
+- **Regenerate, and edit-and-resend** — the copy icon under the newest answer sits next to
+  **Retry**, which asks the same question again, and *Edit* under your own last message changes it
+  and asks again. Either way everything after that turn is dropped first, so the model is never
+  shown the answer it is replacing
 
 **Coding**
 
