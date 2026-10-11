@@ -64,13 +64,23 @@ pub struct ImageUrl {
     pub url: String,
 }
 
-/// A file the user attached to a message. Images are sent inline as a data URL;
-/// the frontend downscales them first so a row stays a few hundred kilobytes.
+/// A file the user attached to a message.
+///
+/// Only one payload field is ever filled, because only one is ever useful: an
+/// image is carried inline as a `data:` URL (the frontend downscales it first,
+/// so a row stays a few hundred kilobytes), a text file is carried as its own
+/// text — the model is text-only, so that is the only way it can read one — and
+/// anything else the model cannot read is recorded as a name and a MIME type
+/// with no payload. Storing the bytes of a 20 MB PDF the request never includes
+/// would be a row that is paid for and never sent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Attachment {
     pub name: String,
     pub mime: String,
+    #[serde(default)]
     pub data_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
 }
 
 impl Attachment {

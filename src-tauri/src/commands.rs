@@ -458,7 +458,16 @@ pub async fn context_breakdown(
             .iter()
             .filter(|a| a.is_image())
             .count();
-        let chars = turn.content.as_deref().unwrap_or("").chars().count();
+        // A text attachment is sent as part of the message, so it is counted
+        // as the user's own words rather than quietly left out of the meter.
+        let attached: usize = turn
+            .attachments
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|a| a.text.chars().count())
+            .sum();
+        let chars = turn.content.as_deref().unwrap_or("").chars().count() + attached;
         match turn.role.as_str() {
             "user" => said += chars,
             "assistant" => {
@@ -909,16 +918,16 @@ pub fn reveal_path(path: String) -> Result<(), String> {
 /// Read a dropped file into an attachment.
 ///
 /// A native drop hands the webview a *path*, not a `File`, and the webview
-/// cannot read the disk itself — so the file is read here and returned as a
-/// `data:` URL, exactly the shape the picker and the paste handler produce. The
-/// frontend then downscales images the same way it does for those.
-///
-/// Capped: one drop must not turn a multi-gigabyte file into a message row.
-/// Non-image attachments are recorded beside the message but never sent to the
-/// model, so the cap is really about the stored row.
+/// cannot read the disk itself — so the file is read here. What comes back
+/// depends on what the model can actually use: an image is returned as a
+/// `data:` URL (the frontend downscales it), a text file as its own text, and
+/// anything else as a name and a MIME type with no payload at all. The model is
+/// text-only, so the bytes of a PDF would be a row that is stored and never
+/// sent.
 #[tauri::command]
 pub fn attach_path(path: String) -> Result<Attachment, String> {
-    const MAX_ATTACH_BYTES: u64 = 25 * 1024 * 1024;
+    const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+    const MAX_TEXT_BYTES: u64 = 200 * 1024;
     let file = std::path::Path::new(&path);
     if !file.is_file() {
         return Err(format!("{path} is not a file."));
@@ -929,17 +938,40 @@ pub fn attach_path(path: String) -> Result<Attachment, String> {
         .unwrap_or("file")
         .to_string();
     let size = std::fs::metadata(file).map_err(|e| e.to_string())?.len();
-    if size > MAX_ATTACH_BYTES {
-        return Err(format!("{name} is larger than 25 MB."));
-    }
-    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
     let mime = mime_for(&name);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+
+    if mime.starts_with("image/") {
+        if size > MAX_IMAGE_BYTES {
+            return Err(format!("{name} is larger than 25 MB."));
+        }
+        let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        return Ok(Attachment {
+            data_url: format!("data:{mime};base64,{encoded}"),
+            text: String::new(),
+            name,
+            mime,
+        });
+    }
+
+    let text = if is_text_mime(&mime) && size <= MAX_TEXT_BYTES {
+        let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+        String::from_utf8_lossy(&bytes).into_owned()
+    } else {
+        // Nothing the text-only model can read: keep the label, drop the bytes.
+        String::new()
+    };
     Ok(Attachment {
         name,
-        data_url: format!("data:{mime};base64,{encoded}"),
         mime,
+        data_url: String::new(),
+        text,
     })
+}
+
+/// Whether a MIME type is plain text the model can be handed directly.
+fn is_text_mime(mime: &str) -> bool {
+    mime.starts_with("text/") || mime == "application/json" || mime == "application/xml"
 }
 
 /// A best-effort MIME type from a file name.

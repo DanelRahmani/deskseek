@@ -63,14 +63,32 @@ pub fn build_messages(
             ..Default::default()
         };
 
-        // Images become a parts array; everything else stays a plain string.
+        // Images become a parts array; a text attachment is folded into the
+        // message text (the model is text-only, so this is the only way it can
+        // read one); everything else stays a plain string.
         let attachments = turn.attachments.as_deref().unwrap_or(&[]);
         let images: Vec<&Attachment> = attachments.iter().filter(|a| a.is_image()).collect();
+        let body: Option<String> =
+            if turn.content.is_none() && attachments.iter().all(|a| a.text.is_empty()) {
+                None
+            } else {
+                let mut text = turn.content.clone().unwrap_or_default();
+                for file in attachments.iter().filter(|a| !a.text.is_empty()) {
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str("[Attached file: ");
+                    text.push_str(&file.name);
+                    text.push_str("]\n");
+                    text.push_str(&file.text);
+                }
+                Some(text)
+            };
         msg.content = if images.is_empty() {
-            turn.content.clone().map(Content::text)
+            body.map(Content::text)
         } else {
             let mut parts = Vec::with_capacity(images.len() + 1);
-            if let Some(text) = &turn.content {
+            if let Some(text) = &body {
                 if !text.trim().is_empty() {
                     parts.push(ContentPart::Text { text: text.clone() });
                 }
@@ -196,6 +214,7 @@ mod tests {
                 name: "cat.png".to_string(),
                 mime: "image/png".to_string(),
                 data_url: "data:image/png;base64,AAAA".to_string(),
+                text: String::new(),
             }]),
             ..Default::default()
         };
@@ -219,11 +238,35 @@ mod tests {
                 name: "notes.txt".to_string(),
                 mime: "text/plain".to_string(),
                 data_url: "data:text/plain;base64,AAAA".to_string(),
+                text: String::new(),
             }]),
             ..Default::default()
         };
         let msgs = build_messages("sys", &[turn], None, false);
         assert_eq!(msgs[1].content.as_ref().and_then(Content::as_text), Some("see attached"));
+    }
+
+    #[test]
+    fn a_text_attachment_is_sent_as_text() {
+        let turn = Turn {
+            role: "user".to_string(),
+            content: None,
+            attachments: Some(vec![Attachment {
+                name: "notes.txt".to_string(),
+                mime: "text/plain".to_string(),
+                data_url: String::new(),
+                text: "line one\nline two".to_string(),
+            }]),
+            ..Default::default()
+        };
+        let text = build_messages("sys", &[turn], None, false)[1]
+            .content
+            .as_ref()
+            .and_then(Content::as_text)
+            .unwrap()
+            .to_string();
+        assert!(text.contains("[Attached file: notes.txt]"), "got {text:?}");
+        assert!(text.contains("line two"));
     }
 
     #[test]

@@ -20,7 +20,10 @@ Both sections are functional:
 
 - Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
-  one; images are downscaled and sent to the model as multimodal content parts
+  one. An image is downscaled and sent to the model as a multimodal content part; a text file
+  is sent as its own text, so the model can actually read it; anything else is kept as a name
+  and a MIME type with no payload, because a text-only model cannot read it and storing the
+  bytes would be a row that is paid for and never sent
 - **Agentic by default** — the assistant can read, search, write and edit files in your
   documents folder (default `…/documents`, configurable), so it can produce a document for you
   and save it rather than only printing it

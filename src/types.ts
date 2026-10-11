@@ -3,8 +3,10 @@ export type SectionKind = "chat" | "coding";
 export interface Attachment {
   name: string;
   mime: string;
-  /** Inline `data:` URL — the frontend downscales images before sending. */
+  /** Inline `data:` URL, set for images only — the frontend downscales them. */
   data_url: string;
+  /** Decoded contents, set for text files only (the model is text-only). */
+  text?: string;
 }
 
 export interface ChatRow {
