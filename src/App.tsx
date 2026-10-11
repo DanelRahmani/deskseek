@@ -20,8 +20,9 @@ import { MemoryPanel } from "./components/MemoryPanel";
 import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 import { SetupPanel } from "./components/SetupPanel";
+import { FilesPanel } from "./components/FilesPanel";
 
-type Panel = "none" | "memory" | "skills" | "mcp";
+type Panel = "none" | "memory" | "skills" | "mcp" | "files";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -44,7 +45,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /memory · /skills · /mcp · /setup · /folder · /new · /help";
+  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -242,6 +243,9 @@ export default function App() {
           case "/setup":
             setShowSetup(true);
             return;
+          case "/files":
+            setPanel((current) => (current === "files" ? "none" : "files"));
+            return;
           case "/settings":
             setShowSettings(true);
             return;
@@ -436,6 +440,16 @@ export default function App() {
         runningIds={runningIds}
       />
 
+      {panel === "files" && (
+        // Keyed by chat: switching conversations must not show the last
+        // chat's tree, and remounting is what re-watches the folder.
+        <FilesPanel
+          key={activeId ?? "none"}
+          chatId={activeId}
+          onClose={() => setPanel("none")}
+        />
+      )}
+
       <ChatView
         chat={activeChat}
         messages={messages}
@@ -452,6 +466,7 @@ export default function App() {
         contextMax={contextMax}
         onSend={send}
         onStop={stop}
+        onFiles={() => setPanel((current) => (current === "files" ? "none" : "files"))}
         onModelChange={changeModel}
         onModeChange={changeMode}
         onPickWorkspace={pickWorkspace}

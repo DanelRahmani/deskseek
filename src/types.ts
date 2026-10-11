@@ -175,6 +175,36 @@ export interface ErrorEvent {
   message: string;
 }
 
+/** One row of the project tree. */
+export interface TreeEntry {
+  name: string;
+  /** Workspace-relative, `/` separated. */
+  path: string;
+  isDir: boolean;
+  size: number;
+}
+
+/** One directory's worth of tree rows. */
+export interface TreeListing {
+  root: string;
+  path: string;
+  entries: TreeEntry[];
+}
+
+/** A read-only peek at one file. */
+export interface FilePreview {
+  path: string;
+  size: number;
+  text: string | null;
+  /** Why there is no text: binary, or over the preview cap. */
+  note: string | null;
+}
+
+/** Emitted when the watched workspace changes on disk. */
+export interface FsEvent {
+  paths: string[];
+}
+
 /** Emitted when the safety guard refuses a call, or drops a chat back to asking. */
 export interface GuardEvent {
   chatId: string;

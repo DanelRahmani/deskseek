@@ -1,5 +1,7 @@
 //! Tauri commands: the whole surface the frontend talks to.
 
+use std::path::PathBuf;
+
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -11,7 +13,7 @@ use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{browse, exec, guard::PermissionMode};
+use crate::tools::{browse, exec, guard::PermissionMode, sandbox, walk};
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -455,6 +457,158 @@ pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, S
         searxng_url,
         searxng_ok,
     })
+}
+
+// ------------------------------------------------------------------- files
+
+/// The folder a chat owns, canonicalized so two chats naming the same folder
+/// end up sharing one watch.
+fn chat_root(state: &AppState, chat_id: &str) -> Result<PathBuf, String> {
+    let chat = {
+        let conn = state.db.lock().unwrap();
+        db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?
+    };
+    let root = agent::workspace_for(state, &chat).ok_or("This chat has no folder yet.")?;
+    Ok(std::fs::canonicalize(&root).unwrap_or(root))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeEntry {
+    pub name: String,
+    /// Workspace-relative, with `/` separators.
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeListing {
+    /// Absolute path of the folder being listed.
+    pub root: String,
+    /// The folder listed, relative to the root — empty at the top.
+    pub path: String,
+    pub entries: Vec<TreeEntry>,
+}
+
+/// One level of the tree. Lazy on purpose: a folder holding ten thousand files
+/// should not be read just to draw the row that says it exists.
+#[tauri::command]
+pub fn list_tree(
+    state: State<'_, AppState>,
+    chat_id: String,
+    path: Option<String>,
+) -> Result<TreeListing, String> {
+    const MAX_ENTRIES: usize = 2_000;
+    let root = chat_root(&state, &chat_id)?;
+    let rel = path.unwrap_or_default();
+    let dir = sandbox::resolve(&root, if rel.is_empty() { "." } else { &rel })?;
+
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir)
+        .map_err(|e| format!("cannot read '{rel}': {e}"))?
+        .flatten()
+    {
+        if entries.len() >= MAX_ENTRIES {
+            break;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Ok(kind) = entry.file_type() else { continue };
+        if kind.is_dir() && walk::should_skip(&name) {
+            continue;
+        }
+        entries.push(TreeEntry {
+            path: sandbox::display(&root, &entry.path()),
+            is_dir: kind.is_dir(),
+            size: if kind.is_file() {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            } else {
+                0
+            },
+            name,
+        });
+    }
+    // Folders first, then case-insensitive by name — how every editor does it.
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+
+    Ok(TreeListing {
+        root: root.to_string_lossy().to_string(),
+        path: rel,
+        entries,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePreview {
+    pub path: String,
+    pub size: u64,
+    pub text: Option<String>,
+    /// Why there is no text: binary, or over the preview cap.
+    pub note: Option<String>,
+}
+
+/// A read-only peek at a file, so the user can watch the agent's work without
+/// interrupting it.
+#[tauri::command]
+pub fn read_preview(
+    state: State<'_, AppState>,
+    chat_id: String,
+    path: String,
+) -> Result<FilePreview, String> {
+    const MAX_PREVIEW_BYTES: u64 = 512 * 1024;
+    let root = chat_root(&state, &chat_id)?;
+    let full = sandbox::resolve(&root, &path)?;
+    let meta = std::fs::metadata(&full).map_err(|e| format!("cannot open '{path}': {e}"))?;
+    if meta.is_dir() {
+        return Err(format!("'{path}' is a folder"));
+    }
+
+    let size = meta.len();
+    if size > MAX_PREVIEW_BYTES {
+        return Ok(FilePreview {
+            path,
+            size,
+            text: None,
+            note: Some(format!("{} KB — too large to preview", size / 1024)),
+        });
+    }
+    match std::fs::read_to_string(&full) {
+        Ok(text) => Ok(FilePreview {
+            path,
+            size,
+            text: Some(text),
+            note: None,
+        }),
+        // Not every byte sequence is text; say so rather than guess an encoding.
+        Err(_) => Ok(FilePreview {
+            path,
+            size,
+            text: None,
+            note: Some("binary file".to_string()),
+        }),
+    }
+}
+
+/// Start watching this chat's folder so the tree keeps itself up to date.
+#[tauri::command]
+pub fn watch_workspace(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    let root = chat_root(&state, &chat_id)?;
+    state.files.watch(&root)?;
+    Ok(root.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub fn unwatch_workspace(state: State<'_, AppState>, chat_id: String) -> Result<(), String> {
+    if let Ok(root) = chat_root(&state, &chat_id) {
+        state.files.unwatch(&root);
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------- MCP

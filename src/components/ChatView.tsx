@@ -31,6 +31,7 @@ interface Props {
   contextMax: number;
   onSend: (text: string) => void;
   onStop: () => void;
+  onFiles: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
   onModeChange: (mode: PermissionMode) => void;
   onPickWorkspace: () => void;
@@ -56,6 +57,7 @@ const COMMANDS = [
   { name: "/skills", description: "Choose skills for this chat" },
   { name: "/mcp", description: "Manage MCP servers" },
   { name: "/setup", description: "Reopen the setup screen" },
+  { name: "/files", description: "Show the file tree" },
   { name: "/folder", description: "Pick the folder for a coding task" },
   { name: "/settings", description: "Open settings" },
   { name: "/new", description: "Start a new chat" },
@@ -84,6 +86,7 @@ export function ChatView({
   contextMax,
   onSend,
   onStop,
+  onFiles,
   onModelChange,
   onModeChange,
   onPickWorkspace,
@@ -195,6 +198,16 @@ export function ChatView({
         )}
 
         <div className="ml-auto flex items-center gap-2">
+          {chat && (
+            <button
+              onClick={onFiles}
+              className="rounded-md border border-neutral-800 px-2 py-1 text-xs text-neutral-400 transition hover:border-neutral-700 hover:text-neutral-200"
+              title="Show or hide the file tree"
+            >
+              Files
+            </button>
+          )}
+
           {chat && (
             <div
               className="flex items-center gap-0.5 rounded-md border border-neutral-800 p-0.5"
@@ -311,7 +324,7 @@ export function ChatView({
                   : "Attach an image or ask for a document — chat can read and write files in your documents folder."}
               </p>
               <p className="mt-3 text-xs text-neutral-700">
-                Commands: /compact /memory /skills /mcp /setup /folder /new /help
+                Commands: /compact /files /memory /skills /mcp /setup /folder /new /help
               </p>
             </div>
           )}

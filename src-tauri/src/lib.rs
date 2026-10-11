@@ -2,6 +2,7 @@ mod api;
 mod approvals;
 mod commands;
 mod conversation;
+mod fs_watch;
 mod mcp;
 mod memory;
 mod runs;
@@ -21,6 +22,8 @@ pub struct AppState {
     pub approvals: approvals::Approvals,
     /// Live agent runs, so the UI can stop one mid-stream.
     pub runs: runs::Runs,
+    /// Watches the open workspace so the file tree updates by itself.
+    pub files: fs_watch::FileWatcher,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
@@ -56,6 +59,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 approvals: approvals::Approvals::default(),
                 runs: runs::Runs::default(),
+                files: fs_watch::FileWatcher::new(app.handle().clone()),
                 mcp: mcp_manager.clone(),
             });
 
@@ -104,6 +108,10 @@ pub fn run() {
             commands::stop_chat,
             commands::running_chats,
             commands::probe_environment,
+            commands::list_tree,
+            commands::read_preview,
+            commands::watch_workspace,
+            commands::unwatch_workspace,
             commands::mcp_status,
             commands::mcp_config_path,
             commands::mcp_servers,
@@ -117,6 +125,7 @@ pub fn run() {
             // MCP servers are child processes; none may outlive the app.
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = handle.try_state::<AppState>() {
+                    state.files.clear();
                     let mcp = state.mcp.clone();
                     tauri::async_runtime::block_on(async move {
                         mcp.write().await.stop_all().await;

@@ -75,6 +75,29 @@ fn read_project_context(ws: &Path) -> Option<(String, String)> {
     None
 }
 
+/// Where a chat may touch the disk: the folder the user picked in coding mode,
+/// the documents folder otherwise. Shared with the file tree so both agree on
+/// what "this chat's files" means.
+pub fn workspace_for(state: &AppState, chat: &db::ChatRow) -> Option<PathBuf> {
+    if chat.kind == "coding" {
+        return chat.workspace.as_deref().map(PathBuf::from);
+    }
+    // Chat mode works in a documents folder so it can create and read files.
+    let dir = {
+        let settings = state.settings.lock().unwrap();
+        let configured = settings.documents_dir.trim();
+        if configured.is_empty() {
+            state.paths.documents_dir()
+        } else {
+            PathBuf::from(configured)
+        }
+    };
+    if let Err(err) = std::fs::create_dir_all(&dir) {
+        eprintln!("could not create the documents folder: {err}");
+    }
+    Some(dir)
+}
+
 const DOCUMENT_RULES: &str = "\
 You can read and write files in the folder above and nowhere else.
 
@@ -358,21 +381,7 @@ pub async fn run(
         db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?
     };
 
-    let workspace: Option<PathBuf> = if chat.kind == "coding" {
-        chat.workspace.as_deref().map(PathBuf::from)
-    } else {
-        // Chat mode works in a documents folder so it can create and read files.
-        let configured = settings.documents_dir.trim();
-        let dir = if configured.is_empty() {
-            state.paths.documents_dir()
-        } else {
-            PathBuf::from(configured)
-        };
-        if let Err(err) = std::fs::create_dir_all(&dir) {
-            eprintln!("could not create the documents folder: {err}");
-        }
-        Some(dir)
-    };
+    let workspace: Option<PathBuf> = workspace_for(state, &chat);
     let mut tool_list: Vec<Tool> = tools::tools_for(&chat.kind)
         .into_iter()
         .filter(|(tool, _)| {

@@ -8,6 +8,8 @@ import type {
   DoneEvent,
   ErrorEvent,
   EnvProbe,
+  FilePreview,
+  FsEvent,
   GuardEvent,
   MemoryProposal,
   McpServer,
@@ -19,6 +21,7 @@ import type {
   Settings,
   SkillView,
   ToolEvent,
+  TreeListing,
 } from "./types";
 
 export const api = {
@@ -84,6 +87,13 @@ export const api = {
     invoke<void>("send_message", { chatId, text, attachments }),
   stopChat: (chatId: string) => invoke<boolean>("stop_chat", { chatId }),
   runningChats: () => invoke<string[]>("running_chats"),
+
+  listTree: (chatId: string, path: string | null = null) =>
+    invoke<TreeListing>("list_tree", { chatId, path }),
+  readPreview: (chatId: string, path: string) =>
+    invoke<FilePreview>("read_preview", { chatId, path }),
+  watchWorkspace: (chatId: string) => invoke<string>("watch_workspace", { chatId }),
+  unwatchWorkspace: (chatId: string) => invoke<void>("unwatch_workspace", { chatId }),
 };
 
 export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {
@@ -108,4 +118,8 @@ export function onError(handler: (e: ErrorEvent) => void): Promise<UnlistenFn> {
 
 export function onGuard(handler: (e: GuardEvent) => void): Promise<UnlistenFn> {
   return listen<GuardEvent>("chat-guard", (event) => handler(event.payload));
+}
+
+export function onFsChanged(handler: (e: FsEvent) => void): Promise<UnlistenFn> {
+  return listen<FsEvent>("fs-changed", (event) => handler(event.payload));
 }
