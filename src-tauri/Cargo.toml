@@ -33,6 +33,10 @@ thiserror = "2"
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+# Data URLs for files read on the Rust side: a native drop hands the webview a
+# path, not a File, and the webview cannot read the disk itself. Already in the
+# tree, so it costs no new build.
+base64 = "0.22"
 tauri-plugin-dialog = "2.8.2"
 # MCP client. Stdio only for now: the streamable-HTTP transport
 # (`transport-streamable-http-client-reqwest`) is not yet wired up, so a remote

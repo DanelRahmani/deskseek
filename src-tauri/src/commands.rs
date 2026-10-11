@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use base64::Engine as _;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
@@ -536,6 +537,49 @@ pub fn set_chat_skills(
     db::set_chat_skills(&conn, &chat_id, &skill_ids).map_err(|e| e.to_string())
 }
 
+/// Where skills live, so the panel can show the real path and open it.
+#[tauri::command]
+pub fn skills_dir(state: State<'_, AppState>) -> String {
+    state.paths.skills_dir().display().to_string()
+}
+
+/// Install a skill from a markdown file the user picked.
+///
+/// The file is copied to `skills/<id>/SKILL.md`, where the id comes from the
+/// file's frontmatter `name` or, failing that, its own name. An id that is
+/// already taken is refused rather than overwritten: installing twice should
+/// not quietly replace a skill the user may have edited.
+#[tauri::command]
+pub fn install_skill(state: State<'_, AppState>, path: String) -> Result<String, String> {
+    let source = std::path::Path::new(&path);
+    if !source.is_file() {
+        return Err(format!("{path} is not a file."));
+    }
+    let raw = std::fs::read_to_string(source).map_err(|e| e.to_string())?;
+    let id = skills::id_for(source, &raw);
+    let dir = state.paths.skills_dir().join(&id);
+    if dir.exists() {
+        return Err(format!("A skill called \"{id}\" is already installed."));
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join("SKILL.md"), raw).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// Remove a skill directory. The id must be a plain directory name — a value
+/// with a separator or `..` would let a bad string delete something else.
+#[tauri::command]
+pub fn delete_skill(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if id.is_empty() || id.contains(['/', '\\']) || id.contains("..") {
+        return Err("That is not a skill id.".to_string());
+    }
+    let dir = state.paths.skills_dir().join(&id);
+    if !dir.is_dir() {
+        return Err(format!("No skill called \"{id}\"."));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------ permissions
 
 #[tauri::command]
@@ -797,6 +841,75 @@ pub fn reveal_path(path: String) -> Result<(), String> {
         return Err(format!("{path} is not there any more."));
     }
     tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------- attachments
+
+/// Read a dropped file into an attachment.
+///
+/// A native drop hands the webview a *path*, not a `File`, and the webview
+/// cannot read the disk itself — so the file is read here and returned as a
+/// `data:` URL, exactly the shape the picker and the paste handler produce. The
+/// frontend then downscales images the same way it does for those.
+///
+/// Capped: one drop must not turn a multi-gigabyte file into a message row.
+/// Non-image attachments are recorded beside the message but never sent to the
+/// model, so the cap is really about the stored row.
+#[tauri::command]
+pub fn attach_path(path: String) -> Result<Attachment, String> {
+    const MAX_ATTACH_BYTES: u64 = 25 * 1024 * 1024;
+    let file = std::path::Path::new(&path);
+    if !file.is_file() {
+        return Err(format!("{path} is not a file."));
+    }
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string();
+    let size = std::fs::metadata(file).map_err(|e| e.to_string())?.len();
+    if size > MAX_ATTACH_BYTES {
+        return Err(format!("{name} is larger than 25 MB."));
+    }
+    let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
+    let mime = mime_for(&name);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(Attachment {
+        name,
+        data_url: format!("data:{mime};base64,{encoded}"),
+        mime,
+    })
+}
+
+/// A best-effort MIME type from a file name.
+///
+/// Only the `image/*` cases matter: `Attachment::is_image` is what decides
+/// whether an attachment becomes a multimodal content part, so getting those
+/// right is what lets a dropped screenshot actually reach the model.
+fn mime_for(name: &str) -> String {
+    let ext = std::path::Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "json" => "application/json",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "txt" | "md" | "log" => "text/plain",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 // ------------------------------------------------------------------- files

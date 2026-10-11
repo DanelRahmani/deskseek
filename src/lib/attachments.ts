@@ -27,19 +27,26 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
 }
 
 export async function toAttachment(file: File): Promise<Attachment> {
-  const original = await readAsDataUrl(file);
-  const mime = file.type || "application/octet-stream";
+  const dataUrl = await readAsDataUrl(file);
+  return normalise(file.name, file.type || "application/octet-stream", dataUrl);
+}
 
+/**
+ * Downscale and re-encode a file that has already been read, whatever its
+ * source — a picked File, a pasted one, or a path the Rust side read for us.
+ * One implementation, so a dropped image is treated exactly like a picked one.
+ */
+export async function normalise(name: string, mime: string, dataUrl: string): Promise<Attachment> {
   if (!mime.startsWith("image/")) {
-    return { name: file.name, mime, data_url: original };
+    return { name, mime, data_url: dataUrl };
   }
 
   try {
-    const image = await loadImage(original);
+    const image = await loadImage(dataUrl);
     const largest = Math.max(image.width, image.height);
     const scale = largest > MAX_DIMENSION ? MAX_DIMENSION / largest : 1;
-    if (scale === 1 && original.length <= RECOMPRESS_ABOVE_BYTES) {
-      return { name: file.name, mime, data_url: original };
+    if (scale === 1 && dataUrl.length <= RECOMPRESS_ABOVE_BYTES) {
+      return { name, mime, data_url: dataUrl };
     }
 
     const canvas = document.createElement("canvas");
@@ -47,18 +54,23 @@ export async function toAttachment(file: File): Promise<Attachment> {
     canvas.height = Math.max(1, Math.round(image.height * scale));
     const context = canvas.getContext("2d");
     if (!context) {
-      return { name: file.name, mime, data_url: original };
+      return { name, mime, data_url: dataUrl };
     }
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     return {
-      name: file.name,
+      name,
       mime: "image/jpeg",
       data_url: canvas.toDataURL("image/jpeg", 0.85),
     };
   } catch {
     // Anything we cannot process is still sent as-is rather than dropped.
-    return { name: file.name, mime, data_url: original };
+    return { name, mime, data_url: dataUrl };
   }
+}
+
+/** A file the Rust side read for us — a native drop gives a path, not a File. */
+export function pathToAttachment(raw: Attachment): Promise<Attachment> {
+  return normalise(raw.name, raw.mime, raw.data_url);
 }
 
 export async function filesToAttachments(files: FileList | File[]): Promise<Attachment[]> {

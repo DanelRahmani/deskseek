@@ -89,6 +89,32 @@ pub fn discover(root: &Path) -> Vec<Skill> {
     out
 }
 
+/// The directory id a skill file should be installed under.
+///
+/// Prefers the frontmatter `name`; falls back to the file's own stem, except
+/// that a file literally called `SKILL.md` is named after its folder instead —
+/// "skill" is not an id. Slugged so it is safe as a directory name.
+pub fn id_for(source: &Path, raw: &str) -> String {
+    let (frontmatter, _) = split_frontmatter(raw);
+    let from_name = frontmatter.and_then(|fm| frontmatter_field(fm, "name"));
+    let stem = source
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let candidate = match from_name.filter(|n| !n.trim().is_empty()) {
+        Some(name) => name,
+        None if stem.eq_ignore_ascii_case("skill") => source
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string(),
+        None => stem,
+    };
+    crate::tools::docs::slug_with(&candidate, "skill")
+}
+
 const EXAMPLES: &[(&str, &str)] = &[
     (
         "concise",
@@ -104,18 +130,20 @@ const EXAMPLES: &[(&str, &str)] = &[
     ),
 ];
 
-/// Writes the bundled example skills if the directory does not exist yet.
-/// Existing files are never overwritten — the user's edits win.
+/// Writes the bundled example skills, but only the first time.
+///
+/// If the skills directory already exists the user has been here, and a skill
+/// they *deleted* must not come back on the next launch — which is why this
+/// checks the directory, not each file. Nothing the user edited is rewritten.
 pub fn bundle_examples(root: &Path) -> io::Result<()> {
+    if root.exists() {
+        return Ok(());
+    }
     std::fs::create_dir_all(root)?;
     for (id, content) in EXAMPLES {
         let dir = root.join(id);
-        let file = dir.join("SKILL.md");
-        if file.exists() {
-            continue;
-        }
         std::fs::create_dir_all(&dir)?;
-        std::fs::write(&file, content)?;
+        std::fs::write(dir.join("SKILL.md"), content)?;
     }
     Ok(())
 }
@@ -161,5 +189,35 @@ mod tests {
         let concise = discover(&dir).into_iter().find(|s| s.id == "concise").unwrap();
         assert_eq!(concise.name, "Mine");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_deleted_example_is_not_resurrected_on_the_next_launch() {
+        let dir = std::env::temp_dir().join(format!("deskseek-skills-{}", uuid::Uuid::new_v4()));
+        bundle_examples(&dir).unwrap();
+
+        std::fs::remove_dir_all(dir.join("explain")).unwrap();
+        bundle_examples(&dir).unwrap();
+
+        let ids: Vec<String> = discover(&dir).into_iter().map(|s| s.id).collect();
+        assert!(!ids.contains(&"explain".to_string()), "got: {ids:?}");
+        assert!(ids.contains(&"concise".to_string()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_skill_id_comes_from_the_name_then_the_file() {
+        // Frontmatter wins.
+        assert_eq!(id_for(Path::new("anything.md"), "---\nname: Code Reviewer\n---\nbody"), "code-reviewer");
+        // Otherwise the file's own stem.
+        assert_eq!(id_for(Path::new("My Helper.md"), "no frontmatter"), "my-helper");
+        // A file literally called SKILL.md is named after its folder.
+        assert_eq!(
+            id_for(Path::new("/tmp/tidy-notes/SKILL.md"), "no frontmatter"),
+            "tidy-notes"
+        );
+        // A `SKILL.md` with no folder to borrow a name from still gets a usable
+        // id rather than an empty one.
+        assert_eq!(id_for(Path::new("SKILL.md"), "no frontmatter"), "skill");
     }
 }

@@ -158,6 +158,12 @@ pub fn parse_blocks(md: &str) -> Vec<Block> {
 /// Plain, filesystem-safe stem from a document name. Kept to ASCII letters,
 /// digits and single dashes so the file survives every shell and archive.
 pub fn slug(name: &str) -> String {
+    slug_with(name, "document")
+}
+
+/// As `slug`, with the fallback named by the caller — a skill is not a
+/// "document", and neither is anything else that needs a safe directory name.
+pub fn slug_with(name: &str, fallback: &str) -> String {
     let mut out = String::new();
     let mut last_dash = false;
     for ch in name.chars().take(80) {
@@ -171,7 +177,7 @@ pub fn slug(name: &str) -> String {
     }
     let trimmed = out.trim_matches('-').to_string();
     if trimmed.is_empty() {
-        "document".to_string()
+        fallback.to_string()
     } else {
         trimmed
     }

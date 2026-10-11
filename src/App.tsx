@@ -7,13 +7,14 @@ import {
   onComputer,
   onDelta,
   onDone,
+  onDragDrop,
   onError,
   onGuard,
   onMcpReady,
   onShot,
   onTool,
 } from "./api";
-import { filesToAttachments } from "./lib/attachments";
+import { filesToAttachments, pathToAttachment } from "./lib/attachments";
 import type {
   ApprovalEvent,
   ArtifactDetail,
@@ -84,6 +85,8 @@ export default function App() {
   // conversations at once and switching back does not refetch.
   const [messagesByChat, setMessagesByChat] = useState<Record<string, MessageRow[]>>({});
   const [attachmentsByChat, setAttachmentsByChat] = useState<Record<string, Attachment[]>>({});
+  // True while files are being dragged over the window, for the drop overlay.
+  const [dropping, setDropping] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
@@ -131,6 +134,27 @@ export default function App() {
   activeIdRef.current = activeId;
   const kindRef = useRef<SectionKind>("chat");
   kindRef.current = kind;
+
+  // A native drop gives paths, not Files. Each one is read on the Rust side,
+  // run through the same downscale a picked file gets, and added to the
+  // conversation the focused pane is showing.
+  const attachPaths = useCallback(async (paths: string[]) => {
+    if (paths.length === 0) return;
+    const key = activeIdRef.current ?? "";
+    const added: Attachment[] = [];
+    for (const path of paths) {
+      try {
+        added.push(await pathToAttachment(await api.attachPath(path)));
+      } catch (e) {
+        setError(String(e));
+      }
+    }
+    if (added.length === 0) return;
+    setAttachmentsByChat((prev) => ({
+      ...prev,
+      [key]: [...(prev[key] ?? []), ...added].slice(0, 8),
+    }));
+  }, []);
 
   // Startup only: load settings and every chat, then restore the saved shell.
   useEffect(() => {
@@ -331,6 +355,13 @@ export default function App() {
             : `Safety guard refused ${e.tool ?? "a command"}: ${e.reason}`,
         }));
       }),
+      onDragDrop((e) => {
+        // `enter`/`over` raise the overlay; `drop` also hands over the paths;
+        // everything else clears it.
+        if (e.type === "enter" || e.type === "over") setDropping(true);
+        else setDropping(false);
+        if (e.type === "drop") void attachPaths(e.paths);
+      }),
     ]).then((fns) => {
       if (disposed) fns.forEach((f) => f());
       else unlisten = fns;
@@ -339,7 +370,7 @@ export default function App() {
       disposed = true;
       unlisten.forEach((f) => f());
     };
-  }, [patch]);
+  }, [patch, attachPaths]);
 
   const refreshChats = useCallback(async (which: SectionKind) => {
     const list = await api.listChats(which);
@@ -874,6 +905,19 @@ export default function App() {
             setKeyMask(mask);
           }}
         />
+      )}
+
+      {dropping && (
+        // Inert on purpose: the drop is handled natively by the window, so the
+        // overlay only has to be seen, not to receive anything.
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/70">
+          <div className="rounded-xl border-2 border-dashed border-sky-600 bg-neutral-900/80 px-10 py-8 text-center">
+            <p className="text-sm font-medium text-neutral-100">Drop to attach</p>
+            <p className="mt-1 text-xs text-neutral-400">
+              Files and images are added to this conversation.
+            </p>
+          </div>
+        </div>
       )}
     </div>
   );

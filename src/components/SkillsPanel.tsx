@@ -9,14 +9,56 @@ interface Props {
 
 export function SkillsPanel({ chatId, onClose }: Props) {
   const [skills, setSkills] = useState<SkillView[]>([]);
+  const [dir, setDir] = useState("");
   const [status, setStatus] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    const [list, path] = await Promise.all([
+      api.listSkills(chatId ?? undefined),
+      api.skillsDir(),
+    ]);
+    setSkills(list);
+    setDir(path);
+  };
 
   useEffect(() => {
-    api
-      .listSkills(chatId ?? undefined)
-      .then(setSkills)
-      .catch((e) => setStatus(String(e)));
+    reload().catch((e) => setStatus(String(e)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatId]);
+
+  const addSkill = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({
+        multiple: false,
+        title: "Pick a skill file",
+        filters: [{ name: "Skill", extensions: ["md", "markdown", "txt"] }],
+      });
+      if (typeof picked !== "string") return;
+      setBusy(true);
+      const id = await api.installSkill(picked);
+      await reload();
+      setStatus(`Installed "${id}".`);
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeSkill = async (skill: SkillView) => {
+    setBusy(true);
+    try {
+      await api.deleteSkill(skill.id);
+      await reload();
+      setStatus(`Removed "${skill.name}".`);
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const toggle = async (id: string) => {
     if (!chatId) {
@@ -46,35 +88,61 @@ export function SkillsPanel({ chatId, onClose }: Props) {
 
       <div className="flex-1 space-y-2 overflow-y-auto p-4">
         <p className="text-xs text-neutral-600">
-          Skills add instructions to this chat's system prompt. Files live in the app data
-          folder under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span> — add your
-          own by creating one.
+          Skills add instructions to this chat's system prompt. Each one is a folder of its own
+          under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>.
         </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={addSkill}
+            disabled={busy}
+            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-50"
+          >
+            Add skill…
+          </button>
+          <button
+            onClick={() => dir && api.revealPath(dir)}
+            disabled={!dir}
+            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-50"
+          >
+            Open folder
+          </button>
+        </div>
+        {dir && <p className="break-all font-mono text-[10px] text-neutral-600">{dir}</p>}
         {skills.length === 0 && status === null && (
           <p className="text-xs text-neutral-600">No skills found.</p>
         )}
         {skills.map((skill) => (
-          <label
+          <div
             key={skill.id}
-            className={`flex cursor-pointer items-start gap-3 rounded-lg border p-2.5 text-xs transition ${
+            className={`flex items-start gap-1 rounded-lg border p-2.5 text-xs transition ${
               skill.enabled
                 ? "border-sky-800 bg-sky-950/20"
                 : "border-neutral-800 bg-neutral-900/40 hover:border-neutral-700"
             }`}
           >
-            <input
-              type="checkbox"
-              checked={skill.enabled}
-              onChange={() => toggle(skill.id)}
-              className="mt-0.5"
-            />
-            <span>
-              <span className="block font-medium text-neutral-200">{skill.name}</span>
-              {skill.description && (
-                <span className="mt-0.5 block text-neutral-500">{skill.description}</span>
-              )}
-            </span>
-          </label>
+            <label className="flex flex-1 cursor-pointer items-start gap-3">
+              <input
+                type="checkbox"
+                checked={skill.enabled}
+                onChange={() => toggle(skill.id)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block font-medium text-neutral-200">{skill.name}</span>
+                {skill.description && (
+                  <span className="mt-0.5 block text-neutral-500">{skill.description}</span>
+                )}
+              </span>
+            </label>
+            <button
+              onClick={() => removeSkill(skill)}
+              disabled={busy}
+              title="Delete this skill's folder"
+              className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
+            >
+              ×
+            </button>
+          </div>
         ))}
       </div>
 

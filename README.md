@@ -19,8 +19,8 @@ Both sections are functional:
 **Chat**
 
 - Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code
-- **Attachments** — drop, paste or pick images and files; images are downscaled and sent to
-  the model as multimodal content parts
+- **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
+  one; images are downscaled and sent to the model as multimodal content parts
 - **Agentic by default** — the assistant can read, search, write and edit files in your
   documents folder (default `…/documents`, configurable), so it can produce a document for you
   and save it rather than only printing it
@@ -44,7 +44,8 @@ Both sections are functional:
     surface a fact stored as "vehicle". Embeddings would fix that; this trades it for requiring
     no model download and no network.
 - **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
-- **Skills** — drop-in instruction files at `skills/<id>/SKILL.md`, toggled per chat
+- **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat; install one from
+  the panel's file picker and remove one from the same list (the panel also opens the folder)
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - `/compact` and friends — `/help` lists the built-in commands, including `/mcp`

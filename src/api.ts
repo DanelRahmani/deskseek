@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import type {
   ApprovalEvent,
   Artifact,
@@ -81,6 +82,9 @@ export const api = {
   listSkills: (chatId?: string) => invoke<SkillView[]>("list_skills", { chatId: chatId ?? null }),
   setChatSkills: (chatId: string, skillIds: string[]) =>
     invoke<void>("set_chat_skills", { chatId, skillIds }),
+  skillsDir: () => invoke<string>("skills_dir"),
+  installSkill: (path: string) => invoke<string>("install_skill", { path }),
+  deleteSkill: (id: string) => invoke<void>("delete_skill", { id }),
 
   respondApproval: (requestId: string, decision: string) =>
     invoke<boolean>("respond_approval", { requestId, decision }),
@@ -113,6 +117,8 @@ export const api = {
 
   sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
     invoke<void>("send_message", { chatId, text, attachments }),
+  /** Read a dropped file into an attachment: a native drop gives a path, not a File. */
+  attachPath: (path: string) => invoke<Attachment>("attach_path", { path }),
   stopChat: (chatId: string) => invoke<boolean>("stop_chat", { chatId }),
   runningChats: () => invoke<string[]>("running_chats"),
   computerState: () => invoke<boolean>("computer_state"),
@@ -147,6 +153,14 @@ export function onComputer(handler: (e: ComputerStateEvent) => void): Promise<Un
 /** The model published or updated an artifact, for the side panel. */
 export function onArtifact(handler: (e: ArtifactEvent) => void): Promise<UnlistenFn> {
   return listen<ArtifactEvent>("chat-artifact", (event) => handler(event.payload));
+}
+
+/**
+ * Files dragged from the OS onto the window. Tauri intercepts the drop, so this
+ * is not an HTML drag event: it carries paths, which the shell reads back.
+ */
+export function onDragDrop(handler: (e: DragDropEvent) => void): Promise<UnlistenFn> {
+  return getCurrentWebview().onDragDropEvent((event) => handler(event.payload));
 }
 
 /** One MCP tool call, or a line a server wrote to stderr. */
