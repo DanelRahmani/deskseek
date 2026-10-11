@@ -776,7 +776,7 @@ export function SettingsDialog({
               <button
                 onClick={testKey}
                 disabled={busy}
-                className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+                className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
               >
                 Test connection
               </button>
@@ -1016,7 +1016,7 @@ export function SettingsDialog({
               ))}
               <button
                 onClick={addInstruction}
-                className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+                className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
               >
                 + Add instruction
               </button>
@@ -1247,7 +1247,7 @@ export function SettingsDialog({
           </button>
           <button
             onClick={onClose}
-            className="rounded-lg border border-neutral-800 px-3 py-1.5 text-sm text-neutral-300 hover:border-neutral-700"
+            className="rounded-lg px-4 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
           >
             Close
           </button>
@@ -1258,7 +1258,7 @@ export function SettingsDialog({
 }
 
 const quietBtn =
-  "rounded-md border border-neutral-800 px-2 py-1 text-xs text-neutral-300 transition hover:border-neutral-700 disabled:opacity-50";
+  "rounded-md px-2 py-1 text-xs text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 
 /**
  * A state chip for the Tools section, so what a machine has reads as a fact

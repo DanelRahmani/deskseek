@@ -564,7 +564,7 @@ export function ChatView({
             </div>
           )}
 
-          <div className="flex items-end gap-2 rounded-2xl border border-neutral-800 bg-neutral-900 p-2 transition duration-200 focus-within:border-neutral-600">
+          <div className="flex items-end gap-2 rounded-2xl border border-neutral-800/70 bg-neutral-900 p-2 transition duration-200 focus-within:border-neutral-600">
             <input
               ref={fileRef}
               type="file"

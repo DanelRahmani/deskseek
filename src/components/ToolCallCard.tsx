@@ -137,7 +137,7 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
         <div className="mt-2 flex items-center gap-2 border-t border-white/5 pt-2">
           <button
             onClick={() => api.openDocument(document).catch(() => {})}
-            className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-800"
+            className="rounded px-2 py-0.5 text-[11px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
           >
             Open
           </button>

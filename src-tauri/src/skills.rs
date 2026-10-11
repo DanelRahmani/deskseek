@@ -87,6 +87,27 @@ pub fn discover(root: &Path) -> Vec<Skill> {
     out
 }
 
+/// One line, whitespace collapsed. A name or description is a single line in
+/// frontmatter, so a newline in one would let it smuggle in a second field.
+fn one_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// A SKILL.md as the app writes one: frontmatter the parser can read back, then
+/// the instructions.
+///
+/// Composed here rather than in the tool so the format has exactly one
+/// definition — `parse_skill(compose(..))` is the test for that.
+pub fn compose(name: &str, description: &str, body: &str) -> String {
+    let name = one_line(name);
+    let description = one_line(description);
+    if description.is_empty() {
+        format!("---\nname: {name}\n---\n{}\n", body.trim())
+    } else {
+        format!("---\nname: {name}\ndescription: {description}\n---\n{}\n", body.trim())
+    }
+}
+
 /// The directory id a skill file should be installed under.
 ///
 /// Prefers the frontmatter `name`; falls back to the file's own stem, except
@@ -190,6 +211,24 @@ pub fn write_missing_examples(root: &Path) -> io::Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_composed_skill_reads_back_as_itself() {
+        let raw = compose("Terse answers", "Keep it short.", "Be brief.\nNo filler.");
+        let skill = parse_skill("terse-answers", &raw);
+        assert_eq!(skill.name, "Terse answers");
+        assert_eq!(skill.description, "Keep it short.");
+        assert_eq!(skill.body, "Be brief.\nNo filler.");
+
+        // A skill with no description is still a skill.
+        let bare = compose("Bare", "", "Do the thing.");
+        assert_eq!(parse_skill("bare", &bare).description, "");
+        assert_eq!(parse_skill("bare", &bare).body, "Do the thing.");
+
+        // A name carrying a newline must not become a second frontmatter field.
+        let sneaky = compose("ok\ndescription: evil", "real", "body");
+        assert_eq!(parse_skill("x", &sneaky).description, "real");
+    }
 
     #[test]
     fn a_pasted_skill_names_itself_from_the_frontmatter_then_the_heading() {

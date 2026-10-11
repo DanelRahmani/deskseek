@@ -1125,7 +1125,25 @@ export default function App() {
         </div>
       </div>
 
-      {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
+      {panel === "skills" && (
+        <SkillsPanel
+          chatId={activeId}
+          /* A skill is built by talking about it, so the panel hands the user a
+             chat rather than growing an editor of its own. */
+          onAsk={async (text) => {
+            try {
+              const chat = await api.createChat(kindRef.current);
+              await refreshChats(kindRef.current);
+              setPanel("none");
+              await selectChat(chat.id);
+              await send(text, chat.id, focus);
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+          onClose={() => setPanel("none")}
+        />
+      )}
       {panel === "context" && activeId && (
         <ContextPanel
           chatId={activeId}

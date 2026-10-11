@@ -66,7 +66,7 @@ export function Sidebar({
     : active;
 
   const rowCls = (id: string) =>
-    `group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition ${
+    `group flex items-center gap-1 rounded-lg px-2 py-1.5 text-[13px] transition duration-150 ${
       activeId === id
         ? "bg-neutral-800 text-neutral-100"
         : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
@@ -82,12 +82,12 @@ export function Sidebar({
           <span className="text-sm font-semibold tracking-tight">DeskSeek</span>
         </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-neutral-900 p-1">
+        <div className="mb-3 grid grid-cols-2 gap-1 rounded-xl bg-neutral-900 p-1">
           {SECTIONS.map((s) => (
             <button
               key={s.id}
               onClick={() => onKind(s.id)}
-              className={`rounded-md px-2 py-1 text-xs font-medium transition ${
+              className={`rounded-lg px-2 py-1.5 text-[13px] font-medium transition duration-150 ${
                 kind === s.id
                   ? "bg-neutral-800 text-neutral-100"
                   : "text-neutral-400 hover:text-neutral-200"
@@ -100,7 +100,7 @@ export function Sidebar({
 
         <button
           onClick={onNew}
-          className="mb-2 w-full rounded-lg border border-neutral-800 px-3 py-2 text-left text-sm text-neutral-300 transition hover:border-neutral-700 hover:bg-neutral-900"
+          className="mb-2 w-full rounded-xl bg-neutral-900 px-3 py-2 text-left text-[13px] text-neutral-200 transition duration-150 hover:bg-neutral-800"
         >
           + New {kind === "coding" ? "coding task" : "chat"}
         </button>
@@ -114,7 +114,7 @@ export function Sidebar({
             onSearch(e.target.value);
           }}
           placeholder="Search…"
-          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+          className="w-full rounded-lg border border-neutral-800/80 bg-neutral-900 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-none transition duration-150 focus:border-neutral-600"
         />
       </div>
 
@@ -146,10 +146,10 @@ export function Sidebar({
           </div>
         )}
         {chats.length === 0 && (
-          <p className="px-1 py-4 text-xs text-neutral-600">No conversations yet.</p>
+          <p className="px-1 py-4 text-[13px] text-neutral-500">No conversations yet.</p>
         )}
         {shown.length === 0 && hits.length === 0 && query.trim() && (
-          <p className="px-1 py-4 text-xs text-neutral-600">
+          <p className="px-1 py-4 text-[13px] text-neutral-500">
             Nothing matches "{query.trim()}".
           </p>
         )}
@@ -240,25 +240,25 @@ export function Sidebar({
       <div className="space-y-1 border-t border-neutral-800 p-3">
         <button
           onClick={onMemory}
-          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+          className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-neutral-400 transition duration-150 hover:bg-neutral-900 hover:text-neutral-200"
         >
           Memory
         </button>
         <button
           onClick={onSkills}
-          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+          className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-neutral-400 transition duration-150 hover:bg-neutral-900 hover:text-neutral-200"
         >
           Skills
         </button>
         <button
           onClick={onMcp}
-          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+          className="w-full rounded-lg px-2 py-1.5 text-left text-[13px] text-neutral-400 transition duration-150 hover:bg-neutral-900 hover:text-neutral-200"
         >
           MCP servers
         </button>
         <button
           onClick={onSettings}
-          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+          className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-[13px] text-neutral-400 transition duration-150 hover:bg-neutral-900 hover:text-neutral-200"
         >
           <span>Settings</span>
           <span className="text-[11px] text-neutral-600">{keyMask ?? "no key"}</span>

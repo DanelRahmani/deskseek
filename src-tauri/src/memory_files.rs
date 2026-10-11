@@ -91,13 +91,13 @@ pub fn category_ids() -> Vec<&'static str> {
 }
 
 /// Whether `id` names a category this module will write to.
-pub fn is_category(id: &str) -> bool {
-    canonical(id).is_some()
-}
-
 /// The category a name refers to, or `None` for anything the app does not know.
 /// Case-insensitive, because "Education" and "education" are one category and a
 /// difference in case must not create a second file.
+///
+/// This is the only way in: callers that just want "yes or no" ask whether it
+/// returned `Some`, so there is one matching rule rather than a second one that
+/// can disagree about case.
 pub fn canonical(id: &str) -> Option<&'static str> {
     CATEGORIES
         .iter()
@@ -122,7 +122,7 @@ pub fn about(id: &str) -> &'static str {
 /// Every name the assistant may pass as a category, `profile` first. The tool
 /// schema is built from this, so the list it offers cannot drift from the table
 /// above — `profile` is included because it is a valid destination, not because it
-/// is a category (`is_category` deliberately rejects it).
+/// is a category (`canonical` deliberately rejects it).
 pub fn category_names() -> Vec<String> {
     std::iter::once(PROFILE.to_string())
         .chain(CATEGORIES.iter().map(|c| c.id.to_string()))

@@ -113,6 +113,9 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 ## Skills
 
+- [ ] *Build one by talking it through* opens a chat that asks what the skill should cover
+- [ ] `create_skill` writes `skills/<id>/SKILL.md` and switches it on for that chat
+- [ ] The same name is refused a second time unless `replace: true` is passed
 - [ ] Pasting a SKILL.md into the panel installs it under `skills/<id>/` and lists it
 - [ ] The id comes from the frontmatter name, or from the first heading when there is none
 - [ ] Installing a name that already exists is refused rather than overwriting

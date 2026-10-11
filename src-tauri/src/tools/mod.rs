@@ -126,6 +126,47 @@ pub struct MemoryDraft {
     pub target: &'static str,
 }
 
+/// A validated `create_skill` call: a skill as the model describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillDraft {
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    /// Set when the model means to rewrite a skill that is already there.
+    pub replace: bool,
+}
+
+/// Validates `create_skill`.
+///
+/// A skill with an empty body would join the prompt and change nothing, which is
+/// worse than an error the model can read and correct.
+pub fn parse_skill_draft(args: &serde_json::Value) -> Result<SkillDraft, String> {
+    let field = |key: &str| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let name = field("name");
+    if name.is_empty() {
+        return Err("create_skill needs a name.".to_string());
+    }
+    let body = field("body");
+    if body.is_empty() {
+        return Err("create_skill needs a body: the instructions the skill is for.".to_string());
+    }
+    Ok(SkillDraft {
+        name,
+        description: field("description"),
+        body,
+        replace: args
+            .get("replace")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
 /// Validates `save_memory`.
 ///
 /// The default is deliberately the fallback category rather than the profile: the
@@ -312,6 +353,22 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                 ),
             ),
             ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "create_skill",
+                "Write a reusable instruction file (a skill) for the user, from this conversation. It is saved into their skills folder and switched on for this chat. Use it when the user describes rules they want you to follow from now on — a house style, a checklist, a way of answering — and say what you are saving first. Call it again with the same name and `replace: true` to revise one you wrote.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "Short name, e.g. \"Terse answers\". Becomes the folder name."},
+                        "description": {"type": "string", "description": "One line saying when this skill applies"},
+                        "body": {"type": "string", "description": "The instructions themselves, in Markdown, addressed to you in future chats"},
+                        "replace": {"type": "boolean", "description": "Rewrite a skill of this name that already exists. Only for revising one you wrote."}
+                    }),
+                    &["name", "body"],
+                ),
+            ),
+            ToolClass::Write,
         ),
         (
             Tool::function(
@@ -738,6 +795,24 @@ mod tests {
         ] {
             assert!(parse_artifact(&bad).is_err(), "{bad} should be rejected");
         }
+    }
+
+    #[test]
+    fn a_skill_draft_needs_a_name_and_a_body() {
+        let ok = parse_skill_draft(&json!({"name": "Terse", "body": "Be brief."})).unwrap();
+        assert_eq!(ok.name, "Terse");
+        assert!(!ok.replace, "a rewrite has to be asked for, never assumed");
+        assert!(
+            parse_skill_draft(&json!({"body": "x"})).is_err(),
+            "a skill with no name has nowhere to live"
+        );
+        assert!(
+            parse_skill_draft(&json!({"name": "x", "body": "   "})).is_err(),
+            "an empty body would join the prompt and change nothing"
+        );
+        assert!(parse_skill_draft(&json!({"name": "x", "body": "y", "replace": true}))
+            .unwrap()
+            .replace);
     }
 
     #[test]

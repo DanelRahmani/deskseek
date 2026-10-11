@@ -22,7 +22,7 @@ interface Props {
 }
 
 const BTN =
-  "rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 transition hover:border-neutral-700 disabled:opacity-50";
+  "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 const INPUT =
   "rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-700";
 const LINK = "text-[11px] text-sky-400 hover:text-sky-300 disabled:opacity-50";

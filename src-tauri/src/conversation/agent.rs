@@ -457,30 +457,42 @@ first — the app handles it.",
         base.push_str(&text);
     }
 
-    // Skills used to exist only in the prompt once one was switched on, so a chat
-    // with none could not tell the user the feature was there at all. Saying what
-    // is installed but off is also the honest version: the model must not believe
-    // it is already following a skill nobody turned on.
-    if enabled.is_empty() && !installed.is_empty() {
-        let names = installed
-            .iter()
-            .map(|s| {
-                if s.description.trim().is_empty() {
-                    s.name.clone()
-                } else {
-                    format!("{} ({})", s.name, s.description.trim())
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        base.push_str(&format!(
-            "\n\n# Skills\n\n\
-None are switched on for this chat. The user has {} installed: {names}. A skill is a reusable \
-instruction file the user turns on per chat with `/skills`; when a job would clearly go better \
-with one, say so instead of assuming you are already following it.",
+    // Making a skill is something the assistant can do, so a chat with none must
+    // still be told the mechanism exists — and told plainly that the user's own
+    // skills are not in front of it.
+    let named = installed
+        .iter()
+        .map(|s| {
+            if s.description.trim().is_empty() {
+                s.name.clone()
+            } else {
+                format!("{} ({})", s.name, s.description.trim())
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let skills_state = if installed.is_empty() {
+        "The user has none installed yet.".to_string()
+    } else if enabled.is_empty() {
+        format!(
+            "None are switched on for this chat; the user has {} installed: {named}.",
             installed.len()
-        ));
-    }
+        )
+    } else {
+        format!("{} switched on for this chat, above.", enabled.len())
+    };
+    let skills_guide = format!(
+        "\n\n# Skills\n\n\
+{skills_state}\n\n\
+A skill is a reusable instruction file the user switches on per chat with `/skills`. When the user \
+describes rules they want you to follow from now on — a house style, a checklist, a way of \
+answering — offer to save it with `create_skill`: it lands in their skills folder and is switched \
+on for this chat. Say what you are about to save first, and ask what should be in it if that is \
+not yet clear. Use `replace: true` with the same name to revise a skill you wrote. Never claim to \
+be following a skill that is not in this prompt."
+    );
+    parts.push(part("Skills guide", "skills", skills_guide.chars().count()));
+    base.push_str(&skills_guide);
 
     let memory = crate::memory::read(&state.paths.memory_file());
     // Measured from the same block the shared helper injects, rather than from a
@@ -684,6 +696,47 @@ async fn run_tool(
             "Kept {added} entr{} in the '{destination}' memory — looked up later when it is \
              relevant, not sent with every request.",
             if added == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    if name == "create_skill" {
+        let draft = tools::parse_skill_draft(args)?;
+        let id = crate::tools::docs::slug_with(&draft.name, "skill");
+        let dir = state.paths.skills_dir().join(&id);
+        let file = dir.join("SKILL.md");
+        // Refusing by default keeps "create" from meaning "silently replace".
+        // `replace` is how the model says it means to revise one it wrote, which
+        // is the whole point of building a skill in conversation.
+        if file.exists() && !draft.replace {
+            return Err(format!(
+                "A skill called \"{id}\" already exists. Pass replace: true to rewrite it, or use a different name."
+            ));
+        }
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::fs::write(
+            &file,
+            crate::skills::compose(&draft.name, &draft.description, &draft.body),
+        )
+        .map_err(|e| e.to_string())?;
+
+        // Switch it on for this chat: the user asked for it here, and a skill
+        // that lands switched off looks like nothing happened.
+        let switched = {
+            let conn = state.db.lock().unwrap();
+            let mut ids = db::get_chat_skills(&conn, chat_id).unwrap_or_default();
+            if ids.contains(&id) {
+                false
+            } else {
+                ids.push(id.clone());
+                db::set_chat_skills(&conn, chat_id, &ids).map_err(|e| e.to_string())?;
+                true
+            }
+        };
+        return Ok(format!(
+            "Saved the skill \"{}\" as `{id}` and {} for this chat. The user can turn it off or \
+             delete it in /skills.",
+            draft.name,
+            if switched { "switched it on" } else { "it was already on" }
         ));
     }
 

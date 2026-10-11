@@ -56,10 +56,12 @@ Both sections are functional:
     download and network at query time. Every category file is also scanned in full on a lookup,
     which is fine for thousands of lines and not for millions.
 - **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
-- **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat. Install one by
-  pasting its text into the panel (the name comes from the frontmatter, or the first heading),
-  from a file, or by putting back the bundled examples you deleted — and remove one from the same
-  list (the panel also opens the folder)
+- **Skills** — instruction files at `skills/<id>/SKILL.md`, toggled per chat. Easier to build by
+  talking: *Build one by talking it through* opens a chat, the assistant asks what it should
+  cover, and `create_skill` writes it straight into your skills folder switched on for that chat
+  (`replace: true` revises one it wrote). You can also paste a skill's text in, install one from a
+  file, or put back the bundled examples you deleted — and remove one from the same list (the
+  panel also opens the folder)
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - **The system prompt is assembled, not written once** — the base prompt says what you have

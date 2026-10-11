@@ -25,20 +25,21 @@ export function TabStrip({
 }: Props) {
   const active = panes[focus];
   return (
-    <div className="flex h-9 shrink-0 items-stretch border-b border-neutral-800 bg-neutral-950">
-      <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+    <div className="flex h-10 shrink-0 items-center gap-1 border-b border-neutral-800/80 bg-neutral-950 px-2">
+      <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {tabs.length === 0 && (
-          <span className="self-center px-3 text-xs text-neutral-600">No open chats</span>
+          <span className="px-2 text-[13px] text-neutral-600">No open chats</span>
         )}
         {tabs.map((chat) => {
           const pane = panes.indexOf(chat.id);
+          const isActive = chat.id === active;
           return (
             <div
               key={chat.id}
-              className={`group flex max-w-56 min-w-0 shrink-0 items-center gap-1.5 border-r border-neutral-800 px-2.5 text-xs transition ${
-                chat.id === active
-                  ? "bg-neutral-900 text-neutral-100"
-                  : "text-neutral-400 hover:bg-neutral-900/60 hover:text-neutral-200"
+              className={`group flex h-8 max-w-56 min-w-0 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[13px] transition duration-150 ${
+                isActive
+                  ? "bg-neutral-800 text-neutral-100"
+                  : "text-neutral-400 hover:bg-neutral-900 hover:text-neutral-200"
               }`}
               title={chat.title}
             >
@@ -56,7 +57,7 @@ export function TabStrip({
                   title="Working"
                 />
               )}
-              <button onClick={() => onSelect(chat.id)} className="truncate py-2 text-left">
+              <button onClick={() => onSelect(chat.id)} className="truncate text-left">
                 {chat.title}
               </button>
               <button
@@ -72,8 +73,8 @@ export function TabStrip({
       </div>
       <button
         onClick={onToggleSplit}
-        className={`shrink-0 border-l border-neutral-800 px-3 text-xs transition ${
-          split ? "bg-sky-500/10 text-sky-300" : "text-neutral-500 hover:text-neutral-200"
+        className={`shrink-0 rounded-lg px-3 py-1.5 text-[13px] transition duration-150 ${
+          split ? "bg-sky-500/15 text-sky-300" : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-200"
         }`}
         title={split ? "Close the second pane" : "Split into two panes"}
       >

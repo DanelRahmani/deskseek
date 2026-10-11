@@ -199,7 +199,7 @@ export function McpPanel({ onClose }: Props) {
             <button
               onClick={reload}
               disabled={busy}
-              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700 disabled:opacity-40"
+              className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
             >
               Re-read file
             </button>
@@ -208,7 +208,7 @@ export function McpPanel({ onClose }: Props) {
                 setServers((prev) => [...prev, blankServer()]);
                 setDirty(true);
               }}
-              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+              className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
             >
               + Add server
             </button>
@@ -232,7 +232,7 @@ export function McpPanel({ onClose }: Props) {
             </select>
             <button
               onClick={() => setLogs([])}
-              className="rounded-lg border border-neutral-800 px-3 py-1.5 text-xs text-neutral-300 hover:border-neutral-700"
+              className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
             >
               Clear view
             </button>
@@ -333,7 +333,7 @@ export function McpPanel({ onClose }: Props) {
                   <button
                     onClick={() => restart(server.name)}
                     disabled={busy || !server.enabled}
-                    className="shrink-0 rounded-md border border-neutral-800 px-2 py-1 text-[11px] text-neutral-400 hover:border-neutral-700 disabled:opacity-40"
+                    className="shrink-0 rounded-md px-2 py-1 text-[11px] text-neutral-400 transition duration-150 hover:bg-neutral-800 hover:text-neutral-200 disabled:opacity-40"
                   >
                     Restart
                   </button>
