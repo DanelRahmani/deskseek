@@ -55,6 +55,7 @@ const COMMANDS = [
   { name: "/memory", description: "Open the memory panel" },
   { name: "/skills", description: "Choose skills for this chat" },
   { name: "/mcp", description: "Manage MCP servers" },
+  { name: "/setup", description: "Reopen the setup screen" },
   { name: "/folder", description: "Pick the folder for a coding task" },
   { name: "/settings", description: "Open settings" },
   { name: "/new", description: "Start a new chat" },
@@ -310,7 +311,7 @@ export function ChatView({
                   : "Attach an image or ask for a document — chat can read and write files in your documents folder."}
               </p>
               <p className="mt-3 text-xs text-neutral-700">
-                Commands: /compact /memory /skills /mcp /folder /new /help
+                Commands: /compact /memory /skills /mcp /setup /folder /new /help
               </p>
             </div>
           )}

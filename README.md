@@ -111,12 +111,34 @@ The protocol work is done by the official [`rmcp`](https://github.com/modelconte
 SDK, so discovery, version negotiation, pagination and multi-round-trip requests are handled for
 you. Built with `default-features = false` and only the client + stdio transport features.
 
+## First run
+
+On first launch DeskSeek shows a short setup screen — reopen it any time with `/setup`. It
+checks what is already on the machine and asks about the two optional pieces rather than
+quietly leaving them broken:
+
+| Piece | Needed for | Required? |
+| --- | --- | --- |
+| DeepSeek API key | everything | **Yes** — stored in the OS keychain |
+| SearXNG instance | `web_search` | No — the other browsing tools work without it |
+| Docker or WSL2 | running commands in a container instead of directly | No |
+
+DeskSeek **never installs either one for you**. It detects what is present, links to the
+official install guides, and uses whatever it finds. A machine without Docker is not broken —
+it just runs commands directly, with the guard as the only protection.
+
+The SearXNG check is honest about the common failure: an instance only answers JSON once
+`json` is in the `formats` list in its `settings.yml`, so a plain HTML instance is reported as
+*not configured* rather than silently returning nothing.
+
 ## Requirements
 
 - [Node.js](https://nodejs.org/) 20+ and npm
 - [Rust](https://rustup.rs/) (stable) — Tauri needs the platform toolchain (MSVC on Windows)
 - Windows 10/11, macOS, or Linux. **Windows is the only officially tested target today**;
   macOS and Linux build in CI but are experimental.
+- Optional: [Docker](https://docs.docker.com/desktop/install/windows-install/) or
+  [WSL2](https://learn.microsoft.com/windows/wsl/install) for sandboxed command execution
 
 ## Development
 

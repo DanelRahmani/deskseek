@@ -78,6 +78,9 @@ pub struct Settings {
     /// Permission mode new chats start in: `manual` | `auto` | `skip`.
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    /// Set once the first-run setup screen has been finished or dismissed.
+    #[serde(default)]
+    pub setup_done: bool,
 }
 
 fn default_permission_mode() -> String {
@@ -104,6 +107,7 @@ impl Default for Settings {
             searxng_url: String::new(),
             browser_path: String::new(),
             permission_mode: default_permission_mode(),
+            setup_done: false,
         }
     }
 }

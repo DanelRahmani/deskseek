@@ -11,7 +11,7 @@ use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::guard::PermissionMode;
+use crate::tools::{browse, exec, guard::PermissionMode};
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -418,6 +418,43 @@ pub fn stop_chat(state: State<'_, AppState>, chat_id: String) -> bool {
 #[tauri::command]
 pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
     state.runs.running()
+}
+
+// ----------------------------------------------------------------- setup
+
+/// What the first-run screen needs: which of the pieces it recommends are
+/// already on this machine, and whether the configured search actually works.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvProbe {
+    pub has_api_key: bool,
+    pub docker: bool,
+    /// WSL2 can run the same jobs where Docker is not installed.
+    pub wsl: bool,
+    pub searxng_url: String,
+    pub searxng_ok: bool,
+}
+
+/// Probes are deliberately slow-tolerant but bounded: a machine without Docker
+/// should say so in a second or two, not hang the screen.
+#[tauri::command]
+pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, String> {
+    let searxng_url = state.settings.lock().unwrap().searxng_url.clone();
+
+    let (docker, wsl) = tokio::join!(
+        exec::probe("docker", &["version", "--format", "{{.Server.Version}}"], 6),
+        exec::probe("wsl", &["-l", "-v"], 6),
+    );
+
+    let searxng_ok = browse::searxng_ready(&state.http, &searxng_url).await;
+
+    Ok(EnvProbe {
+        has_api_key: keychain::has_api_key(),
+        docker,
+        wsl: cfg!(windows) && wsl,
+        searxng_url,
+        searxng_ok,
+    })
 }
 
 // ------------------------------------------------------------------- MCP

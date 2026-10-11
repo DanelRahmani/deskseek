@@ -7,6 +7,7 @@ import type {
   DeltaEvent,
   DoneEvent,
   ErrorEvent,
+  EnvProbe,
   GuardEvent,
   MemoryProposal,
   McpServer,
@@ -31,6 +32,8 @@ export const api = {
   testConnection: () => invoke<void>("test_connection"),
 
   listModels: () => invoke<ModelInfo[]>("list_models"),
+
+  probeEnvironment: () => invoke<EnvProbe>("probe_environment"),
 
   listChats: (kind: SectionKind) => invoke<ChatRow[]>("list_chats", { kind }),
   createChat: (kind: SectionKind, workspace: string | null = null) =>

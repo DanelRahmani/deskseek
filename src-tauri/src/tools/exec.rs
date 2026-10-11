@@ -187,6 +187,17 @@ async fn run_shell(command: &str, ws: &Path, cancel: &Cancel) -> Result<String, 
     run_process(cmd, Some(ws), COMMAND_TIMEOUT_SECS, true, Some(cancel)).await
 }
 
+/// Windows flashes a console window for every console program a GUI app
+/// spawns. None of our children are interactive, so none of them want one.
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console(_cmd: &mut Command) {}
+
 /// Runs a prepared command, draining both pipes and enforcing a timeout.
 /// Shared by the shell tool and the headless browser.
 ///
@@ -211,6 +222,7 @@ pub(crate) async fn run_process(
     for key in SENSITIVE_ENV {
         cmd.env_remove(key);
     }
+    hide_console(&mut cmd);
 
     let mut child = cmd.spawn().map_err(|e| format!("could not start command: {e}"))?;
     let mut stdout = child.stdout.take().ok_or("no stdout")?;
@@ -279,13 +291,28 @@ pub(crate) async fn run_process(
     Ok(truncate(text.trim_end().to_string()))
 }
 
+/// Whether a program runs at all — how the setup screen detects what is on the
+/// machine (docker, wsl). Any failure, including a timeout, is simply "no".
+pub(crate) async fn probe(program: &str, args: &[&str], timeout_secs: u64) -> bool {
+    let mut cmd = Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    hide_console(&mut cmd);
+    matches!(
+        timeout(Duration::from_secs(timeout_secs), cmd.status()).await,
+        Ok(Ok(status)) if status.success()
+    )
+}
+
 /// Runs `git` with literal arguments — no shell, so nothing can be injected
 /// through a commit message or path.
 async fn git(ws: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(ws)
-        .stdin(Stdio::null())
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(ws).stdin(Stdio::null());
+    hide_console(&mut cmd);
+    let output = cmd
         .output()
         .await
         .map_err(|e| format!("could not run git: {e}"))?;

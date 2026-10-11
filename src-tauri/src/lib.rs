@@ -103,6 +103,7 @@ pub fn run() {
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,
+            commands::probe_environment,
             commands::mcp_status,
             commands::mcp_config_path,
             commands::mcp_servers,

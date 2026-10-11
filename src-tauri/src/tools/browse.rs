@@ -363,6 +363,40 @@ pub async fn web_search(
     Ok(truncate(out))
 }
 
+/// A cheap readiness check for the setup screen: does the configured instance
+/// answer, and does it answer with JSON? Any failure is simply "not ready".
+pub async fn searxng_ready(http: &reqwest::Client, searxng_url: &str) -> bool {
+    let base = searxng_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return false;
+    }
+    let Ok(mut target) = reqwest::Url::parse(&format!("{base}/search")) else {
+        return false;
+    };
+    target
+        .query_pairs_mut()
+        .append_pair("q", "deskseek")
+        .append_pair("format", "json");
+
+    let check = async {
+        let resp = http
+            .get(target)
+            .header(reqwest::header::USER_AGENT, USER_AGENT)
+            .send()
+            .await
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let body = resp.text().await.ok()?;
+        Some(serde_json::from_str::<SearchResponse>(&body).is_ok())
+    };
+    matches!(
+        tokio::time::timeout(std::time::Duration::from_secs(6), check).await,
+        Ok(Some(true))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

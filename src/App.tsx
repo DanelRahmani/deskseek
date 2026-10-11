@@ -19,6 +19,7 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
+import { SetupPanel } from "./components/SetupPanel";
 
 type Panel = "none" | "memory" | "skills" | "mcp";
 
@@ -43,7 +44,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /memory · /skills · /mcp · /folder · /new · /help";
+  "/compact summarise and reset the context · /memory · /skills · /mcp · /setup · /folder · /new · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -56,6 +57,7 @@ export default function App() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -84,7 +86,10 @@ export default function App() {
       setModels(m);
       setKeyMask(k);
       setDocumentsDir(docs);
-      if (!k) setShowSettings(true);
+      // First run: show setup. It covers the API key too, so the settings
+      // dialog is not stacked on top of it.
+      if (!s.setupDone) setShowSetup(true);
+      else if (!k) setShowSettings(true);
     })().catch((e) => setError(String(e)));
   }, []);
 
@@ -233,6 +238,9 @@ export default function App() {
             return;
           case "/mcp":
             setPanel("mcp");
+            return;
+          case "/setup":
+            setShowSetup(true);
             return;
           case "/settings":
             setShowSettings(true);
@@ -467,6 +475,18 @@ export default function App() {
       )}
       {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
       {panel === "mcp" && <McpPanel onClose={() => setPanel("none")} />}
+
+      {showSetup && settings && (
+        <SetupPanel
+          settings={settings}
+          onOpenSettings={() => {
+            setShowSetup(false);
+            setShowSettings(true);
+          }}
+          onSaved={setSettings}
+          onClose={() => setShowSetup(false)}
+        />
+      )}
 
       {showSettings && settings && (
         <SettingsDialog

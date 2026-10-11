@@ -68,6 +68,19 @@ export interface Settings {
   searxngUrl: string;
   /** Explicit Chromium-family browser. Empty auto-detects Edge, then Chrome. */
   browserPath: string;
+  /** Permission mode new chats start in. */
+  permissionMode: PermissionMode;
+  /** Set once the first-run setup screen has been finished or dismissed. */
+  setupDone: boolean;
+}
+
+/** What the first-run setup screen reports about this machine. */
+export interface EnvProbe {
+  hasApiKey: boolean;
+  docker: boolean;
+  wsl: boolean;
+  searxngUrl: string;
+  searxngOk: boolean;
 }
 
 /** One MCP server, as stored in mcp.json. */
