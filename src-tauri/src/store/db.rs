@@ -22,6 +22,9 @@ pub struct ChatRow {
     pub permission_mode: String,
     /// Accumulated USD for this chat, summed from each turn's usage.
     pub cost_usd: f64,
+    /// Whether this chat's model gets tools at all. Coding always does; a chat
+    /// can be turned into a plain conversation.
+    pub tools_enabled: bool,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -54,6 +57,9 @@ CREATE TABLE IF NOT EXISTS chats (
     -- finishes, so the total survives a reload; the live usage in the UI is
     -- only ever the last turn's.
     cost_usd     REAL NOT NULL DEFAULT 0,
+    -- Chat mode is agentic by default; a chat that does not want tools can say
+    -- so, which makes it a plain conversation with no file access.
+    tools_enabled INTEGER NOT NULL DEFAULT 1,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
@@ -238,6 +244,10 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
     // Databases written before the search index existed have no rows in it. The
     // triggers only fire on new writes, so an empty index over a non-empty table
     // means "first launch after the upgrade" and gets one build. `rebuild` is
@@ -257,7 +267,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -271,8 +281,9 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             effort: r.get(6)?,
             permission_mode: r.get(7)?,
             cost_usd: r.get(8)?,
-            created_at: r.get(9)?,
-            updated_at: r.get(10)?,
+            tools_enabled: r.get::<_, i64>(9)? != 0,
+            created_at: r.get(10)?,
+            updated_at: r.get(11)?,
         })
     })?;
     rows.collect()
@@ -304,6 +315,7 @@ pub fn create_chat(
         effort: effort.to_string(),
         permission_mode: permission_mode.to_string(),
         cost_usd: 0.0,
+        tools_enabled: true,
         created_at: ts,
         updated_at: ts,
     })
@@ -311,7 +323,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -325,8 +337,9 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 effort: r.get(6)?,
                 permission_mode: r.get(7)?,
                 cost_usd: r.get(8)?,
-                created_at: r.get(9)?,
-                updated_at: r.get(10)?,
+                tools_enabled: r.get::<_, i64>(9)? != 0,
+                created_at: r.get(10)?,
+                updated_at: r.get(11)?,
             })
         },
     )
@@ -349,6 +362,15 @@ pub fn set_chat_permission_mode(
     conn.execute(
         "UPDATE chats SET permission_mode = ?2 WHERE id = ?1",
         params![id, mode],
+    )?;
+    Ok(())
+}
+
+/// Turns this chat's tools on or off. Off makes it a plain conversation.
+pub fn set_chat_tools(conn: &Connection, id: &str, enabled: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET tools_enabled = ?2 WHERE id = ?1",
+        params![id, enabled as i64],
     )?;
     Ok(())
 }

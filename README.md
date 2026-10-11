@@ -26,7 +26,9 @@ Both sections are functional:
   bytes would be a row that is paid for and never sent
 - **Agentic by default** — the assistant can read, search, write and edit files in your
   documents folder (default `…/documents`, configurable), so it can produce a document for you
-  and save it rather than only printing it
+  and save it rather than only printing it. The **Tools** button in the header turns that off for
+  a chat: the next request carries no tools at all, so it becomes a plain conversation with no
+  file access, no browsing and no MCP. The choice is per chat and remembered
 - **Memory** — two tiers, because one file has to be either short or cheap and it cannot be
   both:
   - `MEMORY.md` is the **profile**: who the user is and how they want replies — name, language,
@@ -66,7 +68,9 @@ Both sections are functional:
   the chat, rendered live and versioned, instead of scrolling away as a giant code block
 - **Documents** — `doc_create`, `sheet_create` and `slides_create` write real `.md`/`.docx`/`.pdf`,
   `.xlsx` and `.pptx` files to your documents folder, with an *Open* button on the result
-- Approximate **context-window meter** in the header
+- Approximate **context-window meter** in the header — and once a conversation passes 80% of the
+  model's window, the same fact appears above the composer with a *Summarise it* button, so the
+  fix is next to the warning rather than a command you have to remember
 - **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
   real usage as every turn ends
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)

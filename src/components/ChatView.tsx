@@ -47,6 +47,8 @@ interface Props {
   onStop: () => void;
   onFiles: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
+  /** Chat mode only: whether this conversation gets tools at all. */
+  onToolsChange: (enabled: boolean) => void;
   onModeChange: (mode: PermissionMode) => void;
   onPickWorkspace: () => void;
   onAttach: (files: FileList | File[]) => void;
@@ -105,6 +107,7 @@ export function ChatView({
   onStop,
   onFiles,
   onModelChange,
+  onToolsChange,
   onModeChange,
   onPickWorkspace,
   onAttach,
@@ -351,6 +354,23 @@ export function ChatView({
                   ))}
                 </select>
               )}
+              {chat.kind === "chat" && (
+                <button
+                  onClick={() => onToolsChange(!chat.tools_enabled)}
+                  className={`rounded-md border px-2 py-1 text-xs transition ${
+                    chat.tools_enabled
+                      ? "border-sky-800 bg-sky-500/10 text-sky-300"
+                      : "border-neutral-800 text-neutral-500 hover:text-neutral-300"
+                  }`}
+                  title={
+                    chat.tools_enabled
+                      ? "Tools on: this chat can read and write files in your documents folder. Click for a plain conversation."
+                      : "Tools off: a plain conversation. Click to let it read and write files again."
+                  }
+                >
+                  Tools
+                </button>
+              )}
             </>
           )}
         </div>
@@ -443,6 +463,25 @@ export function ChatView({
             className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
           >
             Start it again
+          </button>
+        </div>
+      )}
+
+      {/* The meter in the header turns amber then red; this is the same fact with
+          the fix next to it. `/compact` is the existing command, so there is no
+          second code path to keep in step. */}
+      {usedFraction > 0.8 && !busy && (
+        <div className="mx-4 mb-2 flex items-center gap-3 rounded-lg border border-amber-900/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+          <span className="flex-1">
+            This conversation is about {Math.round(usedFraction * 100)}% of the model&apos;s context
+            window.
+          </span>
+          <button
+            onClick={() => onSend("/compact")}
+            className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
+            title="Summarise the conversation and carry on from the summary"
+          >
+            Summarise it
           </button>
         </div>
       )}

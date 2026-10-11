@@ -211,6 +211,12 @@ pub fn set_chat_permission_mode(
 }
 
 #[tauri::command]
+pub fn set_chat_tools(state: State<'_, AppState>, chat_id: String, enabled: bool) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_tools(&conn, &chat_id, enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn set_chat_workspace(
     state: State<'_, AppState>,
     chat_id: String,
@@ -1300,6 +1306,7 @@ mod tests {
             effort: "high".to_string(),
             permission_mode: "manual".to_string(),
             cost_usd: 0.0,
+            tools_enabled: true,
             created_at: 0,
             updated_at: 0,
         }

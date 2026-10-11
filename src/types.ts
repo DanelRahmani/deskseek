@@ -21,6 +21,8 @@ export interface ChatRow {
   permission_mode: PermissionMode;
   /** Accumulated USD spent across this chat's turns. */
   cost_usd: number;
+  /** Whether chat mode gives the model tools. Coding is always true. */
+  tools_enabled: boolean;
   created_at: number;
   updated_at: number;
 }

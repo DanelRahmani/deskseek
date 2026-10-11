@@ -67,6 +67,15 @@ pub async fn tools_for_chat(
     settings: &Settings,
     chat: &db::ChatRow,
 ) -> ChatTools {
+    // Coding is agentic by definition; a chat can be a plain conversation. With
+    // tools off there is nothing to offer — not even the MCP servers, which are
+    // tools like any other.
+    if chat.kind != "coding" && !chat.tools_enabled {
+        return ChatTools {
+            list: Vec::new(),
+            mcp: false,
+        };
+    }
     let mut list: Vec<Tool> = tools::tools_for(&chat.kind)
         .into_iter()
         .filter(|(tool, _)| {

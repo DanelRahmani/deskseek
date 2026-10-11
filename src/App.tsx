@@ -613,6 +613,23 @@ export default function App() {
     }
   }, []);
 
+  // Chat mode only. Off means the next request carries no tools at all, so the
+  // conversation loses its file access until it is turned back on.
+  const changeTools = useCallback(
+    async (chatId: string, enabled: boolean) => {
+      setChatsById((prev) =>
+        prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], tools_enabled: enabled } } : prev,
+      );
+      try {
+        await api.setChatTools(chatId, enabled);
+        await refreshChats(kindRef.current);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats],
+  );
+
   const decideApproval = useCallback(
     async (requestId: string, decision: "once" | "session" | "always" | "deny") => {
       // The prompt can belong to any chat, so clear it from whichever holds it.
@@ -974,6 +991,7 @@ export default function App() {
                       id && changeModel(id, model, thinking, effort)
                     }
                     onModeChange={(mode) => id && changeMode(id, mode)}
+                    onToolsChange={(enabled) => id && changeTools(id, enabled)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
                     onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}
                     onAttach={(files) => attach(id, files)}
