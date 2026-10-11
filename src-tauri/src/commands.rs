@@ -633,8 +633,8 @@ pub async fn context_breakdown(
         db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?
     };
     let turns: Vec<assemble::Turn> = history.iter().map(agent::to_turn).collect();
-    // The newest user turn is what tier 2 is queried with, and what this turn is
-    // about — the same rule the run uses.
+    // The newest user turn is what the memory files are queried with, and what this
+    // turn is about — the same rule the run uses.
     let ask = turns
         .iter()
         .rev()

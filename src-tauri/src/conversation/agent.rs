@@ -161,7 +161,7 @@ You can read and write files in the folder above and nowhere else.
 /// Roughly how many characters of retrieved memory one turn may carry. The
 /// app estimates tokens at chars ÷ 4, so this is about 800 tokens — the point
 /// being that recalled facts cost a bounded amount no matter how much is stored.
-const TIER2_CHARS: usize = 3_200;
+const RECALL_CHARS: usize = 3_200;
 
 /// One measured piece of the system prompt, in characters.
 ///
@@ -474,7 +474,7 @@ first — the app handles it.",
             &crate::memory_files::candidates(&dir, workspace),
             ask,
             memory.as_deref().unwrap_or(""),
-            TIER2_CHARS,
+            RECALL_CHARS,
         );
         if let Some(block) = recalled {
             let text = format!(
@@ -814,7 +814,7 @@ pub async fn run(
         };
         let turns: Vec<Turn> = history.iter().map(to_turn).collect();
         // The user's turn is already in the stored history, so the newest one is
-        // what this turn is about — and what tier 2 is queried with.
+        // what this turn is about — and what the memory files are queried with.
         let ask = turns
             .iter()
             .rev()
