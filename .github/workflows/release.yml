@@ -31,7 +31,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -45,9 +45,11 @@ jobs:
             libssl-dev \
             build-essential
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # Matches the Node this project is developed on (v24), so a CI failure
+          # is about the code and not about a version nobody runs.
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable

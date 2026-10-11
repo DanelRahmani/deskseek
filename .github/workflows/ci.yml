@@ -15,7 +15,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -29,9 +29,12 @@ jobs:
             libssl-dev \
             build-essential
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 22
+          # Matches the Node this project is developed on (v24). v4 of this action
+          # and checkout@v4 target Node 20, which GitHub now force-runs on 24 and
+          # warns about on every job.
+          node-version: 24
           cache: npm
 
       - uses: dtolnay/rust-toolchain@stable
