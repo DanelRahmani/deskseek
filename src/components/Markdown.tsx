@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
 import { copyText } from "../lib/clipboard";
+
+/** The rehype plugin's type, without importing it for real (type queries erase). */
+type Highlighter = typeof import("rehype-highlight").default;
 
 /**
  * The text inside a rendered node, whatever react-markdown nested it in.
@@ -38,11 +40,30 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
 }
 
 export function Markdown({ children }: { children: string }) {
+  // highlight.js is the largest thing in the bundle (~600 kB, 127 kB gzipped) and
+  // most answers contain no code. It is fetched on the first message that has a
+  // fenced block, so a window of prose never pays for it. The cost is one frame
+  // of unhighlighted code on that first block, which is worth the load.
+  const [highlight, setHighlight] = useState<Highlighter | null>(null);
+  const wantsCode = children.includes("```") || children.includes("~~~");
+  useEffect(() => {
+    if (!wantsCode || highlight) return;
+    let alive = true;
+    // `() => m.default` rather than passing the function to setState directly:
+    // React would call a bare function argument as an updater.
+    void import("rehype-highlight").then((m) => {
+      if (alive) setHighlight(() => m.default);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [wantsCode, highlight]);
+
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={highlight ? [highlight] : []}
         components={{
           // Every fenced block gets its own copy button: taking a snippet out of
           // an answer is the most common thing anyone does with one.
