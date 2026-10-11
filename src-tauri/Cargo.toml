@@ -37,11 +37,21 @@ uuid = { version = "1", features = ["v4"] }
 # path, not a File, and the webview cannot read the disk itself. Already in the
 # tree, so it costs no new build.
 base64 = "0.22"
+# `HeaderName`/`HeaderValue` for MCP custom headers. Already in the tree
+# transitively (reqwest and rmcp both use it), so a direct line costs no build.
+http = "1"
 tauri-plugin-dialog = "2.8.2"
-# MCP client. Stdio only for now: the streamable-HTTP transport
-# (`transport-streamable-http-client-reqwest`) is not yet wired up, so a remote
-# server cannot be configured. See the Phase E note in the README.
-rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-child-process", "which-command"] }
+# MCP client. Both transports: a child process over stdio, and a streamable-HTTP
+# endpoint for a remote server. `reqwest-native-tls` keeps rmcp's HTTP client on
+# the same schannel backend as our own reqwest; the rustls default needs
+# NASM/cmake on Windows.
+rmcp = { version = "3.5.1", default-features = false, features = [
+    "client",
+    "transport-child-process",
+    "which-command",
+    "transport-streamable-http-client-reqwest",
+    "reqwest-native-tls",
+] }
 notify = "8.2.0"
 tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
 docx-rs = { version = "0.4.22", default-features = false }

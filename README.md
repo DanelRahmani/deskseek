@@ -373,9 +373,24 @@ The protocol work is done by the official [`rmcp`](https://github.com/modelconte
 SDK, so discovery, version negotiation, pagination and multi-round-trip requests are handled for
 you. Built with `default-features = false` and only the client + stdio transport features.
 
-**Not yet supported: remote servers.** The streamable-HTTP transport is not wired up, so every
-server must be a local command. `headers`/`url` are not accepted yet, and a server that needs a
-bearer token has to be launched through a wrapper that supplies it.
+**Remote servers.** A server does not have to be a local command. Give it a `url` instead of a
+`command` and DeskSeek speaks the streamable-HTTP transport to it directly, with no child process
+and no `npx` — `headers` supplies whatever the endpoint wants, usually an
+`Authorization=Bearer …` line. The two are alternatives: a server with a `url` ignores its
+command and arguments, and the panel greys them out.
+
+```json
+{
+  "servers": [
+    { "name": "hosted", "url": "https://example.com/mcp", "headers": { "Authorization": "Bearer …" } }
+  ]
+}
+```
+
+The same rules apply as for a local server: every call asks first, `readOnlyHint` only skips the
+prompt when you have ticked *trust read-only*, and everything the server returns is data rather
+than instructions. What is lost is stderr — a local server's complaints land in the panel's
+**Logs** tab, but a remote one only has its HTTP status to explain itself.
 
 ## First run
 

@@ -9,11 +9,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use http::{HeaderName, HeaderValue};
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ContentBlock, ResourceContents, Tool as McpSpec,
 };
 use rmcp::service::RunningService;
-use rmcp::transport::{which_command, TokioChildProcess};
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+use rmcp::transport::{which_command, StreamableHttpClientTransport, TokioChildProcess};
 use rmcp::{RoleClient, ServiceExt};
 use serde::Serialize;
 use serde_json::Value;
@@ -286,10 +288,11 @@ impl McpManager {
         // uses this to tell "still starting" from "finished".
         let mut servers: Vec<McpServer> = Vec::new();
         for server in self.servers.iter().filter(|server| server.enabled) {
-            if server.command.trim().is_empty() {
-                self.errors.insert(server.name.clone(), "no command".to_string());
-            } else {
+            if server.is_remote() || !server.command.trim().is_empty() {
                 servers.push(server.clone());
+            } else {
+                self.errors
+                    .insert(server.name.clone(), "neither a command nor a url".to_string());
             }
         }
 
@@ -496,12 +499,12 @@ async fn start_server(
     }
 }
 
-/// The transport half: a child process over stdio.
-///
-/// ponytail: a streamable-HTTP endpoint was written and reverted — enabling the
-/// rmcp client transport broke the test binary at load time (see Cargo.toml), so
-/// only stdio is supported until that is understood.
+/// The transport half: stdio for a local server, streamable HTTP for a remote
+/// one.
 async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String> {
+    if server.is_remote() {
+        return connect_http(server).await;
+    }
     // `which_command` resolves Windows shims like `npx.cmd`, which
     // `tokio::process::Command` alone will not find.
     let mut command = which_command(&server.command)
@@ -524,6 +527,29 @@ async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String>
     }
 
     ().serve(transport)
+        .await
+        .map_err(|e| format!("MCP handshake failed: {e}"))
+}
+
+/// A remote server is spoken to over HTTP, so there is no child to spawn and no
+/// stderr to read: it explains itself in status codes instead.
+///
+/// Headers come from `mcp.json` and are validated by `http` rather than passed
+/// through; rmcp rejects the reserved ones (Accept, Mcp-Session-Id,
+/// Last-Event-Id) itself, so a typo surfaces as a clear start error rather than
+/// a half-open session. The URL is used verbatim.
+async fn connect_http(server: &McpServer) -> Result<Client, String> {
+    let url = server.url.as_deref().unwrap_or_default().trim();
+    let mut config = StreamableHttpClientTransportConfig::default();
+    config.uri = url.into();
+    for (name, value) in &server.headers {
+        let header = HeaderName::from_bytes(name.trim().as_bytes())
+            .map_err(|_| format!("'{name}' is not a valid HTTP header name"))?;
+        let value = HeaderValue::from_str(value)
+            .map_err(|_| format!("the value of '{name}' is not a valid HTTP header value"))?;
+        config.custom_headers.insert(header, value);
+    }
+    ().serve(StreamableHttpClientTransport::from_config(config))
         .await
         .map_err(|e| format!("MCP handshake failed: {e}"))
 }
@@ -789,6 +815,8 @@ mod tests {
             command: "npx".into(),
             args: vec![],
             env: Default::default(),
+            url: None,
+            headers: Default::default(),
             enabled: true,
             trust_read_only: false,
         }];

@@ -155,9 +155,14 @@ export interface EnvProbe {
 /** One MCP server, as stored in mcp.json. */
 export interface McpServer {
   name: string;
+  /** A local server: the executable to launch. Empty for a remote one. */
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** A remote server: the streamable-HTTP endpoint, set instead of `command`. */
+  url?: string;
+  /** Extra HTTP headers for a remote server, e.g. an Authorization bearer. */
+  headers: Record<string, string>;
   enabled: boolean;
   /** Run this server's readOnlyHint tools without asking. Off by default. */
   trustReadOnly: boolean;

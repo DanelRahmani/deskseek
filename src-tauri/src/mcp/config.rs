@@ -11,19 +11,36 @@ use serde::{Deserialize, Serialize};
 pub struct McpServer {
     /// Shown in the UI and used as the middle segment of every tool name.
     pub name: String,
-    /// The executable to launch: `npx`, `uvx`, or an absolute path.
+    /// The executable to launch, for a local server: `npx`, `uvx`, or an
+    /// absolute path. Empty for a remote one.
+    #[serde(default)]
     pub command: String,
     #[serde(default)]
     pub args: Vec<String>,
     /// Extra environment variables for the child process, e.g. API tokens.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// The streamable-HTTP endpoint, for a remote server. `url` and `command`
+    /// are alternatives: a server with a url is spoken to over HTTP and no
+    /// child process is spawned.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Extra HTTP headers for a remote server, e.g. an `Authorization` bearer.
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     #[serde(default = "default_true")]
     pub enabled: bool,
     /// Run this server's tools without asking when the server marks them
     /// `readOnlyHint`. Off by default — see `manager::class_of_exposed`.
     #[serde(default)]
     pub trust_read_only: bool,
+}
+
+impl McpServer {
+    /// A server reached over HTTP rather than launched as a child process.
+    pub fn is_remote(&self) -> bool {
+        self.url.as_deref().is_some_and(|url| !url.trim().is_empty())
+    }
 }
 
 fn default_true() -> bool {
@@ -90,6 +107,21 @@ mod tests {
         assert_eq!(server.command, "npx");
         assert!(server.args.is_empty());
         assert!(server.env.is_empty());
+        assert!(server.url.is_none());
+        assert!(server.headers.is_empty());
+        assert!(!server.is_remote());
+    }
+
+    #[test]
+    fn a_url_without_a_command_is_a_remote_server() {
+        let body = r#"{"servers":[{"name":"hosted","url":"https://example.com/mcp","headers":{"X-Key":"k"}}]}"#;
+        let server = &serde_json::from_str::<McpConfig>(body).unwrap().servers[0];
+        assert!(server.command.is_empty(), "a remote server has no command");
+        assert!(server.is_remote());
+        assert_eq!(server.headers["X-Key"], "k");
+        // A url of only whitespace is not an endpoint.
+        let blank = r#"{"servers":[{"name":"x","url":"  "}]}"#;
+        assert!(!serde_json::from_str::<McpConfig>(blank).unwrap().servers[0].is_remote());
     }
 
     #[test]
@@ -114,6 +146,8 @@ mod tests {
                 command: "uvx".into(),
                 args: vec!["mcp-server-git".into()],
                 env: BTreeMap::from([("TOKEN".to_string(), "abc".to_string())]),
+                url: Some("https://example.com/mcp".into()),
+                headers: BTreeMap::from([("X-Key".to_string(), "k".to_string())]),
                 enabled: false,
                 trust_read_only: true,
             }],
@@ -124,6 +158,8 @@ mod tests {
         assert_eq!(back.servers[0].command, "uvx");
         assert_eq!(back.servers[0].args, vec!["mcp-server-git".to_string()]);
         assert_eq!(back.servers[0].env["TOKEN"], "abc");
+        assert_eq!(back.servers[0].url.as_deref(), Some("https://example.com/mcp"));
+        assert_eq!(back.servers[0].headers["X-Key"], "k");
         assert!(!back.servers[0].enabled);
         assert!(back.servers[0].trust_read_only);
         let _ = std::fs::remove_dir_all(&dir);

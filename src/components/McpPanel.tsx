@@ -34,6 +34,8 @@ function blankServer(): McpServer {
     command: "npx",
     args: [],
     env: {},
+    url: "",
+    headers: {},
     enabled: true,
     trustReadOnly: false,
   };
@@ -102,9 +104,12 @@ export function McpPanel({ onClose }: Props) {
   };
 
   const save = async () => {
-    const broken = servers.find((s) => !s.name.trim() || !s.command.trim());
+    // A server is started one of two ways: a local command, or a remote url.
+    const broken = servers.find(
+      (s) => !s.name.trim() || (!s.command.trim() && !s.url?.trim()),
+    );
     if (broken) {
-      setNote("Every server needs a name and a command.");
+      setNote("Every server needs a name and either a command or a url.");
       return;
     }
     setBusy(true);
@@ -350,6 +355,7 @@ export function McpPanel({ onClose }: Props) {
                     onChange={(e) => patch(index, { command: e.target.value })}
                     placeholder="command, e.g. npx or uvx"
                     spellCheck={false}
+                    disabled={!!server.url?.trim()}
                   />
                   <input
                     className={`${smallCls} flex-[2] font-mono`}
@@ -359,8 +365,17 @@ export function McpPanel({ onClose }: Props) {
                     }
                     placeholder="arguments"
                     spellCheck={false}
+                    disabled={!!server.url?.trim()}
                   />
                 </div>
+
+                <input
+                  className={`${smallCls} w-full font-mono`}
+                  value={server.url ?? ""}
+                  onChange={(e) => patch(index, { url: e.target.value })}
+                  placeholder="…or a remote URL, e.g. https://example.com/mcp (no child process)"
+                  spellCheck={false}
+                />
 
                 <details className="text-[11px] text-neutral-500">
                   <summary className="cursor-pointer select-none">Environment</summary>
@@ -369,6 +384,17 @@ export function McpPanel({ onClose }: Props) {
                     value={pairsToText(server.env)}
                     onChange={(e) => patch(index, { env: parsePairs(e.target.value) })}
                     placeholder="API_TOKEN=…&#10;one KEY=value per line"
+                    spellCheck={false}
+                  />
+                </details>
+
+                <details className="text-[11px] text-neutral-500">
+                  <summary className="cursor-pointer select-none">HTTP headers</summary>
+                  <textarea
+                    className={`${smallCls} mt-1 h-16 resize-y font-mono`}
+                    value={pairsToText(server.headers)}
+                    onChange={(e) => patch(index, { headers: parsePairs(e.target.value) })}
+                    placeholder="Authorization=Bearer …&#10;one Name=value per line, remote servers only"
                     spellCheck={false}
                   />
                 </details>
