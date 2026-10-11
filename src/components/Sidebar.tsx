@@ -13,6 +13,8 @@ interface Props {
   onSkills: () => void;
   onMcp: () => void;
   keyMask: string | null;
+  /** Chats with a run in flight, so a background turn is visible at a glance. */
+  runningIds: string[];
 }
 
 const SECTIONS: { id: SectionKind; label: string }[] = [
@@ -33,6 +35,7 @@ export function Sidebar({
   onSkills,
   onMcp,
   keyMask,
+  runningIds,
 }: Props) {
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
@@ -83,10 +86,16 @@ export function Sidebar({
           >
             <button
               onClick={() => onSelect(c.id)}
-              className="flex-1 truncate text-left"
+              className="flex flex-1 items-center gap-1.5 truncate text-left"
               title={c.workspace ?? c.title}
             >
-              {c.title}
+              {runningIds.includes(c.id) && (
+                <span
+                  className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sky-400"
+                  title="Working"
+                />
+              )}
+              <span className="truncate">{c.title}</span>
             </button>
             <button
               onClick={() => onDelete(c.id)}

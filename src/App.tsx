@@ -22,6 +22,26 @@ import { SkillsPanel } from "./components/SkillsPanel";
 
 type Panel = "none" | "memory" | "skills" | "mcp";
 
+/** Everything that belongs to one conversation's live turn. */
+interface SessionRuntime {
+  busy: boolean;
+  stream: { content: string; reasoning: string } | null;
+  tools: ToolRun[];
+  approvals: ApprovalEvent[];
+  usage: DoneEvent | null;
+  /** Last failure for this chat, cleared when a new turn starts. */
+  error: string | null;
+}
+
+const IDLE: SessionRuntime = {
+  busy: false,
+  stream: null,
+  tools: [],
+  approvals: [],
+  usage: null,
+  error: null,
+};
+
 const HELP =
   "/compact summarise and reset the context · /memory · /skills · /mcp · /folder · /new · /help";
 
@@ -34,16 +54,18 @@ export default function App() {
   const [chats, setChats] = useState<ChatRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [stream, setStream] = useState<{ content: string; reasoning: string } | null>(null);
-  const [tools, setTools] = useState<ToolRun[]>([]);
-  const [approvals, setApprovals] = useState<ApprovalEvent[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [busy, setBusy] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [usage, setUsage] = useState<DoneEvent | null>(null);
+  // Live turn state, keyed by chat — so a run in a background chat keeps
+  // streaming while the user reads a different conversation.
+  const [sessions, setSessions] = useState<Record<string, SessionRuntime>>({});
+
+  const patch = useCallback((chatId: string, fn: (rt: SessionRuntime) => SessionRuntime) => {
+    setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
+  }, []);
 
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
@@ -77,53 +99,52 @@ export default function App() {
     let unlisten: Array<() => void> = [];
     Promise.all([
       onDelta((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setStream((s) =>
-          s
+        patch(e.chatId, (rt) =>
+          rt.stream
             ? {
-                content: s.content + (e.kind === "content" ? e.text : ""),
-                reasoning: s.reasoning + (e.kind === "reasoning" ? e.text : ""),
+                ...rt,
+                stream: {
+                  content: rt.stream.content + (e.kind === "content" ? e.text : ""),
+                  reasoning: rt.stream.reasoning + (e.kind === "reasoning" ? e.text : ""),
+                },
               }
-            : s,
+            : rt,
         );
       }),
       onTool((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setTools((prev) => {
-          const at = prev.findIndex((t) => t.id === e.id);
+        patch(e.chatId, (rt) => {
+          const at = rt.tools.findIndex((t) => t.id === e.id);
+          const tools = [...rt.tools];
           if (e.phase === "requested") {
             const run: ToolRun = { id: e.id, tool: e.tool, args: e.args, status: "running" };
-            if (at >= 0) {
-              const copy = [...prev];
-              copy[at] = run;
-              return copy;
-            }
-            return [...prev, run];
+            if (at >= 0) tools[at] = run;
+            else tools.push(run);
+            return { ...rt, tools };
           }
-          const copy = [...prev];
-          const base: ToolRun = copy[at] ?? { id: e.id, tool: e.tool, args: e.args, status: "ok" };
+          const base: ToolRun =
+            tools[at] ?? { id: e.id, tool: e.tool, args: e.args, status: "ok" };
           const finished: ToolRun = {
             ...base,
             tool: e.tool,
             status: e.ok ? "ok" : "error",
             output: e.output,
           };
-          if (at >= 0) copy[at] = finished;
-          else copy.push(finished);
-          return copy;
+          if (at >= 0) tools[at] = finished;
+          else tools.push(finished);
+          return { ...rt, tools };
         });
       }),
       onApproval((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setApprovals((prev) => [...prev.filter((a) => a.requestId !== e.requestId), e]);
+        patch(e.chatId, (rt) => ({
+          ...rt,
+          approvals: [...rt.approvals.filter((a) => a.requestId !== e.requestId), e],
+        }));
       }),
       onDone((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setUsage(e);
+        patch(e.chatId, (rt) => ({ ...rt, busy: false, usage: e }));
       }),
       onError((e) => {
-        if (e.chatId !== activeIdRef.current) return;
-        setError(e.message);
+        patch(e.chatId, (rt) => ({ ...rt, busy: false, error: e.message }));
       }),
       onGuard((e) => {
         if (e.chatId !== activeIdRef.current) return;
@@ -141,7 +162,7 @@ export default function App() {
       disposed = true;
       unlisten.forEach((f) => f());
     };
-  }, []);
+  }, [patch]);
 
   const refreshChats = useCallback(async (which: SectionKind) => {
     const list = await api.listChats(which);
@@ -155,12 +176,10 @@ export default function App() {
 
   const selectChat = useCallback(async (id: string) => {
     setActiveId(id);
-    setStream(null);
-    setTools([]);
-    setApprovals([]);
     setAttachments([]);
     setError(null);
-    setUsage(null);
+    // The chat's own runtime is left alone: a run in a background chat keeps
+    // its stream, tools and pending approvals while the user reads another one.
     setMessages(await api.getMessages(id));
   }, []);
 
@@ -230,7 +249,7 @@ export default function App() {
               setError("Nothing to compact yet.");
               return;
             }
-            setBusy(true);
+            patch(id, (rt) => ({ ...rt, busy: true }));
             setNotice("Compacting the conversation…");
             try {
               await api.compactChat(id);
@@ -239,7 +258,7 @@ export default function App() {
             } catch (e) {
               setError(String(e));
             } finally {
-              setBusy(false);
+              patch(id, (rt) => ({ ...rt, busy: false }));
             }
             return;
           }
@@ -268,8 +287,11 @@ export default function App() {
 
         const outgoing = attachments;
         setAttachments([]);
-        setTools([]);
-        setUsage(null);
+        patch(chatId!, () => ({
+          ...IDLE,
+          busy: true,
+          stream: { content: "", reasoning: "" },
+        }));
         setMessages((m) => [
           ...m,
           {
@@ -285,9 +307,6 @@ export default function App() {
             created_at: Math.floor(Date.now() / 1000),
           },
         ]);
-        setStream({ content: "", reasoning: "" });
-        setBusy(true);
-
         await api.sendMessage(chatId, text, outgoing);
 
         const [msgs] = await Promise.all([
@@ -296,10 +315,9 @@ export default function App() {
         ]);
         if (activeIdRef.current === chatId) setMessages(msgs);
       } catch (e) {
-        if (activeIdRef.current === chatId) setError(String(e));
+        if (chatId) patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
       } finally {
-        setBusy(false);
-        setStream(null);
+        if (chatId) patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
       }
     },
     [attachments, newChat, pickWorkspace, refreshChats],
@@ -337,7 +355,15 @@ export default function App() {
 
   const decideApproval = useCallback(
     async (requestId: string, decision: "once" | "session" | "always" | "deny") => {
-      setApprovals((prev) => prev.filter((a) => a.requestId !== requestId));
+      // The prompt can belong to any chat, so clear it from whichever holds it.
+      setSessions((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).map(([id, rt]) => [
+            id,
+            { ...rt, approvals: rt.approvals.filter((a) => a.requestId !== requestId) },
+          ]),
+        ),
+      );
       try {
         await api.respondApproval(requestId, decision);
       } catch (e) {
@@ -357,6 +383,11 @@ export default function App() {
   }, []);
 
   const activeChat = chats.find((c) => c.id === activeId) ?? null;
+  const runtime = (activeId && sessions[activeId]) || IDLE;
+  const runningIds = useMemo(
+    () => Object.keys(sessions).filter((id) => sessions[id].busy),
+    [sessions],
+  );
 
   const contextTokens = useMemo(() => {
     const chars =
@@ -394,20 +425,21 @@ export default function App() {
         onSkills={() => setPanel("skills")}
         onMcp={() => setPanel("mcp")}
         keyMask={keyMask}
+        runningIds={runningIds}
       />
 
       <ChatView
         chat={activeChat}
         messages={messages}
-        stream={stream}
-        tools={tools}
-        approvals={approvals}
+        stream={runtime.stream}
+        tools={runtime.tools}
+        approvals={runtime.approvals}
         attachments={attachments}
-        busy={busy}
+        busy={runtime.busy}
         models={models}
-        error={error}
+        error={runtime.error ?? error}
         notice={notice}
-        usage={usage}
+        usage={runtime.usage}
         contextTokens={contextTokens}
         contextMax={contextMax}
         onSend={send}

@@ -65,6 +65,10 @@ sandbox plus the API key being stripped from every child process.
 any running child process, and records whatever the model had produced so far. A chat runs one
 turn at a time: sending again while a turn is in flight stops the old one.
 
+Switching to another conversation does **not** interrupt a run. Each conversation keeps its own
+live turn — stream, tool cards and pending approvals — so a long job keeps going while you read
+something else. Its entry in the sidebar shows a small pulse until it finishes.
+
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
