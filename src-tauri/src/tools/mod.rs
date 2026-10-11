@@ -22,9 +22,9 @@ pub enum ToolClass {
     /// Runs without asking — reads only.
     Read,
     /// Handled by the app itself and never sandboxed or prompted — writing
-    /// MEMORY.md, publishing the task list, and creating an artifact, which is
-    /// stored in the database and shown in a sandboxed panel rather than put on
-    /// disk anywhere.
+    /// memory (the profile file or a kept fact), publishing the task list, and
+    /// creating an artifact, which is stored in the database and shown in a
+    /// sandboxed panel rather than put on disk anywhere.
     Internal,
     /// Modifies the workspace; the user approves each call.
     Write,
@@ -115,6 +115,45 @@ pub fn parse_artifact(args: &serde_json::Value) -> Result<ArtifactDraft, String>
         kind: kind.to_string(),
         content: content.to_string(),
     })
+}
+
+/// A validated `save_memory` call: what to remember and which tier it belongs in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryDraft {
+    pub entries: Vec<String>,
+    /// `"profile"` (the always-injected MEMORY.md) or `"fact"` (looked up when
+    /// relevant). Only an explicit `profile` may reach the injected file.
+    pub target: &'static str,
+}
+
+/// Validates `save_memory`.
+///
+/// The default is deliberately `fact`: the profile file is injected into every
+/// request, so it must not grow by accident. This is the same rule the
+/// summariser applies to its own proposals — a blank, misspelled or absent
+/// target is a fact, and only `profile` is allowed to reach the always-sent
+/// tier.
+pub fn parse_memory(args: &serde_json::Value) -> Result<MemoryDraft, String> {
+    let entries: Vec<String> = args
+        .get("entries")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if entries.is_empty() {
+        return Err("save_memory needs at least one non-empty entry".to_string());
+    }
+    let target = match args.get("target").and_then(serde_json::Value::as_str) {
+        Some(t) if t.trim().eq_ignore_ascii_case("profile") => "profile",
+        _ => "fact",
+    };
+    Ok(MemoryDraft { entries, target })
 }
 
 /// One line of the model's plan. A closed set, so a typo in the tool call is
@@ -251,13 +290,18 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "save_memory",
-                "Append durable facts about the user to their MEMORY.md. This is the only way to remember something across chats; never create or rename files for memory.",
+                "Remember something durable across chats. `target: \"profile\"` writes to MEMORY.md, which is sent with every request, so use it only for who the user is and how they want replies — their name, language, and standing preferences. `target: \"fact\"` (the default) is stored individually and looked up only when it is relevant, so it can hold anything else. Never create or rename files for memory.",
                 params(
                     json!({
                         "entries": {
                             "type": "array",
                             "description": "One self-contained sentence per fact. No bullets, no dates.",
                             "items": { "type": "string" }
+                        },
+                        "target": {
+                            "type": "string",
+                            "enum": ["profile", "fact"],
+                            "description": "\"profile\" is injected into every request (identity and standing preferences only); \"fact\" is looked up only when relevant. Defaults to \"fact\"."
                         }
                     }),
                     &["entries"],
@@ -690,6 +734,40 @@ mod tests {
         ] {
             assert!(parse_artifact(&bad).is_err(), "{bad} should be rejected");
         }
+    }
+
+    #[test]
+    fn save_memory_only_sends_an_explicit_profile_to_the_injected_file() {
+        // The default, and anything unrecognised, must land in tier 2.
+        assert_eq!(
+            parse_memory(&json!({"entries": ["Likes brevity"]}))
+                .unwrap()
+                .target,
+            "fact"
+        );
+        assert_eq!(
+            parse_memory(&json!({"entries": ["x"], "target": "nonsense"}))
+                .unwrap()
+                .target,
+            "fact"
+        );
+        // Only `profile`, in any case, reaches the always-injected file.
+        assert_eq!(
+            parse_memory(&json!({"entries": ["x"], "target": "PROFILE"}))
+                .unwrap()
+                .target,
+            "profile"
+        );
+        // Blank entries are dropped, and an empty call is refused rather than
+        // silently writing nothing.
+        assert_eq!(
+            parse_memory(&json!({"entries": ["  ", "Real fact"]}))
+                .unwrap()
+                .entries,
+            vec!["Real fact".to_string()]
+        );
+        assert!(parse_memory(&json!({"entries": []})).is_err());
+        assert!(parse_memory(&json!({})).is_err());
     }
 
     #[test]

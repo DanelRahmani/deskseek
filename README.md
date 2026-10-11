@@ -33,7 +33,11 @@ Both sections are functional:
     without slowing anything down. Facts are scoped to a project when they were learned inside
     one, so a note about one client does not turn up in another's chat.
   - *Summarise chat* proposes entries and tags each one *always sent* or *facts*, so you can see
-    where an Accept will put it. Nothing reaches `MEMORY.md` without being accepted there.
+    where an Accept will put it. A proposal only reaches `MEMORY.md` when you accept it there.
+  - When the assistant remembers something itself — with `save_memory` — it files it the same
+    way: only an explicit `profile` argument goes to `MEMORY.md`; everything else is kept as a
+    fact, which is the default. A fact the model recalls mid-run therefore cannot quietly grow
+    the always-sent file.
   - The panel lists kept facts and lets you forget any of them, and warns when `MEMORY.md` has
     grown past what is worth sending every time.
   - Honest limit: keyword search matches words, not meaning. Asking about "the car" will not

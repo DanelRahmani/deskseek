@@ -410,9 +410,10 @@ to be worked with, and it is deliberately kept short.\n\n\
 2. Everything else is stored as individual facts and looked up for you. When any of them match \
 what the user just asked they appear below under \"Possibly relevant memory\". That list changes \
 from turn to turn; if it is absent, nothing matched.\n\n\
-Do not create, rename or move files for memory. When the user tells you something durable — \
-about themselves, or something you should recall later — call `save_memory`. Do not ask for \
-permission first — the app handles it.",
+Do not create, rename or move files for memory. When the user tells you something durable, \
+call `save_memory` and say which tier it belongs in with `target`: `profile` only for who the \
+user is or how they want to be worked with, and `fact` — the default — for everything else. \
+Do not ask for permission first — the app handles it.",
         state.paths.memory_file().display()
     );
     parts.push(part("Memory guide", "memory", memory_guide.chars().count()));
@@ -571,8 +572,8 @@ fn argument(args: &Value, key: &str) -> String {
         .to_string()
 }
 
-/// Executes a tool. `save_memory` is handled by the app itself: it writes the
-/// memory file, which lives outside any workspace and is never sandboxed.
+/// Executes a tool. `save_memory` is handled by the app itself: it writes
+/// memory — the profile file, or a kept fact — which is never sandboxed.
 #[allow(clippy::too_many_arguments)]
 async fn run_tool(
     app: &AppHandle,
@@ -606,28 +607,40 @@ async fn run_tool(
     }
 
     if name == "save_memory" {
-        let entries: Vec<String> = args
-            .get("entries")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let draft = tools::parse_memory(args)?;
 
-        if entries.is_empty() {
-            return Err("save_memory needs at least one non-empty entry".to_string());
+        // The routing is the whole point of the two tiers: the profile file is
+        // injected into every request, so only identity and standing
+        // preferences may reach it, or the always-sent tier grows without
+        // bound. A fact is stored individually and looked up only when it
+        // matches what the user just asked.
+        if draft.target == "profile" {
+            crate::memory::append(&state.paths.memory_file(), &draft.entries)
+                .map_err(|e| e.to_string())?;
+            return Ok(format!(
+                "Added {} entr{} to the profile (MEMORY.md), which is sent with every request.",
+                draft.entries.len(),
+                if draft.entries.len() == 1 { "y" } else { "ies" }
+            ));
         }
 
-        crate::memory::append(&state.paths.memory_file(), &entries).map_err(|e| e.to_string())?;
+        // Scoped to the project the fact was learned in, so a note about one
+        // client does not surface in another's chat — the same rule
+        // `accept_proposals` uses, so the two paths cannot disagree.
+        let conn = state.db.lock().unwrap();
+        let scope = db::get_chat(&conn, chat_id)
+            .ok()
+            .and_then(|chat| chat.workspace)
+            .map(|ws| crate::memory_facts::scope_for(Some(std::path::Path::new(&ws))))
+            .unwrap_or_else(|| crate::memory_facts::scope_for(None));
+        for entry in &draft.entries {
+            crate::memory_facts::upsert(&conn, &scope, "fact", entry, Some(chat_id), 1)
+                .map_err(|e| e.to_string())?;
+        }
         return Ok(format!(
-            "Saved {} entr{} to MEMORY.md.",
-            entries.len(),
-            if entries.len() == 1 { "y" } else { "ies" }
+            "Kept {} fact{} — looked up later when relevant, not sent with every request.",
+            draft.entries.len(),
+            if draft.entries.len() == 1 { "" } else { "s" }
         ));
     }
 
