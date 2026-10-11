@@ -24,6 +24,10 @@ pub struct AppState {
     pub runs: runs::Runs,
     /// Watches the open workspace so the file tree updates by itself.
     pub files: fs_watch::FileWatcher,
+    /// What this machine can sandbox with, probed in the background at startup
+    /// and again whenever the setup screen re-checks. Read per run rather than
+    /// probed per command: `docker info` costs a second when it fails.
+    pub sandbox: Arc<tokio::sync::RwLock<tools::sandbox_exec::Capability>>,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
@@ -51,6 +55,10 @@ pub fn run() {
             let mcp_manager = Arc::new(tokio::sync::RwLock::new(mcp::McpManager::new(
                 paths.mcp_file(),
             )));
+            let sandbox = Arc::new(tokio::sync::RwLock::new(
+                tools::sandbox_exec::Capability::default(),
+            ));
+            let sandbox_probe = sandbox.clone();
 
             app.manage(AppState {
                 db: Mutex::new(conn),
@@ -60,6 +68,7 @@ pub fn run() {
                 approvals: approvals::Approvals::default(),
                 runs: runs::Runs::default(),
                 files: fs_watch::FileWatcher::new(app.handle().clone()),
+                sandbox,
                 mcp: mcp_manager.clone(),
             });
 
@@ -67,6 +76,12 @@ pub fn run() {
             // happens in the background: the window opens immediately.
             tauri::async_runtime::spawn(async move {
                 mcp_manager.write().await.load().await;
+            });
+
+            // Probing Docker and WSL can take up to fifteen seconds when the
+            // engine is installed but asleep, which must never delay the window.
+            tauri::async_runtime::spawn(async move {
+                *sandbox_probe.write().await = tools::sandbox_exec::detect().await;
             });
             Ok(())
         })

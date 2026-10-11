@@ -5,6 +5,7 @@ pub mod browse;
 pub mod exec;
 pub mod guard;
 pub mod sandbox;
+pub mod sandbox_exec;
 pub mod walk;
 
 use serde::Serialize;

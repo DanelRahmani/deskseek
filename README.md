@@ -46,6 +46,7 @@ Both sections are functional:
   always for that folder, or deny. Reads run freely
 - A **path sandbox** refuses anything outside the workspace, including `..` traversal and
   symlink escapes; the API key is stripped from every child process environment
+- **Commands can run in a container** instead of on this machine — see *Where commands run* below
 - A **live file tree** (`/files`, or the *Files* button) — the folder is watched, so files
   the agent creates or edits appear as it works. Click any file to read it without
   interrupting the run; if the agent writes to the file you are reading, it re-reads itself
@@ -69,6 +70,43 @@ One honest caveat, stated plainly in the app too: **the guard is a heuristic, no
 boundary.** It catches the patterns a confused or prompt-injected model reaches for. It is not a
 sandbox, and a missing match is not proof of safety. The real containment is the workspace path
 sandbox plus the API key being stripped from every child process.
+
+**Where commands run**
+
+A shell command does not have to run on your machine. Under *Where commands run* in `/setup` there
+are four choices — the same setting, in order of how much they isolate:
+
+| Setting | What it does |
+| --- | --- |
+| **Auto** (default) | The strongest rung this machine can actually reach |
+| **This machine** | Runs directly, with the guard and the workspace sandbox |
+| **Docker** | A throwaway container: your workspace mounted at `/workspace`, 2 GB and 2 CPUs, **no network** |
+| **WSL2** | Inside a WSL distribution, at `/mnt/<drive>/...` |
+
+Every command result is prefixed with where it ran, so a missing tool is never a mystery — the
+model sees `[ran on docker (alpine:latest, no network)]` and can tell you the image is the reason
+rather than inventing a workaround.
+
+Three things are worth saying plainly:
+
+- **A container only has what its image was built with.** `alpine:latest` starts instantly and has
+  no node, no cargo and no python. If you sandbox a real project, set the image to one that carries
+  its toolchain.
+- **The container gets no network.** A build that downloads dependencies will fail there and
+  succeed on this machine. That is the trade, not a bug.
+- **"This machine" is a guardrail, not a boundary.** It is the workspace sandbox, the scrubbed
+  environment, the timeout and the guard — nothing more, and the app says so.
+
+The rung is **refused when it cannot be honoured**: if you pin Docker and the engine is stopped,
+commands run on your machine with a note saying so, rather than being handed to a container that
+answers nothing. Choosing *Auto* picks Docker only when the engine is answering — the CLI being on
+PATH is not enough, because Docker Desktop installed and stopped looks identical to Docker
+installed and running if you ask the wrong question.
+
+Best-effort mode is also honest about stopping a run: `Stop` kills the whole process tree rather
+than just the shell it started, so a build does not carry on invisibly after you have stopped it.
+There is a gap — a grandchild whose parent has already exited is reparented and escapes — and the
+code says so where the upgrade path belongs.
 
 **Stop** — while a run is going, the send button becomes *Stop*. It aborts the model stream, kills
 any running child process, and records whatever the model had produced so far. A chat runs one
@@ -150,6 +188,9 @@ quietly leaving them broken:
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
+
+The same screen also chooses where commands run, and shows which rung that setting currently
+resolves to.
 
 DeskSeek **never installs either one for you**. It detects what is present, links to the
 official install guides, and uses whatever it finds. A machine without Docker is not broken —

@@ -13,7 +13,7 @@ use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{browse, exec, guard::PermissionMode, sandbox, walk};
+use crate::tools::{browse, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -438,6 +438,10 @@ pub struct EnvProbe {
     pub docker_running: bool,
     /// WSL2 can run the same jobs where Docker is not installed.
     pub wsl: bool,
+    /// Where `run_command` will actually run, and why — the resolved rung, not
+    /// the raw capability, because that is the thing the user can change.
+    pub sandbox_rung: String,
+    pub sandbox_note: Option<String>,
     pub searxng_url: String,
     pub searxng_ok: bool,
 }
@@ -452,23 +456,34 @@ pub struct EnvProbe {
 /// in a second, not hang the screen.
 #[tauri::command]
 pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, String> {
-    let searxng_url = state.settings.lock().unwrap().searxng_url.clone();
+    let settings = state.settings.lock().unwrap().clone();
 
-    let (docker_cli, wsl) = tokio::join!(
+    // One probe, shared with the run loop: the answer is cached on the state so
+    // a run never has to ask Docker anything before it can start.
+    let (caps, docker_cli) = tokio::join!(
+        sandbox_exec::detect(),
         exec::probe("docker", &["--version"], 6),
-        exec::probe("wsl", &["-l", "-v"], 6),
     );
-    // Only worth asking the engine if the CLI exists at all.
-    let docker_running = docker_cli && exec::probe("docker", &["info"], 15).await;
+    *state.sandbox.write().await = caps.clone();
 
-    let searxng_ok = browse::searxng_ready(&state.http, &searxng_url).await;
+    // Pressing Re-check here is exactly how a stopped engine becomes a running
+    // one, so the resolved rung is recomputed from the fresh answer.
+    let plan = sandbox_exec::plan_for(
+        sandbox_exec::Mode::parse(&settings.sandbox),
+        &caps,
+        &settings.sandbox_image,
+    );
+
+    let searxng_ok = browse::searxng_ready(&state.http, &settings.searxng_url).await;
 
     Ok(EnvProbe {
         has_api_key: keychain::has_api_key(),
         docker_cli,
-        docker_running,
-        wsl: cfg!(windows) && wsl,
-        searxng_url,
+        docker_running: caps.docker_running,
+        wsl: caps.wsl_distro.is_some(),
+        sandbox_rung: plan.rung.as_str().to_string(),
+        sandbox_note: plan.note,
+        searxng_url: settings.searxng_url,
         searxng_ok,
     })
 }

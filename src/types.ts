@@ -70,9 +70,18 @@ export interface Settings {
   browserPath: string;
   /** Permission mode new chats start in. */
   permissionMode: PermissionMode;
+  /** Where shell commands run. `auto` takes the strongest rung this machine can reach. */
+  sandbox: SandboxMode;
+  /** Image the Docker rung runs commands in. It must carry the workspace's toolchain. */
+  sandboxImage: string;
   /** Set once the first-run setup screen has been finished or dismissed. */
   setupDone: boolean;
 }
+
+export type SandboxMode = "auto" | "host" | "docker" | "wsl";
+
+/** Where a shell command actually runs. */
+export type SandboxRung = "host" | "docker" | "wsl";
 
 /** What the first-run setup screen reports about this machine. */
 export interface EnvProbe {
@@ -82,6 +91,10 @@ export interface EnvProbe {
   /** `docker info` — the engine answers. False when Docker Desktop is stopped. */
   dockerRunning: boolean;
   wsl: boolean;
+  /** The rung the current setting resolves to — what will really happen. */
+  sandboxRung: SandboxRung;
+  /** Set when a pinned rung could not be honoured, and why. */
+  sandboxNote: string | null;
   searxngUrl: string;
   searxngOk: boolean;
 }

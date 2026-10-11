@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
-import type { EnvProbe, Settings } from "../types";
+import type { EnvProbe, SandboxMode, Settings } from "../types";
 
 interface Props {
   settings: Settings;
@@ -20,9 +20,25 @@ type State = "ok" | "warn" | "todo";
 const SEARXNG_COMPOSE = `docker run -d --name searxng -p 8888:8080 \\
   -v searxng:/etc/searxng searxng/searxng`;
 
+/// Ordered from least to most isolating, which is also the order they are
+/// explained in. "Auto" is first because it is the default.
+const SANDBOX_MODES: { id: SandboxMode; label: string; hint: string }[] = [
+  { id: "auto", label: "Auto", hint: "Use the strongest rung this machine can reach" },
+  { id: "host", label: "This machine", hint: "Run directly, with the guard as the only protection" },
+  { id: "docker", label: "Docker", hint: "Run in a throwaway container with no network" },
+  { id: "wsl", label: "WSL2", hint: "Run inside a WSL distribution" },
+];
+
+const RUNG_LABEL: Record<string, string> = {
+  docker: "a Docker container",
+  wsl: "a WSL distribution",
+  host: "this machine",
+};
+
 export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props) {
   const [probe, setProbe] = useState<EnvProbe | null>(null);
   const [url, setUrl] = useState(settings.searxngUrl);
+  const [image, setImage] = useState(settings.sandboxImage);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -71,13 +87,26 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
 
   // "Installed" and "running" are different answers, and the second one is the
   // one that matters — a stopped Docker Desktop is not a missing Docker.
-  const sandbox: { state: State; label: string } = probe?.dockerRunning
+  const capability: { state: State; label: string } = probe?.dockerRunning
     ? { state: "ok", label: "Docker is running" }
     : probe?.wsl
       ? { state: "ok", label: "WSL2 found" }
       : probe?.dockerCli
         ? { state: "warn", label: "Docker installed, engine stopped" }
         : { state: "todo", label: "Neither found" };
+
+  const rung = probe?.sandboxRung ?? "host";
+
+  const save = async (patch: Partial<Settings>) => {
+    setError(null);
+    try {
+      onSaved(await api.saveSettings({ ...settings, ...patch }));
+      // The rung is computed from the mode, so ask again rather than guess.
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
@@ -150,39 +179,81 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
         />
 
         <Section
-          title="Sandboxed execution"
-          state={sandbox.state}
-          stateLabel={sandbox.label}
+          title="Where commands run"
+          state={capability.state}
+          stateLabel={capability.label}
           body={
             <>
-              Coding tasks run commands on your machine. With Docker (or WSL2) they can run
-              inside a container instead, which is the difference between a guardrail and real
-              isolation. DeskSeek never installs either one for you — it only uses what is
-              already there.
-              {sandbox.state === "warn" && (
+              Shell commands can run on your machine, or inside a Docker container or a WSL
+              distribution instead. The second and third are real isolation: they cannot see
+              the rest of your computer. A container does, however, only have the tools its
+              image was built with, and it gets no network. DeskSeek never installs either one
+              for you — it only uses what is already there.
+              <span className="mt-2 block text-neutral-400">
+                Commands currently run in{" "}
+                <strong className="text-neutral-200">{RUNG_LABEL[rung]}</strong>.
+              </span>
+              {probe?.sandboxNote && (
+                <span className="mt-1 block text-amber-400/80">{probe.sandboxNote}</span>
+              )}
+              {capability.state === "warn" && (
                 <span className="mt-2 block text-amber-400/80">
                   Docker is installed but its engine is not answering. Start Docker Desktop,
                   then press Re-check.
                 </span>
               )}
+              <span className="mt-2 block text-[11px] text-neutral-600">
+                Choosing “This machine” leaves you with the workspace sandbox, the scrubbed
+                environment and the command guard — a guardrail, not a security boundary.
+              </span>
             </>
           }
           action={
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                onClick={() => openUrl("https://docs.docker.com/desktop/install/windows-install/")}
-                className={quiet}
+            <div className="flex flex-col items-start gap-2">
+              <div
+                className="flex flex-wrap items-center gap-0.5 rounded-md border border-neutral-800 p-0.5"
+                title="Where run_command runs"
               >
-                Docker install guide
-              </button>
-              <button
-                onClick={() =>
-                  openUrl("https://learn.microsoft.com/windows/wsl/install")
-                }
-                className={quiet}
-              >
-                WSL2 install guide
-              </button>
+                {SANDBOX_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    onClick={() => save({ sandbox: mode.id })}
+                    title={mode.hint}
+                    className={`rounded px-2 py-0.5 text-[11px] transition ${
+                      settings.sandbox === mode.id
+                        ? "bg-neutral-800 text-neutral-100"
+                        : "text-neutral-500 hover:text-neutral-300"
+                    }`}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              {rung === "docker" && (
+                <input
+                  value={image}
+                  onChange={(e) => setImage(e.target.value)}
+                  onBlur={() => image !== settings.sandboxImage && save({ sandboxImage: image })}
+                  placeholder="alpine:latest"
+                  spellCheck={false}
+                  className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                  title="The image commands run in — it must carry the workspace's toolchain"
+                />
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => openUrl("https://docs.docker.com/desktop/install/windows-install/")}
+                  className={quiet}
+                >
+                  Docker install guide
+                </button>
+                <button
+                  onClick={() => openUrl("https://learn.microsoft.com/windows/wsl/install")}
+                  className={quiet}
+                >
+                  WSL2 install guide
+                </button>
+              </div>
             </div>
           }
         />

@@ -7,11 +7,12 @@ use std::time::Duration;
 
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
 use crate::runs::Cancel;
-use crate::tools::{sandbox, walk};
+use crate::tools::sandbox_exec::Plan;
+use crate::tools::{sandbox, sandbox_exec, walk};
 
 const MAX_READ_BYTES: u64 = 256 * 1024;
 const MAX_RESULT_CHARS: usize = 60_000;
@@ -174,17 +175,18 @@ fn edit_file(args: &Value, ws: &Path) -> Result<String, String> {
     }
 }
 
-async fn run_shell(command: &str, ws: &Path, cancel: &Cancel) -> Result<String, String> {
-    let cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(command);
-        c
-    } else {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(command);
-        c
-    };
-    run_process(cmd, Some(ws), COMMAND_TIMEOUT_SECS, true, Some(cancel)).await
+async fn run_shell(
+    command: &str,
+    ws: &Path,
+    cancel: &Cancel,
+    plan: &Plan,
+) -> Result<String, String> {
+    let cmd = sandbox_exec::command(plan, command, ws, COMMAND_TIMEOUT_SECS)?;
+    // Only the host rung runs the command from a directory we choose; the
+    // container and the distro are told where to work in their own arguments.
+    let cwd = (plan.rung == sandbox_exec::Rung::Host).then_some(ws);
+    let output = run_process(cmd, cwd, COMMAND_TIMEOUT_SECS, true, Some(cancel)).await?;
+    Ok(format!("{}\n{output}", sandbox_exec::banner(plan)))
 }
 
 /// Windows flashes a console window for every console program a GUI app
@@ -262,7 +264,7 @@ pub(crate) async fn run_process(
         },
     };
     if status.is_none() {
-        let _ = child.kill().await;
+        kill_tree(&mut child).await;
     }
 
     let stdout = out_task.await.unwrap_or_default();
@@ -310,6 +312,59 @@ pub(crate) async fn probe(program: &str, args: &[&str], timeout_secs: u64) -> bo
     )
 }
 
+/// The same idea, for the probes whose answer is a string rather than a yes or
+/// no — listing WSL distributions, for instance. `None` means the program could
+/// not be run at all; a non-zero exit still returns whatever it printed, which
+/// is where those tools put their explanations.
+pub(crate) async fn capture(program: &str, args: &[&str], timeout_secs: u64) -> Option<String> {
+    let mut cmd = Command::new(program);
+    cmd.args(args).stdin(Stdio::null()).kill_on_drop(true);
+    hide_console(&mut cmd);
+    let out = timeout(Duration::from_secs(timeout_secs), cmd.output())
+        .await
+        .ok()?
+        .ok()?;
+    let mut bytes = out.stdout;
+    bytes.extend_from_slice(&out.stderr);
+    Some(decode(&bytes))
+}
+
+/// Windows tools do not agree on text encoding: `wsl.exe` writes UTF-16LE,
+/// which `from_utf8_lossy` renders as NUL-separated ASCII. Dropping the NULs
+/// recovers the text, and it cannot damage anything we read this way, because
+/// no distro name, path or command output is allowed to contain one.
+pub(crate) fn decode(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .filter(|c| *c != '\0')
+        .collect()
+}
+
+/// Stops a child that did not finish on its own.
+///
+/// `child.kill()` only reaches the process we spawned, and on Windows that is
+/// `cmd.exe` — the build it started carries on, invisibly, after the user has
+/// pressed Stop. `taskkill /T` walks the tree instead.
+///
+/// ponytail: this covers the common case, a long build still running when the
+/// run is stopped. A grandchild whose parent already exited has been reparented
+/// and escapes it. A Windows Job Object with kill-on-close would close that
+/// hole properly, as would a process group on Unix.
+async fn kill_tree(child: &mut Child) {
+    #[cfg(windows)]
+    if let Some(pid) = child.id() {
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/F", "/T", "/PID"])
+            .arg(pid.to_string())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        hide_console(&mut cmd);
+        let _ = cmd.status().await;
+    }
+    let _ = child.kill().await;
+}
+
 /// Runs `git` with literal arguments — no shell, so nothing can be injected
 /// through a commit message or path.
 async fn git(ws: &Path, args: &[&str]) -> Result<String, String> {
@@ -337,6 +392,7 @@ pub async fn execute(
     args: &Value,
     ws: &Path,
     cancel: &Cancel,
+    plan: &Plan,
 ) -> Result<String, String> {
     match tool {
         "read_file" => read_file(args, ws),
@@ -345,7 +401,7 @@ pub async fn execute(
         "grep" => grep(args, ws),
         "write_file" => write_file(args, ws),
         "edit_file" => edit_file(args, ws),
-        "run_command" => run_shell(require_str(args, "command")?, ws, cancel).await,
+        "run_command" => run_shell(require_str(args, "command")?, ws, cancel, plan).await,
         "git_status" => git(ws, &["status", "--short", "--branch"]).await,
         "git_diff" => git(ws, &["--no-pager", "diff", "HEAD"]).await,
         "git_log" => {
@@ -465,10 +521,29 @@ mod tests {
     #[tokio::test]
     async fn run_command_captures_output_and_survives_sandbox() {
         let ws = workspace();
-        let cmd = if cfg!(windows) { "echo hello" } else { "echo hello" };
-        let out = run_shell(cmd, &ws, &Cancel::new()).await.unwrap();
+        let cmd = "echo hello";
+        let out = run_shell(cmd, &ws, &Cancel::new(), &host_plan())
+            .await
+            .unwrap();
         assert!(out.contains("hello"), "{out}");
+        // Every result says where it ran, so a missing tool is never a mystery.
+        assert!(out.starts_with("[ran on this machine]"), "{out}");
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    fn host_plan() -> Plan {
+        sandbox_exec::plan_for(sandbox_exec::Mode::Host, &sandbox_exec::Capability::default(), "x")
+    }
+
+    #[test]
+    fn a_utf16_listing_decodes_instead_of_arriving_nul_separated() {
+        // `wsl.exe` writes UTF-16LE. Without the NUL filter this reads as
+        // "U\0b\0u\0n\0t\0u\0", which parses as no distro at all.
+        let text = "* Ubuntu  Running  2\n";
+        let utf16: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        assert_eq!(decode(&utf16), text);
+        // Plain UTF-8 is untouched.
+        assert_eq!(decode(b"hello"), "hello");
     }
 
     #[tokio::test]

@@ -78,6 +78,15 @@ pub struct Settings {
     /// Permission mode new chats start in: `manual` | `auto` | `skip`.
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    /// Where shell commands run: `auto` (the strongest rung available) |
+    /// `host` | `docker` | `wsl`. Only the first two of those are isolation.
+    #[serde(default = "default_sandbox")]
+    pub sandbox: String,
+    /// Image the Docker rung runs commands in. It must already carry whatever
+    /// toolchain the workspace needs — `alpine` is small and starts instantly,
+    /// but it has no node, no cargo and no python.
+    #[serde(default = "default_sandbox_image")]
+    pub sandbox_image: String,
     /// Set once the first-run setup screen has been finished or dismissed.
     #[serde(default)]
     pub setup_done: bool,
@@ -85,6 +94,14 @@ pub struct Settings {
 
 fn default_permission_mode() -> String {
     "manual".to_string()
+}
+
+fn default_sandbox() -> String {
+    "auto".to_string()
+}
+
+fn default_sandbox_image() -> String {
+    "alpine:latest".to_string()
 }
 
 fn default_true() -> bool {
@@ -107,6 +124,8 @@ impl Default for Settings {
             searxng_url: String::new(),
             browser_path: String::new(),
             permission_mode: default_permission_mode(),
+            sandbox: default_sandbox(),
+            sandbox_image: default_sandbox_image(),
             setup_done: false,
         }
     }

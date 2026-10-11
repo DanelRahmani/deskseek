@@ -14,7 +14,7 @@ use crate::approvals::Decision;
 use crate::conversation::assemble::{build_messages, system_with_memory, Turn};
 use crate::runs::Cancel;
 use crate::store::{db, keychain, settings::Settings};
-use crate::tools::{self, exec, guard, ToolClass};
+use crate::tools::{self, exec, guard, sandbox_exec, ToolClass};
 use crate::AppState;
 
 pub const EVENT_STARTED: &str = "chat-started";
@@ -114,6 +114,7 @@ fn build_system(
     chat: &db::ChatRow,
     workspace: Option<&Path>,
     has_mcp_tools: bool,
+    plan: &sandbox_exec::Plan,
 ) -> String {
     let coding = chat.kind == "coding";
     let mut base = settings.system_prompt.clone();
@@ -140,6 +141,31 @@ every time, it replaces the previous one. One short line per step, exactly one s
 `in_progress` at a time, and a step is `completed` only when it is actually finished. The user \
 watches this list, so an out-of-date one is worse than none.",
     );
+
+    // Where commands run changes what the model should reach for, so it is
+    // stated rather than discovered by a confusing failure.
+    if plan.rung != sandbox_exec::Rung::Host {
+        let place = match plan.rung {
+            sandbox_exec::Rung::Docker => format!(
+                "inside a throwaway Docker container running `{}`, with the workspace mounted at \
+                 /workspace and no network access",
+                plan.image
+            ),
+            sandbox_exec::Rung::Wsl => match &plan.distro {
+                Some(name) => format!("inside the WSL distribution `{name}`"),
+                None => "inside WSL".to_string(),
+            },
+            sandbox_exec::Rung::Host => unreachable!(),
+        };
+        base.push_str(&format!(
+            "\n\n# Where commands run\n\n\
+`run_command` does not run on the user's machine: it runs {place}. That container or \
+distribution has only the tools it was built with, and it cannot reach the rest of the computer. \
+If a command fails because something is missing, say which tool is missing and that the user can \
+change where commands run under Settings → Execution (or `/setup`) — do not spend turns working \
+around it. Paths inside are `/workspace`-relative for Docker and `/mnt/<drive>/...` for WSL."
+        ));
+    }
 
     if settings.browsing_enabled {
         let search = if settings.searxng_url.trim().is_empty() {
@@ -339,6 +365,7 @@ async fn run_tool(
     args: &Value,
     ws: &std::path::Path,
     cancel: &Cancel,
+    plan: &sandbox_exec::Plan,
 ) -> Result<String, String> {
     if matches!(name, "fetch_url" | "browser_read" | "web_search") {
         return run_browse_tool(state, name, args).await;
@@ -394,7 +421,7 @@ async fn run_tool(
         ));
     }
 
-    exec::execute(name, args, ws, cancel).await
+    exec::execute(name, args, ws, cancel, plan).await
 }
 
 pub async fn run(
@@ -430,6 +457,13 @@ pub async fn run(
     let tools_present = !tool_list.is_empty();
 
     let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+    // Resolved once, so every command in this run takes the same path — and so
+    // a mid-run Docker shutdown cannot change the answer halfway through.
+    let plan = sandbox_exec::plan_for(
+        sandbox_exec::Mode::parse(&settings.sandbox),
+        &state.sandbox.read().await.clone(),
+        &settings.sandbox_image,
+    );
     let mut cost_total = 0.0f64;
     let mut last_usage = None;
     let mut last_message_id = String::new();
@@ -454,7 +488,14 @@ pub async fn run(
             db::list_messages(&conn, chat_id).map_err(|e| e.to_string())?
         };
         let turns: Vec<Turn> = history.iter().map(to_turn).collect();
-        let system = build_system(&settings, state, &chat, workspace.as_deref(), has_mcp_tools);
+        let system = build_system(
+            &settings,
+            state,
+            &chat,
+            workspace.as_deref(),
+            has_mcp_tools,
+            &plan,
+        );
         // The user's turn is already in the stored history.
         let messages = build_messages(&system, &turns, None, tools_present);
 
@@ -633,7 +674,7 @@ pub async fn run(
             };
 
             let result = if allowed {
-                run_tool(state, &name, &args, &ws, &cancel).await
+                run_tool(state, &name, &args, &ws, &cancel, &plan).await
             } else {
                 Err(denial.unwrap_or_else(|| {
                     "The user denied this action. Do not retry it — ask them what they would prefer."
