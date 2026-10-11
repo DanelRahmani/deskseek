@@ -38,6 +38,10 @@ import type {
 export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   saveSettings: (settings: Settings) => invoke<Settings>("save_settings", { settings }),
+  /** Writes one JSON bundle of settings + MCP servers; returns the path. */
+  backupConfig: () => invoke<string>("backup_config"),
+  /** Reads a bundle back. The API key is never in one. */
+  restoreConfig: (path: string) => invoke<void>("restore_config", { path }),
 
   hasApiKey: () => invoke<boolean>("has_api_key"),
   maskedApiKey: () => invoke<string | null>("masked_api_key"),

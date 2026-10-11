@@ -145,6 +145,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
+            commands::backup_config,
+            commands::restore_config,
             commands::has_api_key,
             commands::masked_api_key,
             commands::set_api_key,

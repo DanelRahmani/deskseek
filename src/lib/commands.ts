@@ -26,6 +26,8 @@ export function buildPalette(
     { id: "mcp", label: "MCP servers", hint: "Action" },
     { id: "files", label: "Show or hide the file tree", hint: "Action" },
     { id: "split", label: "Split into two panes", hint: "Action" },
+    { id: "backup", label: "Back up settings and MCP servers", hint: "Action" },
+    { id: "restore", label: "Restore settings from a backup…", hint: "Action" },
   ];
   // Exporting needs something to export; undoing needs something to undo, which
   // is also only true once a chat is open.

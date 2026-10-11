@@ -414,6 +414,15 @@ prompt when you have ticked *trust read-only*, and everything the server returns
 than instructions. What is lost is stderr — a local server's complaints land in the panel's
 **Logs** tab, but a remote one only has its HTTP status to explain itself.
 
+**Backups** (both sections)
+
+*Back up settings and MCP servers* and *Restore settings from a backup…* are in the command
+palette (`Ctrl+K`). The bundle is one JSON file in your documents folder, holding the settings and
+the `mcp.json` server list. It **never contains the API key** — that is in the OS keychain, which
+is not a file this app can hand out, and a backup is a file that gets mailed around. Restoring is
+all-or-nothing: the settings are parsed before anything is written, so a file that is not a backup
+leaves the app as it was rather than half-restored.
+
 ## First run
 
 On first launch DeskSeek shows a short setup screen — reopen it any time with `/setup`. It

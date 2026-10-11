@@ -44,6 +44,65 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<S
     Ok(settings)
 }
 
+// ---------------------------------------------------------------- backup
+
+/// The API key is deliberately absent: it lives in the OS keychain, which is not
+/// a file this app can hand out, and a backup is a file that gets mailed around.
+/// Everything else the app would miss if the disk died is here.
+const BACKUP_VERSION: u32 = 1;
+
+/// Write settings and the MCP server list to one JSON file in the documents
+/// folder. The MCP file is copied as opaque JSON rather than re-serialised: this
+/// does not need to understand it, only to move it.
+#[tauri::command]
+pub fn backup_config(state: State<'_, AppState>) -> Result<String, String> {
+    let dir = documents_dir_path(&state);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let settings = state.settings.lock().unwrap().clone();
+    let mcp = std::fs::read_to_string(state.paths.mcp_file())
+        .ok()
+        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let bundle = serde_json::json!({
+        "version": BACKUP_VERSION,
+        "settings": settings,
+        "mcp": mcp,
+    });
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = crate::tools::docs::free_path(&dir, &format!("deskseek-backup-{stamp}"), "json");
+    let body = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// Put a backup back. Deliberately all-or-nothing: the settings are parsed before
+/// anything is written, so a file that is not a backup leaves the app untouched
+/// rather than half-restored.
+#[tauri::command]
+pub async fn restore_config(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let body = std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))?;
+    let bundle: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("{path} is not a DeskSeek backup: {e}"))?;
+    let settings: Settings = serde_json::from_value(
+        bundle
+            .get("settings")
+            .cloned()
+            .ok_or("this backup has no settings in it")?,
+    )
+    .map_err(|e| format!("the settings in {path} could not be read: {e}"))?;
+
+    crate::store::settings::save(&state.paths.settings_file(), &settings)
+        .map_err(|e| e.to_string())?;
+    *state.settings.lock().unwrap() = settings;
+
+    if let Some(mcp) = bundle.get("mcp").filter(|value| !value.is_null()) {
+        let pretty = serde_json::to_string_pretty(mcp).map_err(|e| e.to_string())?;
+        std::fs::write(state.paths.mcp_file(), pretty).map_err(|e| e.to_string())?;
+    }
+    state.mcp.write().await.reload().await;
+    Ok(())
+}
+
 // ------------------------------------------------------------------- key
 
 #[tauri::command]

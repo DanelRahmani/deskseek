@@ -718,6 +718,36 @@ export default function App() {
     }
   }, [loadMessages]);
 
+  // A backup is a file, so the API key is not in it: the key lives in the OS
+  // keychain, which is not a file this app can hand out.
+  const backupConfig = useCallback(async () => {
+    try {
+      const path = await api.backupConfig();
+      const name = path.split(/[\\/]/).pop() ?? path;
+      setNotice(`Backed up to ${name} in your documents folder.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  const restoreConfig = useCallback(async () => {
+    try {
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: "DeskSeek backup", extensions: ["json"] }],
+        title: "Choose a DeskSeek backup",
+      });
+      if (typeof selected !== "string") return;
+      await api.restoreConfig(selected);
+      setSettings(await api.getSettings());
+      await api.mcpReload();
+      setNotice("Settings and MCP servers restored.");
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
   // results.
@@ -775,6 +805,12 @@ export default function App() {
         case "split":
           toggleSplit();
           return;
+        case "backup":
+          void backupConfig();
+          return;
+        case "restore":
+          void restoreConfig();
+          return;
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
           return;
@@ -786,7 +822,7 @@ export default function App() {
           return;
       }
     },
-    [chatsById, exportChat, newChat, rewind, selectChat, toggleSplit],
+    [backupConfig, chatsById, exportChat, newChat, restoreConfig, rewind, selectChat, toggleSplit],
   );
 
   // One window listener, resolved by the pure map in lib/shortcuts.ts. Every
