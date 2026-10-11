@@ -291,18 +291,22 @@ pub(crate) async fn run_process(
     Ok(truncate(text.trim_end().to_string()))
 }
 
-/// Whether a program runs at all — how the setup screen detects what is on the
-/// machine (docker, wsl). Any failure, including a timeout, is simply "no".
+/// Whether a command exits cleanly — how the setup screen finds out what is on
+/// the machine (docker, wsl). Any failure, including a timeout, is simply "no".
+///
+/// `output()` drains both pipes, so a chatty probe cannot fill a buffer and
+/// hang; `kill_on_drop` makes the timeout path kill the child rather than
+/// orphan it.
+///
+/// Note this answers "did the command succeed", which is NOT the same question
+/// as "is the tool installed" — see `commands::probe_environment`.
 pub(crate) async fn probe(program: &str, args: &[&str], timeout_secs: u64) -> bool {
     let mut cmd = Command::new(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+    cmd.args(args).stdin(Stdio::null()).kill_on_drop(true);
     hide_console(&mut cmd);
     matches!(
-        timeout(Duration::from_secs(timeout_secs), cmd.status()).await,
-        Ok(Ok(status)) if status.success()
+        timeout(Duration::from_secs(timeout_secs), cmd.output()).await,
+        Ok(Ok(out)) if out.status.success()
     )
 }
 
@@ -465,5 +469,26 @@ mod tests {
         let out = run_shell(cmd, &ws, &Cancel::new()).await.unwrap();
         assert!(out.contains("hello"), "{out}");
         let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[tokio::test]
+    async fn probe_reports_only_a_clean_exit() {
+        // The distinction the setup screen depends on: a command that ran and
+        // failed is not the same as one that is missing. `docker --version`
+        // succeeds while `docker info` fails when the engine is stopped.
+        let (ok, ok_args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/C", "exit 0"])
+        } else {
+            ("true", &[])
+        };
+        let (bad, bad_args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/C", "exit 1"])
+        } else {
+            ("false", &[])
+        };
+
+        assert!(probe(ok, ok_args, 5).await);
+        assert!(!probe(bad, bad_args, 5).await);
+        assert!(!probe("deskseek-no-such-program-here", &[], 5).await);
     }
 }

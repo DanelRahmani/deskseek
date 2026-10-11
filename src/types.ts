@@ -77,7 +77,10 @@ export interface Settings {
 /** What the first-run setup screen reports about this machine. */
 export interface EnvProbe {
   hasApiKey: boolean;
-  docker: boolean;
+  /** `docker --version` — the CLI is on PATH. */
+  dockerCli: boolean;
+  /** `docker info` — the engine answers. False when Docker Desktop is stopped. */
+  dockerRunning: boolean;
   wsl: boolean;
   searxngUrl: string;
   searxngOk: boolean;

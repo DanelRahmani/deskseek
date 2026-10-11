@@ -11,6 +11,9 @@ interface Props {
   onClose: () => void;
 }
 
+/** How a setup item reads: settled, needs a nudge, or simply not chosen. */
+type State = "ok" | "warn" | "todo";
+
 /// Shown on first run (and again via `/setup`). Two of the three things
 /// DeskSeek can do well need something installed that we cannot install for
 /// you, so the honest move is to ask rather than quietly leave them broken.
@@ -65,7 +68,16 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
 
   const keyOk = probe?.hasApiKey ?? false;
   const searchOk = probe?.searxngOk ?? false;
-  const sandboxOk = probe?.docker ?? probe?.wsl ?? false;
+
+  // "Installed" and "running" are different answers, and the second one is the
+  // one that matters — a stopped Docker Desktop is not a missing Docker.
+  const sandbox: { state: State; label: string } = probe?.dockerRunning
+    ? { state: "ok", label: "Docker is running" }
+    : probe?.wsl
+      ? { state: "ok", label: "WSL2 found" }
+      : probe?.dockerCli
+        ? { state: "warn", label: "Docker installed, engine stopped" }
+        : { state: "todo", label: "Neither found" };
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
@@ -84,9 +96,8 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
         <Section
           title="Model access"
           required
-          done={keyOk}
-          doneLabel="API key set"
-          todoLabel="No API key yet"
+          state={keyOk ? "ok" : "todo"}
+          stateLabel={keyOk ? "API key set" : "No API key yet"}
           body="DeskSeek talks to the DeepSeek API, so it needs a key. It is stored in the OS keychain, never in a config file."
           action={
             <button onClick={onOpenSettings} className={button}>
@@ -97,9 +108,8 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
 
         <Section
           title="Web search"
-          done={searchOk}
-          doneLabel="SearXNG answering"
-          todoLabel="Not configured"
+          state={searchOk ? "ok" : "todo"}
+          stateLabel={searchOk ? "SearXNG answering" : "Not configured"}
           body={
             <>
               The <code className="text-neutral-400">web_search</code> tool queries a SearXNG
@@ -141,15 +151,20 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
 
         <Section
           title="Sandboxed execution"
-          done={sandboxOk}
-          doneLabel={probe?.docker ? "Docker found" : "WSL2 found"}
-          todoLabel="Neither found"
+          state={sandbox.state}
+          stateLabel={sandbox.label}
           body={
             <>
               Coding tasks run commands on your machine. With Docker (or WSL2) they can run
               inside a container instead, which is the difference between a guardrail and real
               isolation. DeskSeek never installs either one for you — it only uses what is
               already there.
+              {sandbox.state === "warn" && (
+                <span className="mt-2 block text-amber-400/80">
+                  Docker is installed but its engine is not answering. Start Docker Desktop,
+                  then press Re-check.
+                </span>
+              )}
             </>
           }
           action={
@@ -201,19 +216,24 @@ function Section({
   title,
   body,
   action,
-  done,
-  doneLabel,
-  todoLabel,
+  state,
+  stateLabel,
   required,
 }: {
   title: string;
   body: ReactNode;
   action: ReactNode;
-  done: boolean;
-  doneLabel: string;
-  todoLabel: string;
+  state: State;
+  stateLabel: string;
   required?: boolean;
 }) {
+  const tone =
+    state === "ok"
+      ? "bg-emerald-500/10 text-emerald-400"
+      : state === "warn"
+        ? "bg-amber-500/10 text-amber-400"
+        : "bg-neutral-800 text-neutral-400";
+
   return (
     <div className="mt-4 rounded-xl border border-neutral-800 bg-neutral-900/40 p-3">
       <div className="flex items-center gap-2">
@@ -223,12 +243,9 @@ function Section({
             required
           </span>
         )}
-        <span
-          className={`ml-auto rounded px-1.5 py-0.5 text-[10px] ${
-            done ? "bg-emerald-500/10 text-emerald-400" : "bg-amber-500/10 text-amber-400"
-          }`}
-        >
-          {done ? `✓ ${doneLabel}` : todoLabel}
+        <span className={`ml-auto rounded px-1.5 py-0.5 text-[10px] ${tone}`}>
+          {state === "ok" ? "✓ " : ""}
+          {stateLabel}
         </span>
       </div>
       <p className="mt-2 text-xs leading-relaxed text-neutral-500">{body}</p>

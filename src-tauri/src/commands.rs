@@ -430,29 +430,43 @@ pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
 #[serde(rename_all = "camelCase")]
 pub struct EnvProbe {
     pub has_api_key: bool,
-    pub docker: bool,
+    /// `docker --version` — the CLI is on PATH. Client-only, so it answers even
+    /// when the engine is stopped.
+    pub docker_cli: bool,
+    /// `docker info` — the engine actually answers. False for the very common
+    /// case of Docker Desktop installed and simply not started.
+    pub docker_running: bool,
     /// WSL2 can run the same jobs where Docker is not installed.
     pub wsl: bool,
     pub searxng_url: String,
     pub searxng_ok: bool,
 }
 
-/// Probes are deliberately slow-tolerant but bounded: a machine without Docker
-/// should say so in a second or two, not hang the screen.
+/// "Installed" and "running" are different questions, and Docker answers them
+/// with different commands: `docker --version` is a client-only string, while
+/// `docker info` fails with exit 1 when the daemon's named pipe is not there.
+/// Asking the second one to detect the first reported a working Docker Desktop
+/// as "not found", so both are asked separately.
+///
+/// Probes are slow-tolerant but bounded: a machine without Docker should say so
+/// in a second, not hang the screen.
 #[tauri::command]
 pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, String> {
     let searxng_url = state.settings.lock().unwrap().searxng_url.clone();
 
-    let (docker, wsl) = tokio::join!(
-        exec::probe("docker", &["version", "--format", "{{.Server.Version}}"], 6),
+    let (docker_cli, wsl) = tokio::join!(
+        exec::probe("docker", &["--version"], 6),
         exec::probe("wsl", &["-l", "-v"], 6),
     );
+    // Only worth asking the engine if the CLI exists at all.
+    let docker_running = docker_cli && exec::probe("docker", &["info"], 15).await;
 
     let searxng_ok = browse::searxng_ready(&state.http, &searxng_url).await;
 
     Ok(EnvProbe {
         has_api_key: keychain::has_api_key(),
-        docker,
+        docker_cli,
+        docker_running,
         wsl: cfg!(windows) && wsl,
         searxng_url,
         searxng_ok,

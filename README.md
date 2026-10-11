@@ -130,6 +130,13 @@ DeskSeek **never installs either one for you**. It detects what is present, link
 official install guides, and uses whatever it finds. A machine without Docker is not broken —
 it just runs commands directly, with the guard as the only protection.
 
+It also distinguishes *installed* from *running*, because those are different questions with
+different answers. `docker --version` is a client-only string that succeeds whenever the CLI is
+on your PATH; `docker info` needs the engine's named pipe and fails with exit 1 when Docker
+Desktop is merely stopped. Asking the second question to answer the first reports a perfectly
+good Docker install as "not found" — so both are asked, and a stopped engine reads as
+*Docker installed, engine stopped* with a nudge to start Docker Desktop and press Re-check.
+
 The SearXNG check is honest about the common failure: an instance only answers JSON once
 `json` is in the `formats` list in its `settings.yml`, so a plain HTML instance is reported as
 *not configured* rather than silently returning nothing.
