@@ -97,6 +97,20 @@ export type SandboxMode = "auto" | "host" | "docker" | "wsl";
 /** Where a shell command actually runs. */
 export type SandboxRung = "host" | "docker" | "wsl";
 
+/** One measured piece of a request, in characters. */
+export interface ContextPart {
+  label: string;
+  /** Which slice of the bar this belongs to. */
+  group: string;
+  chars: number;
+}
+
+export interface ContextBreakdown {
+  parts: ContextPart[];
+  /** Pictures in the history. Charged per picture, so counted rather than measured. */
+  images: number;
+}
+
 /** What the first-run setup screen reports about this machine. */
 export interface EnvProbe {
   hasApiKey: boolean;

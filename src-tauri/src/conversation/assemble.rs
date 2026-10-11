@@ -18,24 +18,29 @@ pub struct Turn {
     pub attachments: Option<Vec<Attachment>>,
 }
 
+/// The always-injected profile exactly as it is appended, or None when there is
+/// none to append.
+///
+/// Split out from `system_with_memory` so a caller can measure the block as well
+/// as include it: the context panel reports its size, and a size taken from a
+/// second format string would be a copy that could drift out of step with the
+/// text actually sent.
+pub fn memory_block(memory: Option<&str>) -> Option<String> {
+    let memory = memory?.trim();
+    if memory.is_empty() {
+        return None;
+    }
+    Some(format!("# Memory\n\n{memory}"))
+}
+
 /// Base instructions plus the always-injected memory file.
 pub fn system_with_memory(base: &str, memory: Option<&str>) -> String {
-    let mut out = String::new();
     let base = base.trim();
-    if !base.is_empty() {
-        out.push_str(base);
+    match memory_block(memory) {
+        Some(block) if base.is_empty() => block,
+        Some(block) => format!("{base}\n\n{block}"),
+        None => base.to_string(),
     }
-    if let Some(memory) = memory {
-        let memory = memory.trim();
-        if !memory.is_empty() {
-            if !out.is_empty() {
-                out.push_str("\n\n");
-            }
-            out.push_str("# Memory\n\n");
-            out.push_str(memory);
-        }
-    }
-    out
 }
 
 pub fn build_messages(
@@ -134,6 +139,21 @@ mod tests {
     fn empty_memory_leaves_the_prompt_untouched() {
         assert_eq!(system_with_memory("Hi", Some("   ")), "Hi");
         assert_eq!(system_with_memory("Hi", None), "Hi");
+    }
+
+    #[test]
+    fn the_caller_can_measure_the_memory_block_it_gets() {
+        assert_eq!(memory_block(None), None);
+        assert_eq!(memory_block(Some("   ")), None);
+        assert_eq!(memory_block(Some("  Dan  ")).as_deref(), Some("# Memory\n\nDan"));
+
+        // The panel measures the block and the prompt carries it, so the two
+        // have to come from one place or the reported size would be a lie.
+        let block = memory_block(Some("Dan")).unwrap();
+        assert_eq!(system_with_memory("base", Some("Dan")), format!("base\n\n{block}"));
+
+        // A base with nothing in it must not leave a stray separator behind.
+        assert_eq!(system_with_memory("  ", Some("Dan")), block);
     }
 
     #[test]

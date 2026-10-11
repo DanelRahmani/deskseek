@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
-use crate::conversation::{agent, summarize};
+use crate::conversation::{agent, assemble, summarize};
 use crate::mcp::{McpServer, ServerStatus, ToolLog};
 use crate::memory;
 use crate::skills;
@@ -311,6 +311,114 @@ pub fn documents_dir(state: State<'_, AppState>) -> String {
 #[tauri::command]
 pub fn chatlog_dir(state: State<'_, AppState>) -> String {
     state.paths.chatlog_dir().display().to_string()
+}
+
+// ----------------------------------------------------------------- context
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextBreakdown {
+    pub parts: Vec<agent::PromptPart>,
+    /// Pictures riding along with the history. The API charges for these by
+    /// picture rather than by the characters of their data URL, so they are
+    /// counted instead of measured — calling a 200 KB base64 string 55k tokens
+    /// would be worse than saying nothing about it.
+    pub images: usize,
+}
+
+/// What the next request to this chat would be made of.
+///
+/// Every number comes from the code the run itself uses — the system prompt from
+/// `agent::system_prompt`, the tool list from `agent::tools_for_chat`, the turns
+/// from the rows the run would read — so the panel describes the request that is
+/// really about to be sent rather than an approximation of it.
+///
+/// Characters, not tokens. The app's one token estimate is characters ÷ 3.6 in
+/// the frontend, beside the meter; a second estimate here would disagree with the
+/// number sitting next to this panel.
+#[tauri::command]
+pub async fn context_breakdown(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> Result<ContextBreakdown, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let chat = {
+        let conn = state.db.lock().unwrap();
+        db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?
+    };
+    let history = {
+        let conn = state.db.lock().unwrap();
+        db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?
+    };
+    let turns: Vec<assemble::Turn> = history.iter().map(agent::to_turn).collect();
+    // The newest user turn is what tier 2 is queried with, and what this turn is
+    // about — the same rule the run uses.
+    let ask = turns
+        .iter()
+        .rev()
+        .find(|turn| turn.role == "user")
+        .and_then(|turn| turn.content.as_deref());
+
+    let tools = agent::tools_for_chat(&state, &settings, &chat).await;
+    let plan = sandbox_exec::plan_for(
+        sandbox_exec::Mode::parse(&settings.sandbox),
+        &state.sandbox.read().await.clone(),
+        &settings.sandbox_image,
+    );
+    let workspace = agent::workspace_for(&state, &chat);
+    let (_, mut parts) = agent::system_prompt(
+        &settings,
+        &state,
+        &chat,
+        workspace.as_deref(),
+        tools.mcp,
+        ask,
+        &plan,
+    );
+
+    // The schemas go over the wire as JSON, so the JSON is what is measured.
+    if let Ok(json) = serde_json::to_string(&tools.list) {
+        parts.push(agent::part(
+            format!("Tool schemas ({})", tools.list.len()),
+            "tools",
+            json.chars().count(),
+        ));
+    }
+
+    // By role, because a conversation is not one thing: reasoning is only echoed
+    // back when the request carries tools, and tool results can dwarf both sides.
+    let (mut said, mut replied, mut reasoned, mut tool_out, mut images) = (0, 0, 0, 0, 0);
+    for turn in &turns {
+        images += turn
+            .attachments
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .filter(|a| a.is_image())
+            .count();
+        let chars = turn.content.as_deref().unwrap_or("").chars().count();
+        match turn.role.as_str() {
+            "user" => said += chars,
+            "assistant" => {
+                replied += chars;
+                reasoned += turn.reasoning_content.as_deref().unwrap_or("").chars().count();
+            }
+            "tool" => tool_out += chars,
+            _ => {}
+        }
+    }
+    for (label, chars) in [
+        ("Your messages", said),
+        ("Replies", replied),
+        ("Reasoning", reasoned),
+        ("Tool results", tool_out),
+    ] {
+        if chars > 0 {
+            parts.push(agent::part(label, "conversation", chars));
+        }
+    }
+
+    Ok(ContextBreakdown { parts, images })
 }
 
 /// Open a generated document in whatever application owns its type.

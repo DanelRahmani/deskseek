@@ -36,13 +36,15 @@ import { SkillsPanel } from "./components/SkillsPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
 import { ArtifactPanel } from "./components/ArtifactPanel";
+import { ContextPanel } from "./components/ContextPanel";
 import { TabStrip } from "./components/TabStrip";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
 import { resolveShortcut } from "./lib/shortcuts";
 import { resolveMode, resolveTheme } from "./lib/theme";
+import { tokensFromChars } from "./lib/context";
 
-type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact";
+type Panel = "none" | "memory" | "skills" | "mcp" | "files" | "artifact" | "context";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -661,7 +663,7 @@ export default function App() {
     [sessions],
   );
 
-  /** Rough context estimate for one chat: about 3.6 characters per token. */
+  /** Rough context estimate for one chat, using the app's one token rule. */
   const tokensFor = useCallback(
     (id: string) => {
       const chars =
@@ -669,7 +671,7 @@ export default function App() {
           (total, m) => total + (m.content?.length ?? 0) + (m.reasoning_content?.length ?? 0),
           0,
         ) + (settings?.systemPrompt.length ?? 0);
-      return Math.ceil(chars / 3.6);
+      return tokensFromChars(chars);
     },
     [messagesByChat, settings],
   );
@@ -807,6 +809,7 @@ export default function App() {
                     }
                     onModeChange={(mode) => id && changeMode(id, mode)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
+                    onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}
                     onAttach={(files) => attach(id, files)}
                     onRemoveAttachment={(index) => removeAttachment(id, index)}
                     onDecideApproval={decideApproval}
@@ -828,6 +831,13 @@ export default function App() {
         />
       )}
       {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
+      {panel === "context" && activeId && (
+        <ContextPanel
+          chatId={activeId}
+          limit={models.find((m) => m.id === chatsById[activeId]?.model)?.context ?? 1_000_000}
+          onClose={() => setPanel("none")}
+        />
+      )}
       {panel === "mcp" && <McpPanel onClose={() => setPanel("none")} />}
       {panel === "artifact" && artifact && (
         <ArtifactPanel

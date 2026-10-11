@@ -173,6 +173,7 @@ pub fn run() {
             commands::documents_dir,
             commands::chatlog_dir,
             commands::open_document,
+            commands::context_breakdown,
             commands::reveal_path,
             commands::start_docker,
             commands::list_artifacts,

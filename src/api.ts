@@ -8,6 +8,7 @@ import type {
   Attachment,
   ChatRow,
   ComputerStateEvent,
+  ContextBreakdown,
   DeltaEvent,
   DoneEvent,
   ErrorEvent,
@@ -45,6 +46,10 @@ export const api = {
   listModels: () => invoke<ModelInfo[]>("list_models"),
 
   probeEnvironment: () => invoke<EnvProbe>("probe_environment"),
+
+  /** What the next request to this chat would be made of, in characters. */
+  contextBreakdown: (chatId: string) =>
+    invoke<ContextBreakdown>("context_breakdown", { chatId }),
 
   listChats: (kind: SectionKind) => invoke<ChatRow[]>("list_chats", { kind }),
   createChat: (kind: SectionKind, workspace: string | null = null) =>

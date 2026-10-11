@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { tasksFrom } from "../lib/tasks";
 import { Markdown } from "./Markdown";
+import { formatTokens } from "../lib/context";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalPrompt } from "./ApprovalPrompt";
@@ -38,6 +39,8 @@ interface Props {
   onMcp: () => void;
   contextTokens: number;
   contextMax: number;
+  /** Opens the context breakdown for this chat. */
+  onContext: () => void;
   onSend: (text: string) => void;
   onStop: () => void;
   onFiles: () => void;
@@ -73,12 +76,6 @@ export const COMMANDS = [
   { name: "/help", description: "List the commands" },
 ];
 
-function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
 export function ChatView({
   chat,
   messages,
@@ -98,6 +95,7 @@ export function ChatView({
   onMcp,
   contextTokens,
   contextMax,
+  onContext,
   onSend,
   onStop,
   onFiles,
@@ -281,9 +279,10 @@ export function ChatView({
             </div>
           )}
 
-          <div
-            className="flex items-center gap-1.5"
-            title={`Approximately ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used (chars ÷ 3.6)`}
+          <button
+            onClick={onContext}
+            className="flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:bg-neutral-800"
+            title={`Approximately ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used (characters ÷ 3.6). Click for the breakdown.`}
           >
             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-800">
               <div
@@ -300,7 +299,7 @@ export function ChatView({
             <span className="text-[10px] tabular-nums text-neutral-600">
               ~{formatTokens(contextTokens)}/{formatTokens(contextMax)}
             </span>
-          </div>
+          </button>
 
           {chat && (
             <>
