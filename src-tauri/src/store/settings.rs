@@ -64,6 +64,21 @@ pub struct Settings {
     pub documents_dir: String,
     #[serde(default = "default_instructions")]
     pub instructions: Vec<Instruction>,
+    /// Master switch for fetch_url / browser_read / web_search.
+    #[serde(default = "default_true")]
+    pub browsing_enabled: bool,
+    /// Base URL of a SearXNG instance that allows `format=json`. Empty disables
+    /// web search but keeps the two fetch tools working.
+    #[serde(default)]
+    pub searxng_url: String,
+    /// Optional explicit path to a Chromium-family browser. Empty means
+    /// auto-detect (Edge, then Chrome, then Chromium on PATH).
+    #[serde(default)]
+    pub browser_path: String,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -78,6 +93,9 @@ impl Default for Settings {
             theme: "system".to_string(),
             documents_dir: String::new(),
             instructions: default_instructions(),
+            browsing_enabled: true,
+            searxng_url: String::new(),
+            browser_path: String::new(),
         }
     }
 }

@@ -27,7 +27,7 @@ const SENSITIVE_ENV: &[&str] = &[
     "GH_TOKEN",
 ];
 
-fn truncate(mut s: String) -> String {
+pub(crate) fn truncate(mut s: String) -> String {
     if s.chars().count() > MAX_RESULT_CHARS {
         let cut: String = s.chars().take(MAX_RESULT_CHARS).collect();
         s = format!("{cut}\n… (output truncated)");
@@ -174,7 +174,7 @@ fn edit_file(args: &Value, ws: &Path) -> Result<String, String> {
 }
 
 async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
-    let mut cmd = if cfg!(windows) {
+    let cmd = if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C").arg(command);
         c
@@ -183,8 +183,24 @@ async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
         c.arg("-c").arg(command);
         c
     };
-    cmd.current_dir(ws)
-        .stdin(Stdio::null())
+    run_process(cmd, Some(ws), COMMAND_TIMEOUT_SECS, true).await
+}
+
+/// Runs a prepared command, draining both pipes and enforcing a timeout.
+/// Shared by the shell tool and the headless browser.
+///
+/// `include_stderr` is false for the browser, which writes Chromium debug
+/// chatter to stderr that has nothing to do with the page.
+pub(crate) async fn run_process(
+    mut cmd: Command,
+    cwd: Option<&Path>,
+    timeout_secs: u64,
+    include_stderr: bool,
+) -> Result<String, String> {
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     for key in SENSITIVE_ENV {
@@ -208,7 +224,7 @@ async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
         buf
     });
 
-    let status = match timeout(Duration::from_secs(COMMAND_TIMEOUT_SECS), child.wait()).await {
+    let status = match timeout(Duration::from_secs(timeout_secs), child.wait()).await {
         Ok(Ok(status)) => Some(status),
         Ok(Err(e)) => return Err(format!("command failed: {e}")),
         Err(_) => {
@@ -220,14 +236,16 @@ async fn run_shell(command: &str, ws: &Path) -> Result<String, String> {
     let stdout = out_task.await.unwrap_or_default();
     let stderr = err_task.await.unwrap_or_default();
     let mut text = String::from_utf8_lossy(&stdout).to_string();
-    text.push_str(&String::from_utf8_lossy(&stderr));
+    if include_stderr {
+        text.push_str(&String::from_utf8_lossy(&stderr));
+    }
 
     match status {
         Some(status) if !status.success() => {
             text.push_str(&format!("\n(exit code {:?})", status.code()));
         }
         None => {
-            text.push_str(&format!("\n(timed out after {COMMAND_TIMEOUT_SECS}s)"));
+            text.push_str(&format!("\n(timed out after {timeout_secs}s)"));
         }
         _ => {}
     }

@@ -102,6 +102,27 @@ fn build_system(
         }
     }
 
+    if settings.browsing_enabled {
+        let search = if settings.searxng_url.trim().is_empty() {
+            "Web search is not configured on this machine yet, so `web_search` will fail — reach \
+             for a URL you already have instead."
+        } else {
+            "`web_search` returns titles, URLs and snippets; follow up by reading whichever \
+             results look relevant."
+        };
+        base.push_str(&format!(
+            "\n\n# Internet\n\n\
+You can reach the internet, and you should reach for it whenever a question needs current \
+facts, whenever the user gives you a link, and whenever documentation would help:\n\n\
+- `fetch_url` — fetch a page and read it as text. Fast, but it does not run JavaScript.\n\
+- `browser_read` — fetch a page with a real browser so JavaScript runs first. Slower; use it \
+when `fetch_url` comes back empty or the site is a single-page app.\n\
+- `web_search` — search the web. {search}\n\n\
+Always give the source URL for anything you found, and say plainly when the web does not answer \
+the question rather than filling the gap from memory."
+        ));
+    }
+
     // Instructions the user scoped to this section only.
     let scope = if coding { "coding" } else { "chat" };
     for instruction in settings
@@ -193,6 +214,46 @@ async fn approve(
     }
 }
 
+/// The internet tools read the public web rather than a workspace, and the
+/// browser and search provider come from settings — so the app runs them.
+async fn run_browse_tool(state: &AppState, name: &str, args: &Value) -> Result<String, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    if !settings.browsing_enabled {
+        return Err("internet access is switched off in Settings → Browsing".to_string());
+    }
+
+    let url = argument(args, "url");
+    match name {
+        "fetch_url" => {
+            if url.is_empty() {
+                return Err("fetch_url needs a url".to_string());
+            }
+            tools::browse::fetch_url(&state.http, &url).await
+        }
+        "browser_read" => {
+            if url.is_empty() {
+                return Err("browser_read needs a url".to_string());
+            }
+            tools::browse::browser_read(&settings.browser_path, &url).await
+        }
+        _ => {
+            let query = argument(args, "query");
+            if query.is_empty() {
+                return Err("web_search needs a query".to_string());
+            }
+            tools::browse::web_search(&state.http, &settings.searxng_url, &query, 8).await
+        }
+    }
+}
+
+fn argument(args: &Value, key: &str) -> String {
+    args.get(key)
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 /// Executes a tool. `save_memory` is handled by the app itself: it writes the
 /// memory file, which lives outside any workspace and is never sandboxed.
 async fn run_tool(
@@ -201,6 +262,10 @@ async fn run_tool(
     args: &Value,
     ws: &std::path::Path,
 ) -> Result<String, String> {
+    if matches!(name, "fetch_url" | "browser_read" | "web_search") {
+        return run_browse_tool(state, name, args).await;
+    }
+
     if name == "save_memory" {
         let entries: Vec<String> = args
             .get("entries")
@@ -255,6 +320,13 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
     };
     let tool_list: Vec<Tool> = tools::tools_for(&chat.kind)
         .into_iter()
+        .filter(|(tool, _)| {
+            settings.browsing_enabled
+                || !matches!(
+                    tool.function.name.as_str(),
+                    "fetch_url" | "browser_read" | "web_search"
+                )
+        })
         .map(|(tool, _)| tool)
         .collect();
     let tools_present = !tool_list.is_empty();

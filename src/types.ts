@@ -58,6 +58,12 @@ export interface Settings {
   theme: string;
   documentsDir: string;
   instructions: Instruction[];
+  /** Master switch for fetch_url / browser_read / web_search. */
+  browsingEnabled: boolean;
+  /** Base URL of a SearXNG instance with JSON output enabled. Empty disables web search. */
+  searxngUrl: string;
+  /** Explicit Chromium-family browser. Empty auto-detects Edge, then Chrome. */
+  browserPath: string;
 }
 
 export interface Usage {

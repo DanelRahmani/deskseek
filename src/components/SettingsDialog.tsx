@@ -28,7 +28,7 @@ export function SettingsDialog({
   const [apiKey, setApiKey] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [tab, setTab] = useState<"api" | "prompt" | "instructions">("api");
+  const [tab, setTab] = useState<"api" | "prompt" | "instructions" | "browsing">("api");
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -122,6 +122,7 @@ export function SettingsDialog({
               ["api", "API"],
               ["prompt", "Prompt & models"],
               ["instructions", "Scoped instructions"],
+              ["browsing", "Browsing"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -255,9 +256,66 @@ export function SettingsDialog({
                 onChange={(e) => set("systemPrompt", e.target.value)}
               />
               <p className="text-[11px] text-neutral-600">
-                memory.md, enabled skills and any matching scoped instructions are appended to this
+                MEMORY.md, enabled skills and any matching scoped instructions are appended to this
                 automatically.
               </p>
+            </>
+          )}
+
+          {tab === "browsing" && (
+            <>
+              <label className="flex items-center gap-2 text-xs text-neutral-300">
+                <input
+                  type="checkbox"
+                  checked={form.browsingEnabled}
+                  onChange={(e) => set("browsingEnabled", e.target.checked)}
+                />
+                Let the assistant use the internet
+              </label>
+              <p className="text-[11px] text-neutral-600">
+                Three read-only tools, so nothing is prompted for approval.{" "}
+                <span className="font-mono">fetch_url</span> reads a page as text.{" "}
+                <span className="font-mono">browser_read</span> puts the page through a real
+                browser first, so JavaScript-built pages work too.{" "}
+                <span className="font-mono">web_search</span> searches.
+              </p>
+
+              <div className="border-t border-neutral-800 pt-4">
+                <label className="block text-xs text-neutral-500">SearXNG URL</label>
+                <input
+                  className={inputCls}
+                  placeholder="http://localhost:8080"
+                  value={form.searxngUrl}
+                  onChange={(e) => set("searxngUrl", e.target.value)}
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Leave blank to switch <span className="font-mono">web_search</span> off; the two
+                  fetch tools keep working. The instance must list{" "}
+                  <span className="font-mono">json</span> under <span className="font-mono">
+                    formats
+                  </span>{" "}
+                  in its <span className="font-mono">settings.yml</span>, otherwise it only answers
+                  with HTML.
+                </p>
+              </div>
+
+              <div className="border-t border-neutral-800 pt-4">
+                <label className="block text-xs text-neutral-500">
+                  Browser for browser_read (optional)
+                </label>
+                <input
+                  className={inputCls}
+                  placeholder="auto-detect Edge, then Chrome"
+                  value={form.browserPath}
+                  onChange={(e) => set("browserPath", e.target.value)}
+                  spellCheck={false}
+                />
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Any Chromium-family browser is driven headlessly — nothing to download. Only set
+                  this if auto-detection picks the wrong one.
+                </p>
+              </div>
             </>
           )}
 

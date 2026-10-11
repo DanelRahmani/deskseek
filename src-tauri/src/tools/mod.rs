@@ -1,6 +1,7 @@
 //! The built-in coding toolset: what the model may call, and how risky each
 //! call is (which decides whether the user is asked to approve it).
 
+pub mod browse;
 pub mod exec;
 pub mod sandbox;
 pub mod walk;
@@ -122,6 +123,30 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "fetch_url",
+                "Fetch a web page and read it as text. Use for documentation links and articles. Does not run JavaScript.",
+                params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "browser_read",
+                "Fetch a web page with a real browser so JavaScript runs first. Slower than fetch_url — use it when fetch_url comes back empty or the page is a single-page app.",
+                params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "web_search",
+                "Search the web and get back a list of titles, URLs and snippets. Follow up with fetch_url or browser_read to read a result.",
+                params(json!({"query": {"type": "string", "description": "What to search for"}}), &["query"]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
                 "run_command",
                 "Run a shell command in the workspace root. Use for builds, tests and scripts.",
                 params(json!({"command": {"type": "string", "description": "The command line to run"}}), &["command"]),
@@ -199,6 +224,9 @@ mod tests {
         assert_eq!(class_of("run_command"), ToolClass::Command);
         assert_eq!(class_of("git_push"), ToolClass::Command);
         assert_eq!(class_of("save_memory"), ToolClass::Internal);
+        assert_eq!(class_of("fetch_url"), ToolClass::Read);
+        assert_eq!(class_of("browser_read"), ToolClass::Read);
+        assert_eq!(class_of("web_search"), ToolClass::Read);
     }
 
     #[test]
