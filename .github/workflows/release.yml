@@ -1,9 +1,26 @@
 name: Release
 
 on:
-  workflow_dispatch:
+  # A tag is the release's identity: v1.2.3 is created once and the installers
+  # hang off it. Pushing one is the normal path.
   push:
     tags: ["v*"]
+  # A manual run has no tag to read. Without being told one, this fell back to
+  # github.ref_name — "main" on a branching push — and asked GitHub to create a
+  # release tagged main.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release, e.g. v0.1.0"
+        required: true
+        type: string
+
+# The automatic GITHUB_TOKEN is read-only in this repository
+# (default_workflow_permissions: read), and creating a release is a write. The
+# build succeeded and only the last step failed with "Resource not accessible by
+# integration" — this is the line that grants it.
+permissions:
+  contents: write
 
 jobs:
   bundle:
@@ -46,8 +63,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "DeskSeek ${{ github.ref_name }}"
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: "DeskSeek ${{ inputs.tag || github.ref_name }}"
           releaseBody: "See the assets below for installers. Windows is the tested target."
           releaseDraft: true
           prerelease: false
