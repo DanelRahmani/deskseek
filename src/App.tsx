@@ -71,7 +71,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /help";
+  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -485,6 +485,10 @@ export default function App() {
             if (chatId) await exportChat(chatId);
             else setError("Open a chat to export.");
             return;
+          case "/rewind":
+            if (chatId) await rewind(chatId);
+            else setError("Open a chat to undo.");
+            return;
           case "/compact": {
             if (!chatId) {
               setError("Nothing to compact yet.");
@@ -664,6 +668,24 @@ export default function App() {
     }
   }, []);
 
+  // Put back the files the agent's last run changed. One run at a time, and it
+  // names what it restored rather than claiming success silently.
+  const rewind = useCallback(async (chatId: string) => {
+    try {
+      const paths = await api.rewindLastRun(chatId);
+      if (paths.length === 0) {
+        setNotice("Nothing to undo — this chat has no recorded file changes.");
+        return;
+      }
+      const names = paths.map((path) => path.split(/[\\/]/).pop() ?? path);
+      setNotice(
+        `Put back ${names.length} file${names.length === 1 ? "" : "s"}: ${names.join(", ")}`,
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
   // results.
@@ -724,9 +746,12 @@ export default function App() {
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
           return;
+        case "rewind":
+          if (activeIdRef.current) void rewind(activeIdRef.current);
+          return;
       }
     },
-    [chatsById, exportChat, newChat, selectChat, toggleSplit],
+    [chatsById, exportChat, newChat, rewind, selectChat, toggleSplit],
   );
 
   // One window listener, resolved by the pure map in lib/shortcuts.ts. Every

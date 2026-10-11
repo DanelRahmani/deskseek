@@ -27,9 +27,11 @@ export function buildPalette(
     { id: "files", label: "Show or hide the file tree", hint: "Action" },
     { id: "split", label: "Split into two panes", hint: "Action" },
   ];
-  // Exporting needs something to export.
+  // Exporting needs something to export; undoing needs something to undo, which
+  // is also only true once a chat is open.
   if (hasChat) {
     items.push({ id: "export", label: "Export this chat to Markdown", hint: "Action" });
+    items.push({ id: "rewind", label: "Undo the agent's last file changes", hint: "Action" });
   }
   for (const chat of chats) {
     items.push({

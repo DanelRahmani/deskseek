@@ -97,6 +97,8 @@ export interface Settings {
   browserPath: string;
   /** Permission mode new chats start in. */
   permissionMode: PermissionMode;
+  /** Stop a run after it has spent this many USD. 0 disables the limit. */
+  costLimitUsd: number;
   /** Where shell commands run. `auto` takes the strongest rung this machine can reach. */
   sandbox: SandboxMode;
   /** Image the Docker rung runs commands in. It must carry the workspace's toolchain. */

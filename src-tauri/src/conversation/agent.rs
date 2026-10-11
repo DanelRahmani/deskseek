@@ -586,6 +586,7 @@ async fn run_tool(
     ws: &std::path::Path,
     cancel: &Cancel,
     plan: &sandbox_exec::Plan,
+    run_id: &str,
 ) -> Result<String, String> {
     // The automation browser is stateful and shared, so it is handled here
     // rather than being rebuilt per call. `browser_read` is the stateless
@@ -716,6 +717,27 @@ async fn run_tool(
         return docs::execute(name, args, &dir, &settings.browser_path).await;
     }
 
+    // Before a run changes a file, its current content is recorded so the whole
+    // run can be undone rather than unpicked by hand. Only the agent's own write
+    // tools are covered: a shell command that rewrites files is invisible here.
+    // ponytail: cover `run_command` too if that matters — it would mean watching
+    // the workspace for changes rather than knowing which paths a tool touched.
+    if matches!(name, "write_file" | "edit_file") {
+        if let Some(path) = args.get("path").and_then(Value::as_str) {
+            if let Ok(full) = tools::sandbox::resolve(ws, path) {
+                let previous = std::fs::read_to_string(&full).ok();
+                let conn = state.db.lock().unwrap();
+                let _ = db::record_checkpoint(
+                    &conn,
+                    chat_id,
+                    run_id,
+                    &full.to_string_lossy(),
+                    previous.as_deref(),
+                );
+            }
+        }
+    }
+
     exec::execute(name, args, ws, cancel, plan).await
 }
 
@@ -747,6 +769,9 @@ pub async fn run(
         &settings.sandbox_image,
     );
     let mut cost_total = 0.0f64;
+    // Names this run's file checkpoints, so "undo the last run" means this whole
+    // turn and not one round of it.
+    let run_id = uuid::Uuid::new_v4().to_string();
     let mut last_usage = None;
     let mut last_message_id = String::new();
     let mut last_finish: Option<String> = None;
@@ -1002,6 +1027,7 @@ pub async fn run(
                     &ws,
                     &cancel,
                     &plan,
+                    &run_id,
                 )
                 .await
             } else {
@@ -1040,6 +1066,25 @@ pub async fn run(
         }
 
         if cancel.is_cancelled() {
+            break;
+        }
+
+        // The user's own ceiling, checked between rounds rather than after the
+        // run ends: a loop of rounds is exactly where a bill runs away. Stopping
+        // here — once every tool result is recorded — leaves a history the next
+        // request can still be built from, which breaking mid-round would not.
+        if models::over_budget(cost_total, settings.cost_limit_usd) {
+            let _ = app.emit(
+                EVENT_GUARD,
+                serde_json::json!({
+                    "chatId": chat_id,
+                    "escalated": true,
+                    "reason": format!(
+                        "Stopped: this run has spent ${:.4}, at your ${:.2} limit. The work so far is above, and the conversation is intact — raise the limit in Settings to carry on.",
+                        cost_total, settings.cost_limit_usd
+                    ),
+                }),
+            );
             break;
         }
     }

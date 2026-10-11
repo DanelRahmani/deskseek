@@ -790,6 +790,19 @@ export function SettingsDialog({
                 MEMORY.md, enabled skills and any matching scoped instructions are appended to this
                 automatically.
               </p>
+              <label className="block text-xs text-neutral-500">Stop a run after spending (USD)</label>
+              <input
+                type="number"
+                min={0}
+                step={0.5}
+                className={inputCls}
+                value={form.costLimitUsd}
+                onChange={(e) => set("costLimitUsd", Number(e.target.value) || 0)}
+              />
+              <p className="text-[11px] text-neutral-600">
+                Checked between steps of a run, so a loop cannot spend past it. 0 turns the limit
+                off, and the sidebar already shows what each conversation has spent.
+              </p>
             </>
           )}
 

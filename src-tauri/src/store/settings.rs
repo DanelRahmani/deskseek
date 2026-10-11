@@ -100,6 +100,11 @@ pub struct Settings {
     /// Permission mode new chats start in: `manual` | `auto` | `skip`.
     #[serde(default = "default_permission_mode")]
     pub permission_mode: String,
+    /// Stop a run once it has spent this many dollars. 0 disables the limit.
+    /// Checked between rounds, because a loop of rounds is where a bill runs
+    /// away — see `conversation::agent::run`.
+    #[serde(default)]
+    pub cost_limit_usd: f64,
     /// Where shell commands run: `auto` (the strongest rung available) |
     /// `host` | `docker` | `wsl`. Only the first two of those are isolation.
     #[serde(default = "default_sandbox")]
@@ -165,6 +170,7 @@ impl Default for Settings {
             searxng_url: String::new(),
             browser_path: String::new(),
             permission_mode: default_permission_mode(),
+            cost_limit_usd: 0.0,
             sandbox: default_sandbox(),
             sandbox_image: default_sandbox_image(),
             computer_use: false,

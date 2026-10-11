@@ -132,6 +132,14 @@ pub fn search_messages(
     db::search_messages(&conn, &query, HITS).map_err(|e| e.to_string())
 }
 
+/// Undo the file changes of the most recent agent run in this chat, and report
+/// which files were put back. An empty list means there was nothing to undo.
+#[tauri::command]
+pub fn rewind_last_run(state: State<'_, AppState>, chat_id: String) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().unwrap();
+    db::rewind_last_run(&conn, &chat_id)
+}
+
 #[tauri::command]
 pub fn rename_chat(state: State<'_, AppState>, chat_id: String, title: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();

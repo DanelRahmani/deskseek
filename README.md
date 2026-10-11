@@ -69,6 +69,9 @@ Both sections are functional:
 - Approximate **context-window meter** in the header
 - **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
   real usage as every turn ends
+- **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
+  ends a run between steps once its cost crosses the figure, and says so in the chat rather than
+  going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
 
 **Coding**
 
@@ -87,6 +90,12 @@ Both sections are functional:
 - A **task list** the model keeps up to date as it works — see the chat section above
 - Tool cards **open themselves when a call fails**, so a broken build is readable without a
   click
+- **Undo a run** — `/rewind` (or the palette) puts back the files the agent's last run changed:
+  before `write_file` or `edit_file` touches a file, its previous content is recorded, so an edit
+  is restored and a file the run created is removed again. It undoes **one run at a time, newest
+  first**, because an older run's pre-images are only correct once the runs after it have been
+  undone. Two honest limits: a shell command that rewrites files is invisible to it (`npm run
+  build` is not undone), and it says how many files it put back rather than claiming success
 
 **Approvals, permission modes and stopping a run**
 

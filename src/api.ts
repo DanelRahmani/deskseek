@@ -59,6 +59,8 @@ export const api = {
   getMessages: (chatId: string) => invoke<MessageRow[]>("get_messages", { chatId }),
   /** Search what was said, across every conversation. */
   searchMessages: (query: string) => invoke<MessageHit[]>("search_messages", { query }),
+  /** Undo the last agent run's file changes; returns the paths put back. */
+  rewindLastRun: (chatId: string) => invoke<string[]>("rewind_last_run", { chatId }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>

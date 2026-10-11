@@ -74,6 +74,7 @@ export const COMMANDS = [
   { name: "/settings", description: "Open settings" },
   { name: "/new", description: "Start a new chat" },
   { name: "/export", description: "Write this chat to a Markdown file" },
+  { name: "/rewind", description: "Undo the agent's last file changes" },
   { name: "/help", description: "List the commands" },
 ];
 

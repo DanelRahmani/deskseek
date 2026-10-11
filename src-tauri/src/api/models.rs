@@ -71,6 +71,15 @@ pub fn cost_usd(model: &str, usage: &Usage, peak: bool) -> Option<f64> {
     )
 }
 
+/// Whether a run has crossed the user's spend limit.
+///
+/// A limit of 0 means "no limit" rather than "stop at once", which is the
+/// default and the only value nobody has to think about. Reaching the limit
+/// exactly counts as crossing it: a limit you can sit on is not a limit.
+pub fn over_budget(spent: f64, limit: f64) -> bool {
+    limit > 0.0 && spent >= limit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -108,6 +117,14 @@ mod tests {
         };
         let c = cost_usd("deepseek-flash", &usage, false).unwrap();
         assert!((c - 0.15).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn a_zero_limit_is_no_limit() {
+        assert!(!over_budget(5.0, 0.0));
+        assert!(!over_budget(0.0, 1.0));
+        assert!(over_budget(1.0, 1.0), "the limit itself counts as reached");
+        assert!(over_budget(2.5, 1.0));
     }
 
     #[test]

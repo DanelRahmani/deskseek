@@ -195,6 +195,26 @@ CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
     VALUES ('delete', old.rowid, old.content);
     INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
 END;
+
+-- Pre-images of the files an agent run is about to change, so a run that went
+-- wrong can be undone instead of unpicked by hand. `previous` is the content
+-- before the run touched the file, or NULL when the file did not exist yet — a
+-- rewind deletes a file the run created.
+--
+-- One row per (run, path): rewinding means back to where the run started, not to
+-- an intermediate step, so a second write to the same file in one run must not
+-- overwrite the earlier pre-image. That is what the UNIQUE key is for.
+CREATE TABLE IF NOT EXISTS file_checkpoints (
+    id         TEXT PRIMARY KEY,
+    chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    run_id     TEXT NOT NULL,
+    path       TEXT NOT NULL,
+    previous   TEXT,
+    created_at INTEGER NOT NULL,
+    UNIQUE (run_id, path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_chat ON file_checkpoints(chat_id, created_at);
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -903,6 +923,96 @@ pub fn get_artifact_detail(
     })
 }
 
+// ------------------------------------------------------------- checkpoints
+
+/// Records a file's pre-image before an agent run changes it.
+///
+/// Only the first write to a path within a run is kept (the UNIQUE key plus
+/// INSERT OR IGNORE), because a rewind means back to where the run started — a
+/// later write in the same run must not replace the earlier pre-image with an
+/// intermediate state.
+pub fn record_checkpoint(
+    conn: &Connection,
+    chat_id: &str,
+    run_id: &str,
+    path: &str,
+    previous: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO file_checkpoints (id, chat_id, run_id, path, previous, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            chat_id,
+            run_id,
+            path,
+            previous,
+            now_ts()
+        ],
+    )?;
+    Ok(())
+}
+
+/// Undoes the most recent run's file changes and returns what was restored.
+///
+/// One run at a time, newest first, and it says so: the pre-images of an older
+/// run are only correct once the runs after it have been undone, so jumping
+/// straight back would promise a state that cannot be reconstructed. An empty
+/// result means there was nothing left to undo.
+///
+pub fn rewind_last_run(conn: &Connection, chat_id: &str) -> Result<Vec<String>, String> {
+    let run_id: Option<String> = conn
+        .query_row(
+            "SELECT run_id FROM file_checkpoints WHERE chat_id = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
+            [chat_id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some(run_id) = run_id else {
+        return Ok(Vec::new());
+    };
+
+    let rows: Vec<(String, Option<String>)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT path, previous FROM file_checkpoints
+                 WHERE run_id = ?1 ORDER BY created_at ASC, rowid ASC",
+            )
+            .map_err(|e| e.to_string())?;
+        let mapped = stmt
+            .query_map([&run_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?;
+        mapped.collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?
+    };
+
+    let mut restored = Vec::new();
+    for (path, previous) in rows {
+        let file = std::path::Path::new(&path);
+        match previous {
+            // The run created it, so undoing means taking it away again. A file
+            // already gone is not an error: the goal state is "absent".
+            None => match std::fs::remove_file(file) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(format!("could not remove {path}: {e}")),
+            },
+            Some(content) => {
+                if let Some(parent) = file.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                std::fs::write(file, content)
+                    .map_err(|e| format!("could not restore {path}: {e}"))?;
+            }
+        }
+        restored.push(path);
+    }
+    conn.execute("DELETE FROM file_checkpoints WHERE run_id = ?1", [&run_id])
+        .map_err(|e| e.to_string())?;
+    Ok(restored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1020,6 +1130,71 @@ mod tests {
         for raw in ["\"stars\"", "a - b", "a:b", "(a)", "**"] {
             search_messages(&conn, raw, 10).unwrap();
         }
+    }
+
+    #[test]
+    fn a_rewind_restores_a_file_and_deletes_the_one_the_run_created() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
+            .unwrap();
+        let dir = std::env::temp_dir().join(format!("deskseek-rewind-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let edited = dir.join("main.rs");
+        let created = dir.join("new.rs");
+        std::fs::write(&edited, "original").unwrap();
+
+        // A run that rewrites one file and creates another.
+        record_checkpoint(&conn, &chat.id, "run-1", &edited.to_string_lossy(), Some("original"))
+            .unwrap();
+        record_checkpoint(&conn, &chat.id, "run-1", &created.to_string_lossy(), None).unwrap();
+        std::fs::write(&edited, "changed").unwrap();
+        std::fs::write(&created, "brand new").unwrap();
+
+        let restored = rewind_last_run(&conn, &chat.id).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(std::fs::read_to_string(&edited).unwrap(), "original");
+        assert!(!created.exists(), "a file the run created is removed again");
+        // The run is spent, so a second rewind has nothing to do.
+        assert!(rewind_last_run(&conn, &chat.id).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_the_first_pre_image_of_a_run_is_kept() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", None, "m", true, "high", "manual").unwrap();
+        // Two writes to one path in the same run: the first is the pre-image of
+        // the run, and the second must not replace it.
+        record_checkpoint(&conn, &chat.id, "run-1", "/tmp/f", Some("first")).unwrap();
+        record_checkpoint(&conn, &chat.id, "run-1", "/tmp/f", Some("second")).unwrap();
+        let kept: Option<String> = conn
+            .query_row("SELECT previous FROM file_checkpoints WHERE run_id = 'run-1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(kept.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn a_rewind_undoes_one_run_at_a_time() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", None, "m", true, "high", "manual").unwrap();
+        let dir = std::env::temp_dir().join(format!("deskseek-rewind2-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a");
+        let b = dir.join("b");
+        record_checkpoint(&conn, &chat.id, "run-1", &a.to_string_lossy(), None).unwrap();
+        record_checkpoint(&conn, &chat.id, "run-2", &b.to_string_lossy(), None).unwrap();
+        // Newest run first, and only that one.
+        assert_eq!(
+            rewind_last_run(&conn, &chat.id).unwrap(),
+            vec![b.to_string_lossy().to_string()]
+        );
+        assert_eq!(
+            rewind_last_run(&conn, &chat.id).unwrap(),
+            vec![a.to_string_lossy().to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
