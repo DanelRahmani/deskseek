@@ -38,6 +38,17 @@ interface Props {
 
 const EFFORTS = ["low", "high", "max"];
 
+/** Kept in sync with the switch in App.tsx's send(). */
+const COMMANDS = [
+  { name: "/compact", description: "Summarise the chat and reset the context" },
+  { name: "/memory", description: "Open the memory panel" },
+  { name: "/skills", description: "Choose skills for this chat" },
+  { name: "/folder", description: "Pick the folder for a coding task" },
+  { name: "/settings", description: "Open settings" },
+  { name: "/new", description: "Start a new chat" },
+  { name: "/help", description: "List the commands" },
+];
+
 function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -66,9 +77,26 @@ export function ChatView({
   onDecideApproval,
 }: Props) {
   const [draft, setDraft] = useState("");
+  const [cmdIndex, setCmdIndex] = useState(0);
+  // Tracks which draft the user dismissed the menu for, so Esc stays dismissed
+  // until they type something new.
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const commandQuery = draft.startsWith("/") && !draft.includes(" ") ? draft : null;
+  const filtered = commandQuery
+    ? COMMANDS.filter((command) => command.name.startsWith(commandQuery.toLowerCase()))
+    : [];
+  const menuOpen = filtered.length > 0 && dismissedFor !== draft;
+
+  const runCommand = (name: string) => {
+    setDraft("");
+    setDismissedFor(null);
+    setCmdIndex(0);
+    onSend(name);
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -82,6 +110,28 @@ export function ChatView({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (menuOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCmdIndex((i) => (i + 1) % filtered.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCmdIndex((i) => (i - 1 + filtered.length) % filtered.length);
+        return;
+      }
+      if (e.key === "Tab" || e.key === "Enter") {
+        e.preventDefault();
+        runCommand(filtered[Math.min(cmdIndex, filtered.length - 1)].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setDismissedFor(draft);
+        return;
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
@@ -280,6 +330,27 @@ export function ChatView({
           )}
 
           {notice && <div className="pb-1 text-[11px] text-sky-400">{notice}</div>}
+
+          {menuOpen && (
+            <div className="mb-2 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900">
+              {filtered.map((command, index) => (
+                <button
+                  key={command.name}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    runCommand(command.name);
+                  }}
+                  onMouseEnter={() => setCmdIndex(index)}
+                  className={`flex w-full items-baseline gap-3 px-3 py-2 text-left text-xs transition ${
+                    index === cmdIndex ? "bg-neutral-800 text-neutral-100" : "text-neutral-400"
+                  }`}
+                >
+                  <span className="font-mono">{command.name}</span>
+                  <span className="truncate text-neutral-500">{command.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
 
           <div className="flex items-end gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 focus-within:border-neutral-700">
             <input

@@ -83,7 +83,7 @@ export interface SkillView {
   enabled: boolean;
 }
 
-export type ToolClassName = "read" | "write" | "command";
+export type ToolClassName = "read" | "internal" | "write" | "command";
 
 export interface DeltaEvent {
   chatId: string;

@@ -28,6 +28,8 @@ pub fn run() {
             let root = app.path().app_data_dir()?;
             let paths = store::paths::AppPaths::new(root);
             paths.ensure()?;
+            // Older builds used a lowercase memory.md — keep those facts.
+            paths.migrate_legacy();
             let conn = store::db::open(&paths.db_file())?;
             let settings = store::settings::load(&paths.settings_file());
             let http = api::client::build_http();
@@ -72,6 +74,7 @@ pub fn run() {
             commands::summarize_chat,
             commands::compact_chat,
             commands::documents_dir,
+            commands::chatlog_dir,
             commands::get_summary,
             commands::list_skills,
             commands::set_chat_skills,

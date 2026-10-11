@@ -49,7 +49,9 @@ pub fn append(path: &Path, entries: &[String]) -> io::Result<()> {
 /// the code that parses its output.
 pub const SUMMARY_SYSTEM_PROMPT: &str = "You maintain a long-term memory file for a user's \
 assistant. Given a chat transcript, reply with ONLY a JSON object of the shape \
-{\"summary\": string, \"memory\": string[]}.\n\
+{\"topic\": string, \"summary\": string, \"memory\": string[]}.\n\
+`topic` is a short label of two to five words for the conversation, in Title Case, \
+with no punctuation — it becomes part of a file name.\n\
 `summary` is one or two sentences describing what the chat was about.\n\
 `memory` lists durable facts worth remembering in future chats: the user's \
 preferences, names, ongoing projects, standing constraints. Prefer zero entries \

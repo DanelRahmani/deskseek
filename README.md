@@ -24,8 +24,10 @@ Both sections are functional:
 - **Agentic by default** — the assistant can read, search, write and edit files in your
   documents folder (default `…/documents`, configurable), so it can produce a document for you
   and save it rather than only printing it
-- **Memory** — a global `memory.md` injected into every request, editable in-app; *Summarise
-  chat* proposes entries you can accept or reject
+- **Memory** — a single fixed file `MEMORY.md` injected into every request and editable in-app.
+  The model writes to it with a `save_memory` tool, so it never invents a file name or asks to
+  read memory it was already given. *Summarise chat* proposes entries you can accept or reject
+- **Chat log** — each summary is also written to `CHATLOG/YYYYMMDD-topic.md`
 - **Skills** — drop-in instruction files at `skills/<id>/SKILL.md`, toggled per chat
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)

@@ -208,19 +208,28 @@ pub fn reject_proposals(state: State<'_, AppState>, ids: Vec<String>) -> Result<
     db::set_proposal_status(&conn, &ids, "rejected").map_err(|e| e.to_string())
 }
 
-/// Returns `summary\u{1f}<proposal count>` so the UI can show both without a
-/// second round trip.
+/// Returns `summary\u{1f}<proposal count>\u{1f}<topic>\u{1f}<chatlog path>`.
 #[tauri::command]
 pub async fn summarize_chat(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
-    let (summary, created) = summarize::summarize_chat(&state, &chat_id, true).await?;
-    Ok(format!("{summary}\u{1f}{created}"))
+    let (summary, created, chatlog) = summarize::summarize_chat(&state, &chat_id, true).await?;
+    let (topic, path) = match chatlog {
+        Some(joined) => {
+            let mut parts = joined.splitn(2, '\u{1f}');
+            (
+                parts.next().unwrap_or_default().to_string(),
+                parts.next().unwrap_or_default().to_string(),
+            )
+        }
+        None => (String::new(), String::new()),
+    };
+    Ok(format!("{summary}\u{1f}{created}\u{1f}{topic}\u{1f}{path}"))
 }
 
 /// Replaces the conversation with a summary of itself, so a long chat keeps
 /// working without hitting the context limit.
 #[tauri::command]
 pub async fn compact_chat(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
-    let (summary, _) = summarize::summarize_chat(&state, &chat_id, false).await?;
+    let (summary, _, _) = summarize::summarize_chat(&state, &chat_id, false).await?;
     {
         let conn = state.db.lock().unwrap();
         db::delete_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
@@ -242,6 +251,11 @@ pub fn documents_dir(state: State<'_, AppState>) -> String {
         std::path::PathBuf::from(configured)
     };
     dir.display().to_string()
+}
+
+#[tauri::command]
+pub fn chatlog_dir(state: State<'_, AppState>) -> String {
+    state.paths.chatlog_dir().display().to_string()
 }
 
 #[tauri::command]

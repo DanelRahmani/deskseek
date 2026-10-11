@@ -15,6 +15,9 @@ use crate::api::types::Tool;
 pub enum ToolClass {
     /// Runs without asking — reads only.
     Read,
+    /// Handled by the app itself and never sandboxed or prompted — writing
+    /// MEMORY.md is the only one.
+    Internal,
     /// Modifies the workspace; the user approves each call.
     Write,
     /// Executes something; the user approves each call.
@@ -102,13 +105,29 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "save_memory",
+                "Append durable facts about the user to their MEMORY.md. This is the only way to remember something across chats; never create or rename files for memory.",
+                params(
+                    json!({
+                        "entries": {
+                            "type": "array",
+                            "description": "One self-contained sentence per fact. No bullets, no dates.",
+                            "items": { "type": "string" }
+                        }
+                    }),
+                    &["entries"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
                 "run_command",
                 "Run a shell command in the workspace root. Use for builds, tests and scripts.",
                 params(json!({"command": {"type": "string", "description": "The command line to run"}}), &["command"]),
             ),
             ToolClass::Command,
-        ),
-        (
+        ),        (
             Tool::function("git_status", "Show the working tree status.", params(json!({}), &[])),
             ToolClass::Read,
         ),
@@ -179,6 +198,7 @@ mod tests {
         assert_eq!(class_of("edit_file"), ToolClass::Write);
         assert_eq!(class_of("run_command"), ToolClass::Command);
         assert_eq!(class_of("git_push"), ToolClass::Command);
+        assert_eq!(class_of("save_memory"), ToolClass::Internal);
     }
 
     #[test]
@@ -203,6 +223,7 @@ mod tests {
             .collect();
         assert!(names.contains(&"write_file".to_string()));
         assert!(names.contains(&"read_file".to_string()));
+        assert!(names.contains(&"save_memory".to_string()));
         assert!(!names.contains(&"run_command".to_string()));
         assert!(!names.iter().any(|n| n.starts_with("git_")));
     }

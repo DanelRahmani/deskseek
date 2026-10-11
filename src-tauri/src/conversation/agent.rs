@@ -112,6 +112,19 @@ fn build_system(
         base.push_str(&format!("\n\n# {}\n\n{}", instruction.name, instruction.body));
     }
 
+    // Spell out how memory works so the model never guesses at a file name or
+    // asks to read something it has already been given.
+    base.push_str(&format!(
+        "\n\n# Memory\n\n\
+Your long-term memory is the single file MEMORY.md at:\n\n    {}\n\n\
+Its current contents are included below under \"Memory\" — they have already been read for you, \
+so never ask to read it and never open it with a tool. That file is the only place memories are \
+kept; do not create, rename or move files for memory. When the user tells you something durable \
+about themselves, or asks you to remember something, call `save_memory`. Do not ask for \
+permission first — the app handles it.",
+        state.paths.memory_file().display()
+    ));
+
     let enabled = {
         let conn = state.db.lock().unwrap();
         db::get_chat_skills(&conn, &chat.id).unwrap_or_default()
@@ -178,6 +191,43 @@ async fn approve(
         }
         other => other.allows(),
     }
+}
+
+/// Executes a tool. `save_memory` is handled by the app itself: it writes the
+/// memory file, which lives outside any workspace and is never sandboxed.
+async fn run_tool(
+    state: &AppState,
+    name: &str,
+    args: &Value,
+    ws: &std::path::Path,
+) -> Result<String, String> {
+    if name == "save_memory" {
+        let entries: Vec<String> = args
+            .get("entries")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if entries.is_empty() {
+            return Err("save_memory needs at least one non-empty entry".to_string());
+        }
+
+        crate::memory::append(&state.paths.memory_file(), &entries).map_err(|e| e.to_string())?;
+        return Ok(format!(
+            "Saved {} entr{} to MEMORY.md.",
+            entries.len(),
+            if entries.len() == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    exec::execute(name, args, ws).await
 }
 
 pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), String> {
@@ -324,11 +374,11 @@ pub async fn run(app: AppHandle, state: &AppState, chat_id: &str) -> Result<(), 
                 }),
             );
 
-            let allowed = class == ToolClass::Read
+            let allowed = matches!(class, ToolClass::Read | ToolClass::Internal)
                 || approve(&app, state, chat_id, &ws, &name, class, &args).await;
 
             let result = if allowed {
-                exec::execute(&name, &args, &ws).await
+                run_tool(state, &name, &args, &ws).await
             } else {
                 Err("The user denied this action. Do not retry it — ask them what they would prefer.".to_string())
             };

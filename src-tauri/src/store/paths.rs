@@ -20,8 +20,15 @@ impl AppPaths {
         self.root.join("settings.json")
     }
 
+    /// The one and only memory file. Fixed name, always injected into the
+    /// system prompt — the model never has to look for it.
     pub fn memory_file(&self) -> PathBuf {
-        self.root.join("memory.md")
+        self.root.join("MEMORY.md")
+    }
+
+    /// One markdown file per summarised conversation, `YYYYMMDD-topic.md`.
+    pub fn chatlog_dir(&self) -> PathBuf {
+        self.root.join("CHATLOG")
     }
 
     pub fn db_file(&self) -> PathBuf {
@@ -38,7 +45,19 @@ impl AppPaths {
     }
 
     pub fn ensure(&self) -> io::Result<()> {
-        std::fs::create_dir_all(&self.root)
+        std::fs::create_dir_all(&self.root)?;
+        std::fs::create_dir_all(self.chatlog_dir())?;
+        Ok(())
+    }
+
+    /// Earlier builds used a lowercase `memory.md`; rename it in place so no
+    /// remembered facts are lost.
+    pub fn migrate_legacy(&self) {
+        let old = self.root.join("memory.md");
+        let new = self.memory_file();
+        if old.exists() && !new.exists() {
+            let _ = std::fs::rename(old, new);
+        }
     }
 }
 
@@ -50,6 +69,37 @@ mod tests {
     fn files_hang_off_the_root() {
         let p = AppPaths::new(PathBuf::from("/data"));
         assert!(p.db_file().starts_with("/data"));
-        assert_eq!(p.memory_file().file_name().unwrap(), "memory.md");
+        assert_eq!(p.memory_file().file_name().unwrap(), "MEMORY.md");
+        assert_eq!(p.chatlog_dir().file_name().unwrap(), "CHATLOG");
+    }
+
+    #[test]
+    fn a_legacy_lowercase_memory_file_keeps_its_content() {
+        let root = std::env::temp_dir().join(format!("deskseek-paths-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("memory.md"), "# Memory\n\n- old fact\n").unwrap();
+
+        let paths = AppPaths::new(root.clone());
+        paths.migrate_legacy();
+
+        // On a case-insensitive filesystem (Windows, macOS) `memory.md` and
+        // `MEMORY.md` are the *same* file, so there is nothing to rename — what
+        // matters either way is that the remembered facts survive.
+        let kept = std::fs::read_to_string(paths.memory_file()).unwrap();
+        assert!(kept.contains("old fact"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn migration_does_not_clobber_an_existing_memory_file() {
+        let root = std::env::temp_dir().join(format!("deskseek-paths-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("memory.md"), "old").unwrap();
+        std::fs::write(root.join("MEMORY.md"), "new").unwrap();
+
+        AppPaths::new(root.clone()).migrate_legacy();
+
+        assert_eq!(std::fs::read_to_string(root.join("MEMORY.md")).unwrap(), "new");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

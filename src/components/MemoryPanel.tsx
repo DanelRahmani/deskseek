@@ -82,8 +82,11 @@ export function MemoryPanel({ chatId, onClose, onChanged }: Props) {
     setStatus("Summarising…");
     try {
       const raw = await api.summarizeChat(chatId);
-      const [summary, count] = raw.split("\u001f");
-      setStatus(`${summary} — ${count} suggestion(s) below.`);
+      const [summary, count, topic, logPath] = raw.split("\u001f");
+      setStatus(
+        `${summary} — ${count} suggestion(s) below.` +
+          (logPath ? ` Saved CHATLOG/${logPath.split(/[\\/]/).pop()} (${topic}).` : ""),
+      );
       await reload();
       onChanged();
     } catch (e) {
