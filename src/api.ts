@@ -1,14 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  ApprovalEvent,
+  Attachment,
   ChatRow,
   DeltaEvent,
   DoneEvent,
   ErrorEvent,
+  MemoryProposal,
   MessageRow,
   ModelInfo,
   SectionKind,
   Settings,
+  SkillView,
+  ToolEvent,
 } from "./types";
 
 export const api = {
@@ -31,12 +36,48 @@ export const api = {
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
+  setChatWorkspace: (chatId: string, workspace: string | null) =>
+    invoke<void>("set_chat_workspace", { chatId, workspace }),
 
-  sendMessage: (chatId: string, text: string) => invoke<void>("send_message", { chatId, text }),
+  getMemory: () => invoke<string | null>("get_memory"),
+  setMemory: (body: string) => invoke<void>("set_memory", { body }),
+  memoryPath: () => invoke<string>("memory_path"),
+  appendMemory: (entries: string[]) => invoke<void>("append_memory", { entries }),
+
+  listProposals: (chatId: string, status?: string) =>
+    invoke<MemoryProposal[]>("list_proposals", { chatId, status: status ?? null }),
+  acceptProposals: (ids: string[]) => invoke<number>("accept_proposals", { ids }),
+  rejectProposals: (ids: string[]) => invoke<void>("reject_proposals", { ids }),
+  summarizeChat: (chatId: string) => invoke<string>("summarize_chat", { chatId }),
+  compactChat: (chatId: string) => invoke<string>("compact_chat", { chatId }),
+
+  listSkills: (chatId?: string) => invoke<SkillView[]>("list_skills", { chatId: chatId ?? null }),
+  setChatSkills: (chatId: string, skillIds: string[]) =>
+    invoke<void>("set_chat_skills", { chatId, skillIds }),
+
+  respondApproval: (requestId: string, decision: string) =>
+    invoke<boolean>("respond_approval", { requestId, decision }),
+  listToolPermissions: (workspace: string) =>
+    invoke<string[]>("list_tool_permissions", { workspace }),
+  revokeToolPermission: (workspace: string, tool: string) =>
+    invoke<void>("revoke_tool_permission", { workspace, tool }),
+
+  documentsDir: () => invoke<string>("documents_dir"),
+
+  sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
+    invoke<void>("send_message", { chatId, text, attachments }),
 };
 
 export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {
   return listen<DeltaEvent>("chat-delta", (event) => handler(event.payload));
+}
+
+export function onTool(handler: (e: ToolEvent) => void): Promise<UnlistenFn> {
+  return listen<ToolEvent>("chat-tool", (event) => handler(event.payload));
+}
+
+export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {
+  return listen<ApprovalEvent>("chat-approval", (event) => handler(event.payload));
 }
 
 export function onDone(handler: (e: DoneEvent) => void): Promise<UnlistenFn> {

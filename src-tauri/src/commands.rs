@@ -1,36 +1,16 @@
 //! Tauri commands: the whole surface the frontend talks to.
 
-use tauri::{AppHandle, Emitter, State};
+use serde::Serialize;
+use tauri::{AppHandle, State};
 
-use crate::api::client::{Client, StreamEvent};
 use crate::api::models::{self, ModelInfo};
-use crate::api::types::{ChatRequest, StreamOptions, Thinking};
-use crate::conversation::assemble::{build_messages, system_with_memory, Turn};
+use crate::api::types::Attachment;
+use crate::approvals::Decision;
+use crate::conversation::{agent, summarize};
+use crate::memory;
+use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
 use crate::AppState;
-
-const EVENT_DELTA: &str = "chat-delta";
-const EVENT_DONE: &str = "chat-done";
-const EVENT_ERROR: &str = "chat-error";
-
-fn to_turn(m: &db::MessageRow) -> Turn {
-    Turn {
-        role: m.role.clone(),
-        content: m.content.clone(),
-        reasoning_content: m.reasoning_content.clone(),
-        tool_calls: m
-            .tool_calls_json
-            .as_ref()
-            .and_then(|j| serde_json::from_str(j).ok()),
-        tool_call_id: m.tool_call_id.clone(),
-    }
-}
-
-fn read_memory(state: &AppState) -> Option<String> {
-    std::fs::read_to_string(state.paths.memory_file())
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-}
 
 fn title_from(text: &str) -> String {
     let line = text.lines().next().unwrap_or("").trim();
@@ -88,7 +68,7 @@ pub fn clear_api_key() -> Result<(), String> {
 pub async fn test_connection(state: State<'_, AppState>) -> Result<(), String> {
     let key = keychain::get_api_key()?.ok_or("No API key set")?;
     let base_url = state.settings.lock().unwrap().base_url.clone();
-    let client = Client::new(state.http.clone(), key, base_url);
+    let client = crate::api::client::Client::new(state.http.clone(), key, base_url);
     client.check_auth().await.map_err(|e| e.to_string())
 }
 
@@ -159,6 +139,187 @@ pub fn set_chat_model(
     db::set_chat_model(&conn, &chat_id, &model, thinking, &effort).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn set_chat_workspace(
+    state: State<'_, AppState>,
+    chat_id: String,
+    workspace: Option<String>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_workspace(&conn, &chat_id, workspace.as_deref()).map_err(|e| e.to_string())
+}
+
+// ----------------------------------------------------------------- memory
+
+#[tauri::command]
+pub fn get_memory(state: State<'_, AppState>) -> Option<String> {
+    memory::read(&state.paths.memory_file())
+}
+
+#[tauri::command]
+pub fn set_memory(state: State<'_, AppState>, body: String) -> Result<(), String> {
+    memory::write(&state.paths.memory_file(), &body).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn memory_path(state: State<'_, AppState>) -> String {
+    state.paths.memory_file().display().to_string()
+}
+
+#[tauri::command]
+pub fn append_memory(state: State<'_, AppState>, entries: Vec<String>) -> Result<(), String> {
+    memory::append(&state.paths.memory_file(), &entries).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn list_proposals(
+    state: State<'_, AppState>,
+    chat_id: String,
+    status: Option<String>,
+) -> Result<Vec<db::MemoryProposalRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_proposals(&conn, &chat_id, status.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn accept_proposals(state: State<'_, AppState>, ids: Vec<String>) -> Result<usize, String> {
+    let rows = {
+        let conn = state.db.lock().unwrap();
+        db::proposals_by_ids(&conn, &ids).map_err(|e| e.to_string())?
+    };
+    let texts: Vec<String> = rows
+        .iter()
+        .filter(|r| r.status == "pending")
+        .map(|r| r.text.clone())
+        .collect();
+
+    memory::append(&state.paths.memory_file(), &texts).map_err(|e| e.to_string())?;
+
+    {
+        let conn = state.db.lock().unwrap();
+        db::set_proposal_status(&conn, &ids, "accepted").map_err(|e| e.to_string())?;
+    }
+    Ok(texts.len())
+}
+
+#[tauri::command]
+pub fn reject_proposals(state: State<'_, AppState>, ids: Vec<String>) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_proposal_status(&conn, &ids, "rejected").map_err(|e| e.to_string())
+}
+
+/// Returns `summary\u{1f}<proposal count>` so the UI can show both without a
+/// second round trip.
+#[tauri::command]
+pub async fn summarize_chat(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    let (summary, created) = summarize::summarize_chat(&state, &chat_id, true).await?;
+    Ok(format!("{summary}\u{1f}{created}"))
+}
+
+/// Replaces the conversation with a summary of itself, so a long chat keeps
+/// working without hitting the context limit.
+#[tauri::command]
+pub async fn compact_chat(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    let (summary, _) = summarize::summarize_chat(&state, &chat_id, false).await?;
+    {
+        let conn = state.db.lock().unwrap();
+        db::delete_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
+        let body = format!(
+            "Context compacted. Summary of the conversation so far:\n\n{summary}\n\nContinue from here."
+        );
+        db::insert_message(&conn, &chat_id, "user", Some(&body), None, None, None, None)
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(summary)
+}
+
+#[tauri::command]
+pub fn documents_dir(state: State<'_, AppState>) -> String {
+    let configured = state.settings.lock().unwrap().documents_dir.clone();
+    let dir = if configured.trim().is_empty() {
+        state.paths.documents_dir()
+    } else {
+        std::path::PathBuf::from(configured)
+    };
+    dir.display().to_string()
+}
+
+#[tauri::command]
+pub fn get_summary(state: State<'_, AppState>, chat_id: String) -> Result<Option<String>, String> {
+    let conn = state.db.lock().unwrap();
+    db::get_summary(&conn, &chat_id).map_err(|e| e.to_string())
+}
+
+// ----------------------------------------------------------------- skills
+
+#[derive(Serialize)]
+pub struct SkillView {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub fn list_skills(state: State<'_, AppState>, chat_id: Option<String>) -> Vec<SkillView> {
+    let enabled: Vec<String> = match chat_id {
+        Some(id) => {
+            let conn = state.db.lock().unwrap();
+            db::get_chat_skills(&conn, &id).unwrap_or_default()
+        }
+        None => Vec::new(),
+    };
+    skills::discover(&state.paths.skills_dir())
+        .into_iter()
+        .map(|s| SkillView {
+            enabled: enabled.contains(&s.id),
+            id: s.id,
+            name: s.name,
+            description: s.description,
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn set_chat_skills(
+    state: State<'_, AppState>,
+    chat_id: String,
+    skill_ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_skills(&conn, &chat_id, &skill_ids).map_err(|e| e.to_string())
+}
+
+// ------------------------------------------------------------ permissions
+
+#[tauri::command]
+pub fn respond_approval(
+    state: State<'_, AppState>,
+    request_id: String,
+    decision: String,
+) -> Result<bool, String> {
+    Ok(state.approvals.respond(&request_id, Decision::parse(&decision)))
+}
+
+#[tauri::command]
+pub fn list_tool_permissions(
+    state: State<'_, AppState>,
+    workspace: String,
+) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_allowed_tools(&conn, &workspace).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn revoke_tool_permission(
+    state: State<'_, AppState>,
+    workspace: String,
+    tool: String,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::revoke_tool(&conn, &workspace, &tool).map_err(|e| e.to_string())
+}
+
 // --------------------------------------------------------------- messaging
 
 #[tauri::command]
@@ -167,111 +328,52 @@ pub async fn send_message(
     state: State<'_, AppState>,
     chat_id: String,
     text: String,
+    attachments: Option<Vec<Attachment>>,
 ) -> Result<(), String> {
-    let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
-    let settings = state.settings.lock().unwrap().clone();
+    keychain::get_api_key()?.ok_or("No API key set")?;
 
     let chat = {
         let conn = state.db.lock().unwrap();
         db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?
     };
+    if chat.kind == "coding" && chat.workspace.is_none() {
+        return Err("Pick a folder for this coding task first.".to_string());
+    }
 
-    // History is read *before* the new user message is stored, so it is not
-    // appended twice by `build_messages`.
-    let history = {
-        let conn = state.db.lock().unwrap();
-        db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?
+    let attachments = attachments.unwrap_or_default();
+    if text.trim().is_empty() && attachments.is_empty() {
+        return Err("Nothing to send.".to_string());
+    }
+    let attachments_json = if attachments.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(&attachments).map_err(|e| e.to_string())?)
     };
-    let turns: Vec<Turn> = history.iter().map(to_turn).collect();
 
     {
         let conn = state.db.lock().unwrap();
-        db::insert_message(&conn, &chat_id, "user", Some(&text), None, None, None)
-            .map_err(|e| e.to_string())?;
+        db::insert_message(
+            &conn,
+            &chat_id,
+            "user",
+            Some(&text),
+            None,
+            None,
+            None,
+            attachments_json.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
         if chat.title == "New chat" {
-            db::rename_chat(&conn, &chat_id, &title_from(&text)).map_err(|e| e.to_string())?;
+            let title = if text.trim().is_empty() {
+                format!("{} attachment(s)", attachments.len())
+            } else {
+                title_from(&text)
+            };
+            db::rename_chat(&conn, &chat_id, &title).map_err(|e| e.to_string())?;
         }
     }
 
-    let system = system_with_memory(&settings.system_prompt, read_memory(&state).as_deref());
-    let messages = build_messages(&system, &turns, &text, false);
-
-    let request = ChatRequest {
-        model: chat.model.clone(),
-        messages,
-        stream: true,
-        stream_options: Some(StreamOptions { include_usage: true }),
-        thinking: Some(Thinking::enabled(chat.thinking)),
-        reasoning_effort: if chat.thinking { Some(chat.effort.clone()) } else { None },
-        max_tokens: None,
-        tools: None,
-    };
-
-    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
-
-    let emit_app = app.clone();
-    let emit_chat = chat_id.clone();
-    let outcome = client
-        .stream_chat(&request, |event| {
-            let (kind, delta) = match event {
-                StreamEvent::Content(t) => ("content", t),
-                StreamEvent::Reasoning(t) => ("reasoning", t),
-            };
-            let _ = emit_app.emit(
-                EVENT_DELTA,
-                serde_json::json!({ "chatId": emit_chat, "kind": kind, "text": delta }),
-            );
-        })
-        .await;
-
-    let outcome = match outcome {
-        Ok(o) => o,
-        Err(e) => {
-            let _ = app.emit(
-                EVENT_ERROR,
-                serde_json::json!({ "chatId": chat_id, "message": e.to_string() }),
-            );
-            return Err(e.to_string());
-        }
-    };
-
-    let tool_calls_json = outcome
-        .message
-        .tool_calls
-        .as_ref()
-        .and_then(|c| serde_json::to_string(c).ok());
-
-    let stored = {
-        let conn = state.db.lock().unwrap();
-        let row = db::insert_message(
-            &conn,
-            &chat_id,
-            "assistant",
-            outcome.message.content.as_deref(),
-            outcome.message.reasoning_content.as_deref(),
-            tool_calls_json.as_deref(),
-            None,
-        )
-        .map_err(|e| e.to_string())?;
-        db::touch_chat(&conn, &chat_id).map_err(|e| e.to_string())?;
-        row
-    };
-
-    let peak = models::is_peak(chrono::Utc::now());
-    let cost = models::cost_usd(&chat.model, &outcome.usage, peak);
-
-    let _ = app.emit(
-        EVENT_DONE,
-        serde_json::json!({
-            "chatId": chat_id,
-            "messageId": stored.id,
-            "usage": outcome.usage,
-            "costUsd": cost,
-            "finishReason": outcome.finish_reason,
-        }),
-    );
-
-    Ok(())
+    agent::run(app, &state, &chat_id).await
 }
 
 #[cfg(test)]

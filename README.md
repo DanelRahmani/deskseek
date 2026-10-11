@@ -14,18 +14,36 @@ Secret Service), never in a config file and never in a log.
 
 ## Status
 
-Built so far (milestone 1):
+Both sections are functional:
 
-- Streaming chat against `https://api.deepseek.com` with the `deepseek-flash` and
-  `deepseek-v4-pro` models
-- Per-conversation model, **thinking mode** toggle and effort (`low` / `high` / `max`)
-- Reasoning rendered in a collapsible block; Markdown + syntax-highlighted code
-- Local conversation history in SQLite; chats scoped per section
-- API key in the OS keychain, with a *Test connection* button
-- `memory.md` appended to the system prompt when present
+**Chat**
 
-Planned, in order: memory proposals at chat end → skills → MCP plugins → the coding agent
-(files, shell, git — every write and command approved).
+- Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code
+- **Attachments** — drop, paste or pick images and files; images are downscaled and sent to
+  the model as multimodal content parts
+- **Agentic by default** — the assistant can read, search, write and edit files in your
+  documents folder (default `…/documents`, configurable), so it can produce a document for you
+  and save it rather than only printing it
+- **Memory** — a global `memory.md` injected into every request, editable in-app; *Summarise
+  chat* proposes entries you can accept or reject
+- **Skills** — drop-in instruction files at `skills/<id>/SKILL.md`, toggled per chat
+- **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
+  or both (the bundled *Document design* one is an example)
+- `/compact` and friends — `/help` lists the built-in commands
+- Approximate **context-window meter** in the header
+
+**Coding**
+
+- Point a task at a **folder** it may work in
+- Tools: `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `run_command`,
+  `git_status`, `git_diff`, `git_log`, `git_commit`, `git_push`
+- **Every write and every command asks first** — allow once, allow for the session, allow
+  always for that folder, or deny. Reads run freely
+- A **path sandbox** refuses anything outside the workspace, including `..` traversal and
+  symlink escapes; the API key is stripped from every child process environment
+- Project context from `AGENTS.md`, else `.deskseek/context.md`
+
+MCP plugins are the next milestone.
 
 ## Requirements
 

@@ -32,6 +32,11 @@ impl AppPaths {
         self.root.join("skills")
     }
 
+    /// Where chat-mode documents live by default. A chat can point elsewhere.
+    pub fn documents_dir(&self) -> PathBuf {
+        self.root.join("documents")
+    }
+
     pub fn ensure(&self) -> io::Result<()> {
         std::fs::create_dir_all(&self.root)
     }

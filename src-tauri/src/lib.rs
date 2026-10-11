@@ -1,7 +1,11 @@
 mod api;
+mod approvals;
 mod commands;
 mod conversation;
+mod memory;
+mod skills;
 mod store;
+mod tools;
 
 use std::sync::Mutex;
 
@@ -12,12 +16,14 @@ pub struct AppState {
     pub http: reqwest::Client,
     pub paths: store::paths::AppPaths,
     pub settings: Mutex<store::settings::Settings>,
+    pub approvals: approvals::Approvals,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             let paths = store::paths::AppPaths::new(root);
@@ -25,11 +31,18 @@ pub fn run() {
             let conn = store::db::open(&paths.db_file())?;
             let settings = store::settings::load(&paths.settings_file());
             let http = api::client::build_http();
+
+            // Example skills are written once; a user's edits are never clobbered.
+            if let Err(err) = skills::bundle_examples(&paths.skills_dir()) {
+                eprintln!("could not write example skills: {err}");
+            }
+
             app.manage(AppState {
                 db: Mutex::new(conn),
                 http,
                 paths,
                 settings: Mutex::new(settings),
+                approvals: approvals::Approvals::default(),
             });
             Ok(())
         })
@@ -48,6 +61,23 @@ pub fn run() {
             commands::rename_chat,
             commands::delete_chat,
             commands::set_chat_model,
+            commands::set_chat_workspace,
+            commands::get_memory,
+            commands::set_memory,
+            commands::memory_path,
+            commands::append_memory,
+            commands::list_proposals,
+            commands::accept_proposals,
+            commands::reject_proposals,
+            commands::summarize_chat,
+            commands::compact_chat,
+            commands::documents_dir,
+            commands::get_summary,
+            commands::list_skills,
+            commands::set_chat_skills,
+            commands::respond_approval,
+            commands::list_tool_permissions,
+            commands::revoke_tool_permission,
             commands::send_message,
         ])
         .run(tauri::generate_context!())

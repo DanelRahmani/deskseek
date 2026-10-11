@@ -1,45 +1,82 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
-import type { ChatRow, DoneEvent, MessageRow, ModelInfo } from "../types";
+import type { ClipboardEvent, KeyboardEvent } from "react";
+import type {
+  ApprovalEvent,
+  Attachment,
+  ChatRow,
+  DoneEvent,
+  MessageRow,
+  ModelInfo,
+  ToolRun,
+} from "../types";
 import { Markdown } from "./Markdown";
 import { ThinkingBlock } from "./ThinkingBlock";
+import { ToolCallCard } from "./ToolCallCard";
+import { ApprovalPrompt } from "./ApprovalPrompt";
 
 interface Props {
   chat: ChatRow | null;
   messages: MessageRow[];
   stream: { content: string; reasoning: string } | null;
+  tools: ToolRun[];
+  approvals: ApprovalEvent[];
+  attachments: Attachment[];
   busy: boolean;
   models: ModelInfo[];
   error: string | null;
+  notice: string | null;
   usage: DoneEvent | null;
+  contextTokens: number;
+  contextMax: number;
   onSend: (text: string) => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
+  onPickWorkspace: () => void;
+  onAttach: (files: FileList | File[]) => void;
+  onRemoveAttachment: (index: number) => void;
+  onDecideApproval: (requestId: string, decision: "once" | "session" | "always" | "deny") => void;
 }
 
 const EFFORTS = ["low", "high", "max"];
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
 
 export function ChatView({
   chat,
   messages,
   stream,
+  tools,
+  approvals,
+  attachments,
   busy,
   models,
   error,
+  notice,
   usage,
+  contextTokens,
+  contextMax,
   onSend,
   onModelChange,
+  onPickWorkspace,
+  onAttach,
+  onRemoveAttachment,
+  onDecideApproval,
 }: Props) {
   const [draft, setDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages, stream?.content, stream?.reasoning]);
+  }, [messages, stream?.content, stream?.reasoning, tools.length, approvals.length]);
 
   const submit = () => {
     const text = draft.trim();
-    if (!text || busy) return;
+    if ((!text && attachments.length === 0) || busy) return;
     setDraft("");
     onSend(text);
   };
@@ -51,6 +88,14 @@ export function ChatView({
     }
   };
 
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(e.clipboardData.files);
+    if (files.length > 0) {
+      e.preventDefault();
+      onAttach(files);
+    }
+  };
+
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -58,13 +103,54 @@ export function ChatView({
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [draft]);
 
+  const needsFolder = chat?.kind === "coding" && !chat.workspace;
+  const usedFraction = contextMax > 0 ? Math.min(1, contextTokens / contextMax) : 0;
+
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-neutral-800 px-4">
+      <header className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b border-neutral-800 px-4 py-1.5">
         <span className="truncate text-sm font-medium text-neutral-300">
           {chat ? chat.title : "DeskSeek"}
         </span>
+
+        {chat?.kind === "coding" && (
+          <button
+            onClick={onPickWorkspace}
+            className={`rounded-md border px-2 py-1 text-xs transition ${
+              needsFolder
+                ? "border-amber-800 bg-amber-950/40 text-amber-300 hover:border-amber-700"
+                : "border-neutral-800 text-neutral-400 hover:border-neutral-700"
+            }`}
+            title={chat.workspace ?? "Choose a folder to work in"}
+          >
+            {needsFolder
+              ? "Choose folder…"
+              : `📁 ${chat.workspace?.split(/[\\/]/).filter(Boolean).pop()}`}
+          </button>
+        )}
+
         <div className="ml-auto flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5"
+            title={`Approximately ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used (chars ÷ 3.6)`}
+          >
+            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-neutral-800">
+              <div
+                className={`h-full rounded-full ${
+                  usedFraction > 0.8
+                    ? "bg-red-500"
+                    : usedFraction > 0.5
+                      ? "bg-amber-500"
+                      : "bg-sky-600"
+                }`}
+                style={{ width: `${Math.max(2, usedFraction * 100)}%` }}
+              />
+            </div>
+            <span className="text-[10px] tabular-nums text-neutral-600">
+              ~{formatTokens(contextTokens)}/{formatTokens(contextMax)}
+            </span>
+          </div>
+
           {chat && (
             <>
               <select
@@ -116,13 +202,22 @@ export function ChatView({
               </p>
               <p className="mt-1 text-xs">
                 {chat?.kind === "coding"
-                  ? "The coding agent arrives in a later milestone — chat works today."
-                  : "Your API key stays in the OS keychain. Nothing is sent anywhere else."}
+                  ? "Point it at a folder, then ask for a change. Every write and command asks first."
+                  : "Attach an image or ask for a document — chat can read and write files in your documents folder."}
+              </p>
+              <p className="mt-3 text-xs text-neutral-700">
+                Commands: /compact /memory /skills /folder /new /help
               </p>
             </div>
           )}
 
-          {messages.map((m) => <Bubble key={m.id} message={m} />)}
+          {messages.map((m) => (
+            <Bubble key={m.id} message={m} />
+          ))}
+
+          {tools.map((run) => (
+            <ToolCallCard key={run.id} run={run} />
+          ))}
 
           {stream && (
             <div className="flex flex-col">
@@ -147,30 +242,81 @@ export function ChatView({
       )}
 
       <div className="shrink-0 px-4 pb-4">
-        {usage && (
-          <div className="mx-auto max-w-3xl pb-1 text-[11px] text-neutral-600">
-            {usage.usage.prompt_tokens.toLocaleString()} in ·{" "}
-            {usage.usage.completion_tokens.toLocaleString()} out
-            {usage.costUsd != null && ` · $${usage.costUsd.toFixed(5)}`}
+        <div className="mx-auto max-w-3xl">
+          {approvals.map((request) => (
+            <ApprovalPrompt key={request.requestId} request={request} onDecide={onDecideApproval} />
+          ))}
+
+          {attachments.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2">
+              {attachments.map((file, index) => (
+                <div
+                  key={`${file.name}-${index}`}
+                  className="flex items-center gap-2 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-300"
+                >
+                  {file.mime.startsWith("image/") ? (
+                    <img src={file.data_url} alt="" className="h-8 w-8 rounded object-cover" />
+                  ) : (
+                    <span>📎</span>
+                  )}
+                  <span className="max-w-40 truncate">{file.name}</span>
+                  <button
+                    onClick={() => onRemoveAttachment(index)}
+                    className="text-neutral-500 hover:text-red-400"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {usage && (
+            <div className="pb-1 text-[11px] text-neutral-600">
+              {usage.usage?.prompt_tokens.toLocaleString()} in ·{" "}
+              {usage.usage?.completion_tokens.toLocaleString()} out
+              {usage.costUsd != null && ` · $${usage.costUsd.toFixed(5)}`}
+            </div>
+          )}
+
+          {notice && <div className="pb-1 text-[11px] text-sky-400">{notice}</div>}
+
+          <div className="flex items-end gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 focus-within:border-neutral-700">
+            <input
+              ref={fileRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                if (e.target.files) onAttach(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              onClick={() => fileRef.current?.click()}
+              className="rounded-lg px-2 py-1.5 text-neutral-500 hover:text-neutral-200"
+              title="Attach files or images"
+            >
+              📎
+            </button>
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKeyDown}
+              onPaste={onPaste}
+              rows={1}
+              placeholder="Send a message, or type / for commands…"
+              className="max-h-[200px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
+            />
+            <button
+              onClick={submit}
+              disabled={busy || (!draft.trim() && attachments.length === 0)}
+              className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600"
+            >
+              {busy ? "…" : "Send"}
+            </button>
           </div>
-        )}
-        <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-neutral-800 bg-neutral-900 p-2 focus-within:border-neutral-700">
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-            rows={1}
-            placeholder="Send a message…  (Enter to send, Shift+Enter for a new line)"
-            className="max-h-[200px] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-neutral-100 outline-none placeholder:text-neutral-600"
-          />
-          <button
-            onClick={submit}
-            disabled={busy || !draft.trim()}
-            className="rounded-lg bg-sky-600 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-sky-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-600"
-          >
-            {busy ? "…" : "Send"}
-          </button>
         </div>
       </div>
     </div>
@@ -186,23 +332,59 @@ function Role({ role }: { role: string }) {
 }
 
 function Bubble({ message }: { message: MessageRow }) {
+  let attachments: Attachment[] = [];
+  if (message.attachments_json) {
+    try {
+      attachments = JSON.parse(message.attachments_json) as Attachment[];
+    } catch {
+      attachments = [];
+    }
+  }
+
   if (message.role === "user") {
     return (
-      <div className="flex flex-col items-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
-          {message.content}
-        </div>
+      <div className="flex flex-col items-end gap-1">
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap justify-end gap-2">
+            {attachments.map((file, index) =>
+              file.mime.startsWith("image/") ? (
+                <img
+                  key={index}
+                  src={file.data_url}
+                  alt={file.name}
+                  className="max-h-40 rounded-lg border border-neutral-800 object-contain"
+                />
+              ) : (
+                <span
+                  key={index}
+                  className="rounded-lg border border-neutral-800 px-2 py-1 text-[11px] text-neutral-400"
+                >
+                  📎 {file.name}
+                </span>
+              ),
+            )}
+          </div>
+        )}
+        {message.content && (
+          <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap">
+            {message.content}
+          </div>
+        )}
       </div>
     );
   }
+
   if (message.role === "tool") {
     return (
       <details className="rounded-lg border border-neutral-800 bg-neutral-900/50 px-3 py-2">
         <summary className="cursor-pointer text-xs text-neutral-500">tool result</summary>
-        <pre className="mt-2 overflow-x-auto text-xs text-neutral-400">{message.content}</pre>
+        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-neutral-400">
+          {message.content}
+        </pre>
       </details>
     );
   }
+
   return (
     <div className="flex flex-col">
       <Role role="assistant" />

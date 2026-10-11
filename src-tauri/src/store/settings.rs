@@ -8,6 +8,46 @@ use serde::{Deserialize, Serialize};
 pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
 pub const DEFAULT_SYSTEM_PROMPT: &str = "You are DeskSeek, a helpful, concise assistant.";
 
+/// A named instruction block that is injected only in matching contexts, so
+/// "when you write a document, use this type" does not pollute every chat.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Instruction {
+    pub id: String,
+    pub name: String,
+    /// `chat` | `coding` | `both`
+    pub scope: String,
+    pub body: String,
+    pub enabled: bool,
+}
+
+fn default_instructions() -> Vec<Instruction> {
+    vec![
+        Instruction {
+            id: "documents".to_string(),
+            name: "Document design".to_string(),
+            scope: "chat".to_string(),
+            body: "When you write or edit a document, follow this house style:\n\
+- Body text at 11pt in a serif face; headings in a sans-serif face at 1.2x the body size.\n\
+- One blank line between paragraphs, never indentation.\n\
+- Write documents as Markdown unless asked for another format.\n\
+- Offer to save the result to a file rather than only printing it in the chat."
+                .to_string(),
+            enabled: true,
+        },
+        Instruction {
+            id: "coding-style".to_string(),
+            name: "Coding style".to_string(),
+            scope: "coding".to_string(),
+            body: "Match the conventions already in the repository — read a neighbouring file \
+before inventing a new pattern. Prefer the smallest change that works, and leave one runnable \
+check behind for non-trivial logic."
+                .to_string(),
+            enabled: true,
+        },
+    ]
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -18,6 +58,12 @@ pub struct Settings {
     pub thinking: bool,
     pub effort: String,
     pub theme: String,
+    /// Folder chat-mode document tools may touch. Empty means the default
+    /// `documents` folder inside the app data directory.
+    #[serde(default)]
+    pub documents_dir: String,
+    #[serde(default = "default_instructions")]
+    pub instructions: Vec<Instruction>,
 }
 
 impl Default for Settings {
@@ -30,6 +76,8 @@ impl Default for Settings {
             thinking: true,
             effort: "high".to_string(),
             theme: "system".to_string(),
+            documents_dir: String::new(),
+            instructions: default_instructions(),
         }
     }
 }

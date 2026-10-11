@@ -133,4 +133,64 @@ impl Client {
             finish_reason,
         })
     }
+
+    /// One non-streaming turn, used by the chat summariser. Thinking is off:
+    /// summarising does not need reasoning, and it keeps the call cheap.
+    pub async fn complete(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        json_mode: bool,
+    ) -> anyhow::Result<String> {
+        let body = serde_json::json!({
+            "model": model,
+            "messages": [
+                { "role": "system", "content": system },
+                { "role": "user", "content": user }
+            ],
+            "stream": false,
+            "thinking": { "type": "disabled" },
+            "response_format": { "type": if json_mode { "json_object" } else { "text" } },
+            "max_tokens": 2048
+        });
+
+        let resp = self
+            .http
+            .post(format!("{}/chat/completions", self.base_url))
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()
+            .await
+            .context("request to DeepSeek failed")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow!("DeepSeek API error {status}: {body}"));
+        }
+
+        let parsed: CompletionResponse = resp.json().await.context("unreadable response")?;
+        parsed
+            .choices
+            .into_iter()
+            .next()
+            .and_then(|c| c.message.content)
+            .and_then(|content| match content {
+                crate::api::types::Content::Text(text) => Some(text),
+                crate::api::types::Content::Parts(_) => None,
+            })
+            .ok_or_else(|| anyhow!("the model returned an empty response"))
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct CompletionResponse {
+    #[serde(default)]
+    choices: Vec<CompletionChoice>,
+}
+
+#[derive(serde::Deserialize)]
+struct CompletionChoice {
+    message: ChatMessage,
 }

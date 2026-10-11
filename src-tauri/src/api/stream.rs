@@ -2,7 +2,7 @@
 //!
 //! Both pieces are pure so they can be unit-tested without a network.
 
-use crate::api::types::{ChatMessage, StreamChunk, ToolCall, ToolCallDelta};
+use crate::api::types::{ChatMessage, Content, StreamChunk, ToolCall, ToolCallDelta};
 
 /// Incremental `data:` line extractor. Feed it raw response bytes; it returns
 /// every complete payload (including the literal `[DONE]` terminator).
@@ -106,7 +106,7 @@ impl MessageAccumulator {
             content: if self.content.is_empty() {
                 None
             } else {
-                Some(self.content)
+                Some(Content::text(self.content))
             },
             reasoning_content: if self.reasoning.is_empty() {
                 None

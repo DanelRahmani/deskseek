@@ -9,6 +9,8 @@ interface Props {
   onNew: () => void;
   onDelete: (id: string) => void;
   onSettings: () => void;
+  onMemory: () => void;
+  onSkills: () => void;
   keyMask: string | null;
 }
 
@@ -26,6 +28,8 @@ export function Sidebar({
   onNew,
   onDelete,
   onSettings,
+  onMemory,
+  onSkills,
   keyMask,
 }: Props) {
   return (
@@ -78,7 +82,7 @@ export function Sidebar({
             <button
               onClick={() => onSelect(c.id)}
               className="flex-1 truncate text-left"
-              title={c.title}
+              title={c.workspace ?? c.title}
             >
               {c.title}
             </button>
@@ -93,10 +97,22 @@ export function Sidebar({
         ))}
       </nav>
 
-      <div className="border-t border-neutral-800 p-3">
+      <div className="space-y-1 border-t border-neutral-800 p-3">
+        <button
+          onClick={onMemory}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+        >
+          Memory
+        </button>
+        <button
+          onClick={onSkills}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+        >
+          Skills
+        </button>
         <button
           onClick={onSettings}
-          className="flex w-full items-center justify-between rounded-md px-2 py-2 text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+          className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
         >
           <span>Settings</span>
           <span className="text-[11px] text-neutral-600">{keyMask ?? "no key"}</span>
