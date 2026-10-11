@@ -96,7 +96,9 @@ Both sections are functional:
 - **Commands can run in a container** instead of on this machine — see *Where commands run* below
 - A **live file tree** (`/files`, or the *Files* button) — the folder is watched, so files
   the agent creates or edits appear as it works. Click any file to read it without
-  interrupting the run; if the agent writes to the file you are reading, it re-reads itself
+  interrupting the run; if the agent writes to the file you are reading, it re-reads itself.
+  A box above the tree filters it to what you have already opened — nothing is read from disk
+  to search, and the folder you want looked in has to be open
 - Project context from `AGENTS.md`, else `.deskseek/context.md`
 - A **task list** the model keeps up to date as it works — see the chat section above
 - Tool cards **open themselves when a call fails**, so a broken build is readable without a

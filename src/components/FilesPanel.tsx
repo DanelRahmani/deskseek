@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, onFsChanged } from "../api";
 import type { FilePreview, TreeEntry } from "../types";
@@ -17,6 +17,32 @@ export function FilesPanel({ chatId, onClose }: Props) {
   const [open, setOpen] = useState<string[]>([]);
   const [file, setFile] = useState<FilePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+
+  // Which loaded paths survive the filter. A folder is kept when it is itself a
+  // hit or when a loaded descendant is, so a match never floats without the
+  // folders above it. Only levels that have been opened are searched: the tree is
+  // lazy, and pretending otherwise would mean reading the whole disk.
+  const keep = useMemo(() => {
+    if (!needle) return null;
+    const kept = new Set<string>();
+    for (const list of Object.values(children)) {
+      for (const entry of list) {
+        if (!entry.name.toLowerCase().includes(needle)) continue;
+        kept.add(entry.path);
+        // A folder that matches shows what is in it: filtering it down to nothing
+        // would read as broken.
+        if (entry.isDir) for (const child of children[entry.path] ?? []) kept.add(child.path);
+        let parent = entry.path;
+        while (parent.includes("/")) {
+          parent = parent.slice(0, parent.lastIndexOf("/"));
+          kept.add(parent);
+        }
+      }
+    }
+    return kept;
+  }, [children, needle]);
 
   // Read by the fs-changed handler, which must not re-subscribe on every toggle.
   const openRef = useRef<string[]>([]);
@@ -99,8 +125,11 @@ export function FilesPanel({ chatId, onClose }: Props) {
   };
 
   const level = (dir: string, depth: number): ReactNode =>
-    (children[dir] ?? []).map((entry) => {
-      const expanded = open.includes(entry.path);
+    (children[dir] ?? [])
+      .filter((entry) => !keep || keep.has(entry.path))
+      .map((entry) => {
+        // While filtering, a kept folder is shown open: the hit may be inside it.
+        const expanded = open.includes(entry.path) || (keep !== null && entry.isDir);
       return (
         <div key={entry.path}>
           <button
@@ -125,30 +154,43 @@ export function FilesPanel({ chatId, onClose }: Props) {
 
   return (
     <aside className="flex h-full w-72 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
-      <header className="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-3 py-2">
-        <span className="text-xs font-medium text-neutral-300">Files</span>
-        <span className="truncate text-[10px] text-neutral-600" title={root}>
-          {root.split(/[\\/]/).filter(Boolean).pop() ?? ""}
-        </span>
-        <button
-          onClick={() => chatId && refresh(chatId)}
-          className="ml-auto text-xs text-neutral-500 transition hover:text-neutral-200"
-          title="Re-read the tree"
-        >
-          ⟳
-        </button>
-        <button
-          onClick={onClose}
-          className="text-sm text-neutral-500 transition hover:text-neutral-200"
-          title="Hide the file tree"
-        >
-          ×
-        </button>
+      <header className="flex shrink-0 flex-col gap-2 border-b border-neutral-800 px-3 py-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-neutral-300">Files</span>
+          <span className="truncate text-[10px] text-neutral-600" title={root}>
+            {root.split(/[\\/]/).filter(Boolean).pop() ?? ""}
+          </span>
+          <button
+            onClick={() => chatId && refresh(chatId)}
+            className="ml-auto text-xs text-neutral-500 transition hover:text-neutral-200"
+            title="Re-read the tree"
+          >
+            ⟳
+          </button>
+          <button
+            onClick={onClose}
+            className="text-sm text-neutral-500 transition hover:text-neutral-200"
+            title="Hide the file tree"
+          >
+            ×
+          </button>
+        </div>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter what is open…"
+          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+          title="Filters the folders you have opened. Nothing is read from disk to search."
+        />
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
         {chatId ? (
-          (children[""] ?? []).length > 0 ? (
+          keep && keep.size === 0 ? (
+            <p className="px-3 py-2 text-[11px] text-neutral-600">
+              Nothing open matches “{filter.trim()}”. Open the folder you want searched.
+            </p>
+          ) : (children[""] ?? []).length > 0 ? (
             level("", 0)
           ) : (
             <p className="px-3 py-2 text-[11px] text-neutral-600">This folder is empty.</p>
