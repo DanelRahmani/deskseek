@@ -78,9 +78,9 @@ export const api = {
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
   setChatPermissionMode: (chatId: string, mode: PermissionMode) =>
     invoke<void>("set_chat_permission_mode", { chatId, mode }),
-  /** Chat mode only: tools on gives the model file access; off is a plain chat. */
-  setChatTools: (chatId: string, enabled: boolean) =>
-    invoke<void>("set_chat_tools", { chatId, enabled }),
+  /** Chat mode only: how much rope this conversation has. */
+  setChatMode: (chatId: string, mode: string) =>
+    invoke<void>("set_chat_mode", { chatId, mode }),
   setChatWorkspace: (chatId: string, workspace: string | null) =>
     invoke<void>("set_chat_workspace", { chatId, workspace }),
 

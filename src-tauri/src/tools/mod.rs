@@ -43,6 +43,60 @@ pub fn is_browsing_tool(name: &str) -> bool {
     matches!(name, "fetch_url" | "web_search") || name.starts_with("browser_")
 }
 
+/// How much rope the assistant has in a chat.
+///
+/// A ladder, and the rungs are about what is *allowed* rather than tone: the mode
+/// picks the tool list, decides whether writes and commands are approved first,
+/// and says what the prompt is asking for. Two knobs that both mean "how much may
+/// I do" would drift apart, so this is the only one — the approval mode still
+/// exists, but only standard mode consults it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentMode {
+    /// Conversation only: no tools at all, not even a read.
+    Ask,
+    /// Everything the section offers; approvals follow the chat's permission mode.
+    Standard,
+    /// Reads only: investigate, publish a plan, change nothing.
+    Plan,
+    /// Everything, and nothing asks for approval: work until it is done.
+    Agent,
+}
+
+impl AgentMode {
+    /// An unknown or missing value is standard: the middle of the ladder, rather
+    /// than either extreme, is the safe thing to fall back to.
+    pub fn parse(value: &str) -> Self {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "ask" => Self::Ask,
+            "plan" | "planner" => Self::Plan,
+            "agent" | "autonomous" => Self::Agent,
+            _ => Self::Standard,
+        }
+    }
+
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Standard => "standard",
+            Self::Plan => "plan",
+            Self::Agent => "agent",
+        }
+    }
+
+    /// Whether a tool of this class is offered at all in this mode.
+    pub fn allows(self, class: ToolClass) -> bool {
+        match self {
+            Self::Ask => false,
+            // Internal tools are the app's own bookkeeping — the plan, memory, an
+            // artifact — and none of them touches the user's files, which is what
+            // plan mode is protecting.
+            Self::Plan => matches!(class, ToolClass::Read | ToolClass::Internal),
+            Self::Standard | Self::Agent => true,
+        }
+    }
+}
+
 /// Tools that only exist when the user has switched computer use on. Nothing
 /// else in the toolset starts with these prefixes.
 pub fn is_computer_tool(name: &str) -> bool {
@@ -372,6 +426,27 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "list_skills",
+                "List the skills installed on this machine, with their ids, and which are switched on for this chat. Call it when the user mentions a skill, or when a job might match one they already have.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "use_skill",
+                "Switch a skill on for this chat and read its instructions. Use it when the user names a skill, or when a job clearly matches one from `list_skills` — say which one you are using. What it asks for then applies for the rest of this chat.",
+                params(
+                    json!({
+                        "id": {"type": "string", "description": "The skill's id, as `list_skills` reports it"}
+                    }),
+                    &["id"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
                 "update_tasks",
                 "Publish or replace the plan for the current job — one line per step, with its status. Call it before starting multi-step work and again as steps start and finish. The user watches this list.",
                 params(
@@ -648,6 +723,18 @@ pub fn tools_for(section: &str) -> Vec<(Tool, ToolClass)> {
         .collect()
 }
 
+/// The toolset for a section, cut down to what the chat's mode allows.
+///
+/// Kept beside `tools_for` rather than folded into it: the section question (may
+/// this chat run commands at all?) and the mode question (how much may it do
+/// unattended?) are different, and the tests can then ask them separately.
+pub fn tools_for_mode(section: &str, mode: AgentMode) -> Vec<(Tool, ToolClass)> {
+    tools_for(section)
+        .into_iter()
+        .filter(|(_, class)| mode.allows(*class))
+        .collect()
+}
+
 pub fn class_of(tool: &str) -> ToolClass {
     builtin_tools()
         .into_iter()
@@ -659,6 +746,36 @@ pub fn class_of(tool: &str) -> ToolClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mode_decides_which_tools_are_offered_at_all() {
+        // The ladder, and nothing above its rung.
+        assert!(tools_for_mode("coding", AgentMode::Ask).is_empty());
+        assert!(tools_for_mode("chat", AgentMode::Ask).is_empty());
+
+        for (tool, class) in tools_for_mode("coding", AgentMode::Plan) {
+            assert!(
+                matches!(class, ToolClass::Read | ToolClass::Internal),
+                "plan mode offered {} ({:?}), which can change something",
+                tool.function.name,
+                class
+            );
+        }
+        assert!(tools_for_mode("coding", AgentMode::Plan).len() < builtin_tools().len());
+
+        // Standard and agent differ in whether they ask, not in what they may
+        // reach, so both offer the section's whole list.
+        assert_eq!(
+            tools_for_mode("coding", AgentMode::Standard).len(),
+            builtin_tools().len()
+        );
+        assert_eq!(
+            tools_for_mode("coding", AgentMode::Agent).len(),
+            builtin_tools().len()
+        );
+        // A permissive mode does not erase the section's own limit.
+        assert!(tools_for_mode("chat", AgentMode::Agent).len() < builtin_tools().len());
+    }
 
     #[test]
     fn reads_do_not_need_approval_but_writes_and_commands_do() {

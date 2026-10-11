@@ -48,8 +48,8 @@ interface Props {
   onStop: () => void;
   onFiles: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
-  /** Chat mode only: whether this conversation gets tools at all. */
-  onToolsChange: (enabled: boolean) => void;
+  /** Ask, Standard, Plan or Agent — see AGENT_MODES. */
+  onAgentMode: (mode: string) => void;
   onModeChange: (mode: PermissionMode) => void;
   onPickWorkspace: () => void;
   onAttach: (files: FileList | File[]) => void;
@@ -59,19 +59,59 @@ interface Props {
 
 const EFFORTS = ["low", "high", "max"];
 
+/**
+ * The four modes, as a ladder: each rung may do more than the one before.
+ *
+ * This is the only "how much rope" control in the app. The approval control
+ * beside it is shown in Standard alone, because in Ask and Plan there is nothing
+ * to approve and in Agent mode the answer is "nothing asks".
+ */
+export const AGENT_MODES: { id: string; label: string; hint: string }[] = [
+  {
+    id: "ask",
+    label: "Ask",
+    hint: "No tools: answers from what the model knows, and says when something would need a file, the web or a command",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    hint: "Every tool; writes and commands follow the approval mode beside this",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    hint: "Read-only: investigate and propose a plan, change nothing",
+  },
+  {
+    id: "agent",
+    label: "Agent",
+    hint: "Runs unattended until the job is done; only catastrophic commands are refused",
+  },
+];
+
+/** The rung after this one, for Shift+Tab. Wraps, so the cycle always moves. */
+export function nextAgentMode(current: string): string {
+  const at = AGENT_MODES.findIndex((m) => m.id === current);
+  return AGENT_MODES[(at + 1) % AGENT_MODES.length].id;
+}
+
 /// The permission modes, in increasing order of autonomy. The labels are what
-/// the user picks; the values are what the backend stores.
+/// the user picks; the values are what the backend stores. `manual` is
+/// "Ask first" rather than "Ask" so it cannot be confused with the Ask *agent
+/// mode*, which sits beside it in the header.
 export const MODES: { id: PermissionMode; label: string; hint: string }[] = [
-  { id: "manual", label: "Ask", hint: "Pause for approval before every write and command" },
+  { id: "manual", label: "Ask first", hint: "Pause for approval before every write and command" },
   { id: "auto", label: "Auto", hint: "Run without asking; a guard refuses dangerous commands" },
   { id: "skip", label: "Skip", hint: "Never ask; only catastrophic commands are refused" },
 ];
 
 /** Kept in sync with the switch in App.tsx's send(). */
 export const COMMANDS = [
+  { name: "/mode", description: "Ask, Standard, Plan or Agent — or cycle with Shift+Tab" },
   { name: "/compact", description: "Summarise the chat and reset the context" },
   { name: "/summarise", description: "Propose memories from this chat" },
   { name: "/memory", description: "Open the memory settings" },
+  { name: "/skill", description: "List skills, or switch one on for this chat" },
   { name: "/skills", description: "Choose skills for this chat" },
   { name: "/mcp", description: "Manage MCP servers" },
   { name: "/setup", description: "Reopen the setup screen" },
@@ -109,7 +149,7 @@ export function ChatView({
   onStop,
   onFiles,
   onModelChange,
-  onToolsChange,
+  onAgentMode,
   onModeChange,
   onPickWorkspace,
   onAttach,
@@ -207,6 +247,13 @@ export function ChatView({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       submit();
+      return;
+    }
+    // Shift+Tab cycles the mode, the way every other agent UI does it. Checking
+    // the menu first is what keeps Tab-for-completion working.
+    if (e.key === "Tab" && e.shiftKey && chat) {
+      e.preventDefault();
+      onAgentMode(nextAgentMode(chat.agent_mode));
     }
   };
 
@@ -285,23 +332,52 @@ export function ChatView({
             </button>
           )}
 
+          {/* The mode first, then its consequence: the approval control is a real
+              second choice in Standard, and in the other three there is nothing to
+              choose — so it is not shown at all. */}
           {chat && (
             <div
-              className="flex items-center gap-0.5 rounded-md border border-neutral-800 p-0.5"
+              className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
+              title={AGENT_MODES.find((m) => m.id === chat.agent_mode)?.hint}
+            >
+              {AGENT_MODES.map((entry) => {
+                const active = chat.agent_mode === entry.id;
+                return (
+                  <button
+                    key={entry.id}
+                    onClick={() => onAgentMode(entry.id)}
+                    title={entry.hint}
+                    className={`rounded-md px-2 py-0.5 text-[13px] transition duration-150 ${
+                      active
+                        ? "bg-sky-500/15 font-medium text-sky-300"
+                        : "text-neutral-500 hover:text-neutral-300"
+                    }`}
+                  >
+                    {entry.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {chat && chat.agent_mode === "standard" && (
+            <div
+              className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
               title={MODES.find((m) => m.id === chat.permission_mode)?.hint}
             >
               {MODES.map((mode) => {
                 const active = chat.permission_mode === mode.id;
                 const tone =
                   mode.id === "skip"
-                    ? "border-red-700 bg-red-500/15 text-red-300"
-                    : "border-sky-800 bg-sky-500/15 text-sky-300";
+                    ? "bg-red-500/15 text-red-300"
+                    : "bg-sky-500/15 text-sky-300";
                 return (
                   <button
                     key={mode.id}
                     onClick={() => onModeChange(mode.id)}
-                    className={`rounded px-1.5 py-0.5 text-[11px] transition ${
-                      active ? tone : "border border-transparent text-neutral-500 hover:text-neutral-300"
+                    title={mode.hint}
+                    className={`rounded-md px-1.5 py-0.5 text-xs transition duration-150 ${
+                      active ? `${tone} font-medium` : "text-neutral-500 hover:text-neutral-300"
                     }`}
                   >
                     {mode.label}
@@ -369,23 +445,6 @@ export function ChatView({
                     </option>
                   ))}
                 </select>
-              )}
-              {chat.kind === "chat" && (
-                <button
-                  onClick={() => onToolsChange(!chat.tools_enabled)}
-                  className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
-                    chat.tools_enabled
-                      ? "bg-sky-500/15 text-sky-300"
-                      : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
-                  }`}
-                  title={
-                    chat.tools_enabled
-                      ? "Tools on: this chat can read and write files in your documents folder. Click for a plain conversation."
-                      : "Tools off: a plain conversation. Click to let it read and write files again."
-                  }
-                >
-                  Tools
-                </button>
               )}
             </>
           )}

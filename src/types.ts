@@ -21,8 +21,8 @@ export interface ChatRow {
   permission_mode: PermissionMode;
   /** Accumulated USD spent across this chat's turns. */
   cost_usd: number;
-  /** Whether chat mode gives the model tools. Coding is always true. */
-  tools_enabled: boolean;
+  /** How much rope this chat has: `ask`, `standard`, `plan` or `agent`. */
+  agent_mode: string;
   /** Out of the sidebar's way. Nothing else about the chat changes. */
   archived: boolean;
   created_at: number;

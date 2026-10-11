@@ -22,9 +22,9 @@ pub struct ChatRow {
     pub permission_mode: String,
     /// Accumulated USD for this chat, summed from each turn's usage.
     pub cost_usd: f64,
-    /// Whether this chat's model gets tools at all. Coding always does; a chat
-    /// can be turned into a plain conversation.
-    pub tools_enabled: bool,
+    /// How much rope this chat has: `ask`, `standard`, `plan` or `agent`. See
+    /// `tools::AgentMode` — it decides the tool list as well as the prompt.
+    pub agent_mode: String,
     /// Out of the way in the sidebar, and nothing else: the messages, the spend
     /// and the folder are exactly where they were.
     pub archived: bool,
@@ -60,9 +60,10 @@ CREATE TABLE IF NOT EXISTS chats (
     -- finishes, so the total survives a reload; the live usage in the UI is
     -- only ever the last turn's.
     cost_usd     REAL NOT NULL DEFAULT 0,
-    -- Chat mode is agentic by default; a chat that does not want tools can say
-    -- so, which makes it a plain conversation with no file access.
-    tools_enabled INTEGER NOT NULL DEFAULT 1,
+    -- How much rope this chat has: 'ask' (no tools), 'standard' (everything, with
+    -- the approval mode deciding what is asked), 'plan' (read-only) or 'agent'
+    -- (runs unattended). See tools::AgentMode.
+    agent_mode   TEXT NOT NULL DEFAULT 'standard',
     -- Kept out of the sidebar's way without deleting anything.
     archived     INTEGER NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
@@ -211,7 +212,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         [],
     );
     let _ = conn.execute(
-        "ALTER TABLE chats ADD COLUMN tools_enabled INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE chats ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'standard'",
         [],
     );
     let _ = conn.execute(
@@ -240,7 +241,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at, archived
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -254,10 +255,10 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             effort: r.get(6)?,
             permission_mode: r.get(7)?,
             cost_usd: r.get(8)?,
-            tools_enabled: r.get::<_, i64>(9)? != 0,
-            created_at: r.get(10)?,
-            updated_at: r.get(11)?,
-            archived: r.get::<_, i64>(12)? != 0,
+            created_at: r.get(9)?,
+            updated_at: r.get(10)?,
+            archived: r.get::<_, i64>(11)? != 0,
+            agent_mode: r.get(12)?,
         })
     })?;
     rows.collect()
@@ -289,7 +290,7 @@ pub fn create_chat(
         effort: effort.to_string(),
         permission_mode: permission_mode.to_string(),
         cost_usd: 0.0,
-        tools_enabled: true,
+        agent_mode: "standard".to_string(),
         archived: false,
         created_at: ts,
         updated_at: ts,
@@ -298,7 +299,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, tools_enabled, created_at, updated_at, archived
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -312,10 +313,10 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 effort: r.get(6)?,
                 permission_mode: r.get(7)?,
                 cost_usd: r.get(8)?,
-                tools_enabled: r.get::<_, i64>(9)? != 0,
-                created_at: r.get(10)?,
-                updated_at: r.get(11)?,
-                archived: r.get::<_, i64>(12)? != 0,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
+                archived: r.get::<_, i64>(11)? != 0,
+                agent_mode: r.get(12)?,
             })
         },
     )
@@ -353,11 +354,13 @@ pub fn set_chat_permission_mode(
     Ok(())
 }
 
-/// Turns this chat's tools on or off. Off makes it a plain conversation.
-pub fn set_chat_tools(conn: &Connection, id: &str, enabled: bool) -> rusqlite::Result<()> {
+/// How much rope this chat has. Stored as the mode's own id, so a value this app
+/// does not recognise is normalised at the edge (`AgentMode::parse`) instead of
+/// being written down as-is.
+pub fn set_chat_mode(conn: &Connection, id: &str, mode: &str) -> rusqlite::Result<()> {
     conn.execute(
-        "UPDATE chats SET tools_enabled = ?2 WHERE id = ?1",
-        params![id, enabled as i64],
+        "UPDATE chats SET agent_mode = ?2 WHERE id = ?1",
+        params![id, mode],
     )?;
     Ok(())
 }

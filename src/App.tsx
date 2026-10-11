@@ -31,6 +31,7 @@ import type {
 } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
+import { AGENT_MODES } from "./components/ChatView";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { SettingsSection } from "./components/SettingsDialog";
 import { McpPanel } from "./components/McpPanel";
@@ -72,7 +73,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /summarise review what is worth remembering · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
+  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -548,6 +549,76 @@ export default function App() {
             }
             return;
           }
+          case "/mode": {
+            if (!chatId) {
+              setError("Open a chat first.");
+              return;
+            }
+            const wanted = text.trim().split(/\s+/).slice(1).join(" ").toLowerCase();
+            if (!wanted) {
+              setNotice(
+                `${AGENT_MODES.map((m) => `${m.id} (${m.label})`).join(" · ")} — /mode <name>, or Shift+Tab to cycle.`,
+              );
+              return;
+            }
+            if (!AGENT_MODES.some((m) => m.id === wanted)) {
+              setNotice(
+                `Unknown mode "${wanted}". One of: ${AGENT_MODES.map((m) => m.id).join(", ")}.`,
+              );
+              return;
+            }
+            // Written out rather than reused from the header handler: this keeps
+            // `send` free of a dependency on a callback defined after it.
+            await api.setChatMode(chatId, wanted);
+            await refreshChats(kindRef.current);
+            setNotice(
+              wanted === "ask"
+                ? "Ask mode: no tools."
+                : wanted === "plan"
+                  ? "Plan mode: it will read and propose, and change nothing."
+                  : wanted === "agent"
+                    ? "Agent mode: it runs unattended until the job is done."
+                    : "Standard mode: writes and commands follow your approval setting.",
+            );
+            return;
+          }
+          case "/skill": {
+            if (!chatId) {
+              setError("Open a chat first.");
+              return;
+            }
+            const installed = await api.listSkills(chatId);
+            const wanted = text.trim().split(/\s+/).slice(1).join(" ").toLowerCase();
+            if (!wanted) {
+              setNotice(
+                installed.length === 0
+                  ? "No skills installed. /skills adds one, or ask the assistant to save one from the conversation."
+                  : `Skills: ${installed
+                      .map((s) => `${s.id}${s.enabled ? " ✓" : ""}`)
+                      .join(", ")} — /skill <id> switches one on or off.`,
+              );
+              return;
+            }
+            const match = installed.find(
+              (s) => s.id.toLowerCase() === wanted || s.name.toLowerCase() === wanted,
+            );
+            if (!match) {
+              setNotice(
+                `No skill called "${wanted}". Installed: ${installed
+                  .map((s) => s.id)
+                  .join(", ") || "none"}.`,
+              );
+              return;
+            }
+            // The whole enabled set, toggled — the command has to send the list,
+            // so it must not drop the skills that are already on.
+            const next = installed
+              .filter((s) => (s.id === match.id ? !match.enabled : s.enabled))
+              .map((s) => s.id);
+            await api.setChatSkills(chatId, next);
+            setNotice(`"${match.name}" ${match.enabled ? "switched off" : "switched on"}.`);
+            return;
+          }
           case "/compact": {
             if (!chatId) {
               setError("Nothing to compact yet.");
@@ -672,16 +743,24 @@ export default function App() {
     }
   }, []);
 
-  // Chat mode only. Off means the next request carries no tools at all, so the
-  // conversation loses its file access until it is turned back on.
-  const changeTools = useCallback(
-    async (chatId: string, enabled: boolean) => {
+  // How much rope a chat has. Stored as the mode's own id.
+  const changeAgentMode = useCallback(
+    async (chatId: string, mode: string) => {
       setChatsById((prev) =>
-        prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], tools_enabled: enabled } } : prev,
+        prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], agent_mode: mode } } : prev,
       );
       try {
-        await api.setChatTools(chatId, enabled);
+        await api.setChatMode(chatId, mode);
         await refreshChats(kindRef.current);
+        setNotice(
+          mode === "ask"
+            ? "Ask mode: no tools."
+            : mode === "plan"
+              ? "Plan mode: it will read and propose, and change nothing."
+              : mode === "agent"
+                ? "Agent mode: it runs unattended until the job is done."
+                : "Standard mode: writes and commands follow your approval setting.",
+        );
       } catch (e) {
         setError(String(e));
       }
@@ -1111,7 +1190,7 @@ export default function App() {
                       id && changeModel(id, model, thinking, effort)
                     }
                     onModeChange={(mode) => id && changeMode(id, mode)}
-                    onToolsChange={(enabled) => id && changeTools(id, enabled)}
+                    onAgentMode={(mode) => id && changeAgentMode(id, mode)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
                     onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}
                     onAttach={(files) => attach(id, files)}

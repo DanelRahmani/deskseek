@@ -67,16 +67,19 @@ pub async fn tools_for_chat(
     settings: &Settings,
     chat: &db::ChatRow,
 ) -> ChatTools {
-    // Coding is agentic by definition; a chat can be a plain conversation. With
-    // tools off there is nothing to offer — not even the MCP servers, which are
-    // tools like any other.
-    if chat.kind != "coding" && !chat.tools_enabled {
+    // The mode is the contract. `ask` has no tools at all — not even the MCP
+    // servers, which are tools like any other — and `plan` gets the read-only
+    // half of the list. "Coding is agentic by definition" is now expressed by the
+    // mode a coding chat starts in, not by a second switch that could disagree
+    // with it.
+    let mode = tools::AgentMode::parse(&chat.agent_mode);
+    if mode == tools::AgentMode::Ask {
         return ChatTools {
             list: Vec::new(),
             mcp: false,
         };
     }
-    let mut list: Vec<Tool> = tools::tools_for(&chat.kind)
+    let mut list: Vec<Tool> = tools::tools_for_mode(&chat.kind, mode)
         .into_iter()
         .filter(|(tool, _)| {
             let name = &tool.function.name;
@@ -365,25 +368,59 @@ approval first, so say in one line what you are about to do and then call it.",
     }
 
     let scope = if coding { "coding" } else { "chat" };
+    let agent_mode = tools::AgentMode::parse(&chat.agent_mode);
 
-    // The model must know how much rope it has, so it plans around the guard
-    // instead of being surprised by it.
-    match guard::PermissionMode::parse(&chat.permission_mode) {
-        guard::PermissionMode::Manual => {}
-        guard::PermissionMode::Auto => base.push_str(
-            "\n\n# Approvals\n\n\
+    // What the mode allows, said out loud. The mode decides the tool list, so a
+    // model that does not know its mode reads a missing tool as a broken one —
+    // and in plan mode the whole job is to stop at a plan.
+    match agent_mode {
+        tools::AgentMode::Ask => base.push_str(
+            "\n\n# Mode: ask\n\n\
+This chat has no tools. Answer from what you know, and say plainly when something needs a file, \
+the web or a command rather than implying you looked. If the user wants you to act, they switch \
+the chat to Plan, Standard or Agent.",
+        ),
+        tools::AgentMode::Plan => base.push_str(
+            "\n\n# Mode: plan\n\n\
+You are planning, not doing. You can read, search, and publish a plan with `update_tasks`; you \
+cannot write, edit or run anything, and a missing tool is this mode rather than a fault. \
+Investigate enough to be specific, publish the plan, then stop: say what you would change and \
+that switching to Standard or Agent has you carry it out. Do not ask the user to approve single \
+steps — the plan is the thing they approve.",
+        ),
+        tools::AgentMode::Agent => base.push_str(
+            "\n\n# Mode: agent\n\n\
+Work autonomously until the job is done. Nothing asks for approval, so narrate one short line per \
+step and keep going. When something is ambiguous, take the smallest sensible option, say which you \
+took, and continue instead of stopping to ask. The exceptions are anything irreversible, anything \
+outside what was asked, and a preference only the user can settle. Check your own work before you \
+call it finished, then report what changed.",
+        ),
+        tools::AgentMode::Standard => {}
+    }
+
+    // Approvals only mean something in standard mode: ask and plan have nothing to
+    // approve, and agent mode never asks.
+    if agent_mode == tools::AgentMode::Standard {
+        // The model must know how much rope it has, so it plans around the guard
+        // instead of being surprised by it.
+        match guard::PermissionMode::parse(&chat.permission_mode) {
+            guard::PermissionMode::Manual => {}
+            guard::PermissionMode::Auto => base.push_str(
+                "\n\n# Approvals\n\n\
 This chat is in auto mode: file writes and commands run without asking, so say what you are \
 doing in one line as you go. A safety guard refuses catastrophic commands (disk formatting, \
 `git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`) and commands that \
 upload local data to the network. A refusal is final — do not retry it; tell the user what you \
 wanted to do instead.",
-        ),
-        guard::PermissionMode::Skip => base.push_str(
-            "\n\n# Approvals\n\n\
+            ),
+            guard::PermissionMode::Skip => base.push_str(
+                "\n\n# Approvals\n\n\
 This chat is in skip mode: nothing is shown to the user for approval; it all just runs. Say what \
 you are doing as you go. Only catastrophic commands (disk formatting, forced history rewrites, \
 publishing, `rm -rf /`) are still refused — a refusal is final, so do not retry it.",
-        ),
+            ),
+        }
     }
 
     // The guidance block is done; the project context inside it is reported on
@@ -459,37 +496,38 @@ first — the app handles it.",
 
     // Making a skill is something the assistant can do, so a chat with none must
     // still be told the mechanism exists — and told plainly that the user's own
-    // skills are not in front of it.
-    let named = installed
-        .iter()
-        .map(|s| {
-            if s.description.trim().is_empty() {
-                s.name.clone()
-            } else {
-                format!("{} ({})", s.name, s.description.trim())
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("; ");
-    let skills_state = if installed.is_empty() {
-        "The user has none installed yet.".to_string()
-    } else if enabled.is_empty() {
-        format!(
-            "None are switched on for this chat; the user has {} installed: {named}.",
-            installed.len()
-        )
+    // skills are not in front of it. The catalogue carries the *ids*, because
+    // `use_skill` takes an id and a model that only knows a name would guess.
+    let catalogue = if installed.is_empty() {
+        "none installed yet".to_string()
     } else {
-        format!("{} switched on for this chat, above.", enabled.len())
+        installed
+            .iter()
+            .map(|s| {
+                let mut line = format!("- `{}` — {}", s.id, s.name);
+                if !s.description.trim().is_empty() {
+                    line.push_str(&format!(" — {}", s.description.trim()));
+                }
+                if enabled.contains(&s.id) {
+                    line.push_str(" [on]");
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let skills_guide = format!(
         "\n\n# Skills\n\n\
-{skills_state}\n\n\
-A skill is a reusable instruction file the user switches on per chat with `/skills`. When the user \
-describes rules they want you to follow from now on — a house style, a checklist, a way of \
-answering — offer to save it with `create_skill`: it lands in their skills folder and is switched \
-on for this chat. Say what you are about to save first, and ask what should be in it if that is \
-not yet clear. Use `replace: true` with the same name to revise a skill you wrote. Never claim to \
-be following a skill that is not in this prompt."
+Skills are reusable instruction files on this machine. Installed:\n\n{catalogue}\n\n\
+The full text of the ones marked [on] is in this prompt; the rest are one call away. When the \
+user names a skill, or a job clearly matches one of these, call `use_skill` with its id — that \
+switches it on for this chat and hands you its instructions, which then apply from here on. Call \
+`list_skills` if you want the catalogue again later in the conversation.\n\n\
+When the user describes rules they want followed from now on — a house style, a checklist, a way \
+of answering — offer to save it with `create_skill`: it lands in their skills folder and is \
+switched on for this chat. Say what you are about to save first, and ask what should be in it if \
+that is not yet clear. Use `replace: true` with the same name to revise a skill you wrote. Never \
+claim to be following a skill you have neither been given here nor just read."
     );
     parts.push(part("Skills guide", "skills", skills_guide.chars().count()));
     base.push_str(&skills_guide);
@@ -699,6 +737,82 @@ async fn run_tool(
         ));
     }
 
+    if name == "list_skills" {
+        let installed = crate::skills::discover(&state.paths.skills_dir());
+        if installed.is_empty() {
+            return Ok("No skills are installed yet. The user can add one in /skills, or you can \
+                       write one with `create_skill`."
+                .to_string());
+        }
+        let enabled = {
+            let conn = state.db.lock().unwrap();
+            db::get_chat_skills(&conn, chat_id).unwrap_or_default()
+        };
+        let lines = installed
+            .iter()
+            .map(|s| {
+                let mut line = format!("- `{}` — {}", s.id, s.name);
+                if !s.description.trim().is_empty() {
+                    line.push_str(&format!(" — {}", s.description.trim()));
+                }
+                if enabled.contains(&s.id) {
+                    line.push_str(" [on]");
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(format!(
+            "Installed skills:\n{lines}\n\n`use_skill` with an id switches one on for this chat \
+             and gives you its instructions."
+        ));
+    }
+
+    if name == "use_skill" {
+        let wanted = args
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or("use_skill needs the skill's \"id\" — call list_skills if you are unsure.")?;
+        let installed = crate::skills::discover(&state.paths.skills_dir());
+        // Id first, then the name: the catalogue carries ids, but being told "use
+        // the terse one" should not send the model off to look it up.
+        let skill = installed
+            .iter()
+            .find(|s| s.id.eq_ignore_ascii_case(wanted))
+            .or_else(|| installed.iter().find(|s| s.name.eq_ignore_ascii_case(wanted)))
+            .ok_or_else(|| {
+                let ids = installed
+                    .iter()
+                    .map(|s| s.id.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("No skill called \"{wanted}\". Installed: {ids}.")
+            })?;
+        // Switching it on is the point of the call — a skill that is read but not
+        // recorded vanishes from the prompt on the next turn, which reads as the
+        // assistant forgetting what it just agreed to.
+        let already = {
+            let conn = state.db.lock().unwrap();
+            let mut ids = db::get_chat_skills(&conn, chat_id).unwrap_or_default();
+            if ids.iter().any(|id| id == &skill.id) {
+                true
+            } else {
+                ids.push(skill.id.clone());
+                db::set_chat_skills(&conn, chat_id, &ids).map_err(|e| e.to_string())?;
+                false
+            }
+        };
+        return Ok(format!(
+            "\"{}\" is on for this chat{}. Follow it from here on.\n\n# Skill: {}\n\n{}",
+            skill.name,
+            if already { " already" } else { "" },
+            skill.name,
+            skill.body
+        ));
+    }
+
     if name == "create_skill" {
         let draft = tools::parse_skill_draft(args)?;
         let id = crate::tools::docs::slug_with(&draft.name, "skill");
@@ -872,7 +986,13 @@ pub async fn run(
     let mut last_finish: Option<String> = None;
     // Auto and Skip run without asking; a blocked call counts a strike, and
     // enough strikes drop the run back to asking.
-    let mut mode = guard::PermissionMode::parse(&chat.permission_mode);
+    // Agent mode runs unattended, which is exactly what auto does — and the guard
+    // still refuses the catastrophic tier, so "autonomous" is not "unchecked".
+    let mut mode = if tools::AgentMode::parse(&chat.agent_mode) == tools::AgentMode::Agent {
+        guard::PermissionMode::Auto
+    } else {
+        guard::PermissionMode::parse(&chat.permission_mode)
+    };
     let mut strikes: u32 = 0;
     // Desktop actions cost something real, so the run gets a budget.
     let mut computer_actions: usize = 0;

@@ -111,6 +111,15 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] `ui_click` asks, even in *Auto*
 - [ ] `Ctrl+Alt+Esc` cancels every run and the banner stays until restarted
 
+## Modes
+
+- [ ] `Shift+Tab` in the composer cycles Ask → Standard → Plan → Agent and back
+- [ ] `Ask` sends no tools at all: the context breakdown lists none
+- [ ] In `Plan` mode a write or command is not offered and the reply proposes a plan
+- [ ] In `Agent` mode a write runs without a prompt, and the guard still refuses `rm -rf /`
+- [ ] The approval control (`Ask first` / `Auto` / `Skip`) appears in Standard mode only
+- [ ] `/mode plan` switches the chat and says so
+
 ## Skills
 
 - [ ] *Build one by talking it through* opens a chat that asks what the skill should cover
@@ -119,7 +128,10 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Pasting a SKILL.md into the panel installs it under `skills/<id>/` and lists it
 - [ ] The id comes from the frontmatter name, or from the first heading when there is none
 - [ ] Installing a name that already exists is refused rather than overwriting
-- [ ] Switching a skill on puts its text in that chat's context breakdown
+- [ ] `/skill` lists the skills; `/skill <id>` switches one on and off
+- [ ] The prompt's skill catalogue lists every installed skill with its id, `[on]` where it applies
+- [ ] Asking for a skill by name has the assistant call `use_skill` and follow it
+- [ ] `list_skills` returns the same catalogue the panel shows
 - [ ] *Restore examples* brings back a deleted example and leaves an edited one alone
 
 ## Memory

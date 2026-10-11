@@ -281,10 +281,17 @@ pub fn set_chat_permission_mode(
     db::set_chat_permission_mode(&conn, &chat_id, mode).map_err(|e| e.to_string())
 }
 
+/// How much rope this chat has. An unrecognised value becomes standard rather
+/// than being stored, so the database only ever holds a mode this app can act on.
 #[tauri::command]
-pub fn set_chat_tools(state: State<'_, AppState>, chat_id: String, enabled: bool) -> Result<(), String> {
+pub fn set_chat_mode(
+    state: State<'_, AppState>,
+    chat_id: String,
+    mode: String,
+) -> Result<(), String> {
+    let normalised = crate::tools::AgentMode::parse(&mode);
     let conn = state.db.lock().unwrap();
-    db::set_chat_tools(&conn, &chat_id, enabled).map_err(|e| e.to_string())
+    db::set_chat_mode(&conn, &chat_id, normalised.id()).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -1526,7 +1533,7 @@ mod tests {
             effort: "high".to_string(),
             permission_mode: "manual".to_string(),
             cost_usd: 0.0,
-            tools_enabled: true,
+            agent_mode: "standard".to_string(),
             archived: false,
             created_at: 0,
             updated_at: 0,

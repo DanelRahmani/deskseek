@@ -164,7 +164,7 @@ pub fn run() {
             commands::set_chat_archived,
             commands::set_chat_model,
             commands::set_chat_permission_mode,
-            commands::set_chat_tools,
+            commands::set_chat_mode,
             commands::set_chat_workspace,
             commands::get_memory,
             commands::set_memory,

@@ -142,8 +142,10 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
           A skill is an instruction file that joins this chat's system prompt while it is switched
           on. Each one is a folder under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>, so
           they are yours to edit or copy between machines.
+        </p>        <p className="text-xs leading-relaxed text-neutral-500">
+          The assistant can also reach these by itself: it switches one on when a job clearly
+          matches, and anything it writes with `create_skill` lands in this list switched on.
         </p>
-
         <button
           onClick={() => onAsk(BUILD_PROMPT)}
           disabled={busy}

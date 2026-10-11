@@ -62,6 +62,10 @@ Both sections are functional:
   (`replace: true` revises one it wrote). You can also paste a skill's text in, install one from a
   file, or put back the bundled examples you deleted — and remove one from the same list (the
   panel also opens the folder)
+  - The prompt carries the catalogue with each skill's id, so the assistant can reach for one
+    itself: `use_skill` switches it on and hands over its instructions mid-conversation, and
+    `list_skills` asks for the list again. `/skill` lists them from the composer, `/skill <id>`
+    toggles one, and the panel's toggle does the same thing
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - **The system prompt is assembled, not written once** — the base prompt says what you have
@@ -136,13 +140,26 @@ Both sections are functional:
 
 **Approvals, permission modes and stopping a run**
 
-Each conversation carries its own permission mode, chosen in the header:
+Each conversation carries its own **mode**, chosen in the header and cycled with `Shift+Tab` (or
+`/mode <name>`). The modes are a ladder, and each rung is about what is *allowed*, not tone:
 
-- **Ask** (default) — pause for approval before every write and every command
+- **Ask** — no tools at all. The model answers from what it knows and says plainly when something
+  would need a file, the web or a command, instead of implying it looked
+- **Standard** — every tool the section offers, with the approval mode below deciding what is
+  asked about
+- **Plan** — read-only: it can read, search and publish a plan, and it cannot change anything.
+  Useful for "tell me what you would do" on a codebase you have not handed over yet
+- **Agent** — every tool, and nothing asks: it works until the job is done. The guard still
+  refuses the catastrophic tier, so autonomous is not unchecked
+
+In *Standard* the mode is followed by the chat's **approval mode**, which only exists there
+because it is the only rung with something to approve:
+
+- **Ask first** (default) — pause for approval before every write and every command
 - **Auto** — run without asking. A safety guard refuses known-catastrophic commands (disk
   formatting, `git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`,
   download-and-execute pipelines) and commands that upload local data to the network. Three
-  refusals in one run drop the chat back to *Ask* automatically
+  refusals in one run drop the chat back to *Ask first* automatically
 - **Skip** — never ask. Only the catastrophic tier is still refused
 
 One honest caveat, stated plainly in the app too: **the guard is a heuristic, not a security
