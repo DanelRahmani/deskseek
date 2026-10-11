@@ -2,6 +2,7 @@
 //! call is (which decides whether the user is asked to approve it).
 
 pub mod browse;
+pub mod browser;
 pub mod exec;
 pub mod guard;
 pub mod sandbox;
@@ -25,6 +26,17 @@ pub enum ToolClass {
     Write,
     /// Executes something; the user approves each call.
     Command,
+    /// Acts on the world outside the workspace — a real browser today. Approved
+    /// on every call in manual *and* auto mode: the agent is acting as the user
+    /// on sites neither of us controls, and no string heuristic can tell a
+    /// harmless click from a purchase.
+    Computer,
+}
+
+/// Tools that only exist when the user has switched internet access on. The
+/// `browser_` prefix covers `browser_read` and the whole automation set.
+pub fn is_browsing_tool(name: &str) -> bool {
+    matches!(name, "fetch_url" | "web_search") || name.starts_with("browser_")
 }
 
 fn params(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
@@ -239,6 +251,61 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "browser_open",
+                "Open a URL in a real browser and read the page. Use this instead of fetch_url when the page is built by JavaScript, or when you will need to click or type on it afterwards. The browser keeps its state between calls, so opening a page once is enough.",
+                params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_extract",
+                "Read the page currently open in the browser: its title, address and visible text.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_eval",
+                "Run a JavaScript expression in the page currently open in the browser and return its value. Use it to read structured data or inspect the DOM. Promises are awaited.",
+                params(json!({"expression": {"type": "string", "description": "JavaScript expression, e.g. document.querySelectorAll('h2').length"}}), &["expression"]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_click",
+                "Click the element matching a CSS selector in the browser, then read the page. If the selector matches nothing, the result lists the clickable elements that are actually on the page.",
+                params(json!({"selector": {"type": "string", "description": "CSS selector, e.g. button#submit or a[href='/pricing']"}}), &["selector"]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_type",
+                "Type into the input or textarea matching a CSS selector in the browser. Set submit to true to submit the surrounding form afterwards.",
+                params(
+                    json!({
+                        "selector": {"type": "string", "description": "CSS selector of the field"},
+                        "text": {"type": "string", "description": "Text to put in the field"},
+                        "submit": {"type": "boolean", "description": "Submit the surrounding form afterwards. Default false."}
+                    }),
+                    &["selector", "text"],
+                ),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_screenshot",
+                "Take a picture of the page in the browser and show it to the user. You cannot see the picture — read the page with browser_extract or browser_eval instead.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
                 "run_command",
                 "Run a shell command in the workspace root. Use for builds, tests and scripts.",
                 params(json!({"command": {"type": "string", "description": "The command line to run"}}), &["command"]),
@@ -324,6 +391,32 @@ mod tests {
     #[test]
     fn an_unknown_tool_is_treated_as_the_riskiest_class() {
         assert_eq!(class_of("something_new"), ToolClass::Command);
+    }
+
+    #[test]
+    fn browser_tools_are_computer_class_and_are_always_asked_about() {
+        for name in [
+            "browser_open",
+            "browser_extract",
+            "browser_eval",
+            "browser_click",
+            "browser_type",
+            "browser_screenshot",
+        ] {
+            assert_eq!(class_of(name), ToolClass::Computer, "{name}");
+            assert!(is_browsing_tool(name), "{name} must follow the browsing switch");
+            // Both sections get them: reading a web page is not a shell tool.
+            assert!(
+                tools_for("chat").iter().any(|(t, _)| t.function.name == name),
+                "{name} missing from chat mode"
+            );
+        }
+        // The plain fetchers follow the same switch, and nothing else does.
+        assert!(is_browsing_tool("fetch_url"));
+        assert!(is_browsing_tool("browser_read"));
+        assert!(is_browsing_tool("web_search"));
+        assert!(!is_browsing_tool("read_file"));
+        assert!(!is_browsing_tool("write_file"));
     }
 
     #[test]

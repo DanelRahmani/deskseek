@@ -16,6 +16,14 @@ const ICONS: Record<string, string> = {
   git_commit: "🌿",
   git_push: "🌿",
   update_tasks: "☑",
+  fetch_url: "🌐",
+  browser_read: "🌐",
+  browser_open: "🌐",
+  browser_extract: "🌐",
+  browser_eval: "🌐",
+  browser_click: "🖱",
+  browser_type: "⌨",
+  browser_screenshot: "📷",
 };
 
 function describe(run: ToolRun): string {
@@ -34,6 +42,17 @@ function describe(run: ToolRun): string {
     case "glob":
     case "grep":
       return pick("pattern");
+    case "fetch_url":
+    case "browser_read":
+    case "browser_open":
+      return pick("url");
+    case "web_search":
+      return pick("query");
+    case "browser_eval":
+      return pick("expression");
+    case "browser_click":
+    case "browser_type":
+      return pick("selector");
     case "git_commit":
       return pick("message");
     case "update_tasks": {
@@ -51,10 +70,11 @@ function describe(run: ToolRun): string {
 export function ToolCallCard({ run }: { run: ToolRun }) {
   const [open, setOpen] = useState(false);
 
-  // A failed call opens itself: the error is the reason the card is there.
+  // A failed call opens itself: the error is the reason the card is there. A
+  // screenshot does too — a picture nobody can see is not worth taking.
   useEffect(() => {
-    if (run.status === "error") setOpen(true);
-  }, [run.status]);
+    if (run.status === "error" || run.shot) setOpen(true);
+  }, [run.status, run.shot]);
 
   const tone =
     run.status === "running"
@@ -76,6 +96,13 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
           {run.status === "running" ? "running…" : run.status}
         </span>
       </button>
+      {open && run.shot && (
+        <img
+          src={run.shot}
+          alt="Screenshot of the page the agent was working on"
+          className="mt-2 w-full rounded border border-white/10 bg-white"
+        />
+      )}
       {open && run.output && (
         <pre
           className={`mt-2 max-h-72 overflow-auto whitespace-pre-wrap border-t border-white/5 pt-2 text-[11px] leading-relaxed ${

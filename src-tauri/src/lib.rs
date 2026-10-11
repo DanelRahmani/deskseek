@@ -28,6 +28,9 @@ pub struct AppState {
     /// and again whenever the setup screen re-checks. Read per run rather than
     /// probed per command: `docker info` costs a second when it fails.
     pub sandbox: Arc<tokio::sync::RwLock<tools::sandbox_exec::Capability>>,
+    /// The automation browser, started on first use and kept for the session so
+    /// a page opened in one turn is still there in the next.
+    pub browser: tools::browser::Browser,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
@@ -69,6 +72,7 @@ pub fn run() {
                 runs: runs::Runs::default(),
                 files: fs_watch::FileWatcher::new(app.handle().clone()),
                 sandbox,
+                browser: tools::browser::Browser::default(),
                 mcp: mcp_manager.clone(),
             });
 
@@ -137,13 +141,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|handle, event| {
-            // MCP servers are child processes; none may outlive the app.
+            // MCP servers and the automation browser are child processes; none
+            // may outlive the app.
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = handle.try_state::<AppState>() {
                     state.files.clear();
                     let mcp = state.mcp.clone();
+                    let browser = &state.browser;
                     tauri::async_runtime::block_on(async move {
                         mcp.write().await.stop_all().await;
+                        browser.stop().await;
                     });
                 }
             }

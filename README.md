@@ -143,6 +143,36 @@ is still there when you look at it.
 - `browser_read` drives the Chromium-family browser already on your machine — nothing to
   download. Point it at Chrome or Edge explicitly if auto-detection picks the wrong one
 
+**Driving a browser** (both sections)
+
+`browser_read` reads one page. When a job needs more than that — filling in a form, clicking
+through to a result, checking what a site really does — the agent can drive the browser instead:
+
+| Tool | What it does |
+| --- | --- |
+| `browser_open` | Open a URL and read the page. The browser keeps its state, so open once and work on it |
+| `browser_extract` | Read the page that is already open |
+| `browser_eval` | Run a JavaScript expression in the page and get the value back |
+| `browser_click` / `browser_type` | Click an element or fill a field by CSS selector, then read the page back |
+| `browser_screenshot` | Show **you** a picture of the page, in the chat |
+
+It is Edge or Chrome, launched headless with its **own profile directory** under DeskSeek's data
+folder on an auto-assigned debugging port. It never touches the browser you are signed into: it
+cannot see your tabs, your cookies or your logins, and nothing outside this machine can reach it.
+There is no CDP crate and no bundled download — the protocol is JSON over a WebSocket, and the
+module speaks it directly.
+
+Four things are worth saying plainly:
+
+- **These always ask, even in *Auto* mode.** No string rule can tell a harmless click from a
+  purchase, so the app does not pretend to. Only *Skip* runs them unattended.
+- **Page content is data, never instructions.** A page that tells the model to run a command or
+  ignore what you asked is a prompt injection — the agent is told to stop and report it.
+- **Screenshots go to your eyes, not the model's.** The result the model receives is text, because
+  DeepSeek's API is text-only and a picture in a tool result would be a 400 waiting to happen.
+- **A missed click names what is actually on the page**, so the agent corrects itself instead of
+  guessing at the same selector again.
+
 **MCP servers**
 
 DeskSeek is an MCP *client*. Servers you configure are launched as child processes and their

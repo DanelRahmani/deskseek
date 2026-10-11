@@ -150,7 +150,7 @@ export interface SkillView {
   enabled: boolean;
 }
 
-export type ToolClassName = "read" | "internal" | "write" | "command";
+export type ToolClassName = "read" | "internal" | "write" | "command" | "computer";
 
 export interface DeltaEvent {
   chatId: string;
@@ -167,6 +167,17 @@ export interface ToolEvent {
   args?: unknown;
   ok?: boolean;
   output?: string;
+}
+
+/**
+ * A picture taken by `browser_screenshot`, on its own event. The tool result the
+ * model receives stays text — this is for the user's eyes.
+ */
+export interface ShotEvent {
+  chatId: string;
+  /** The tool call it belongs to, so it lands on the right card. */
+  callId: string;
+  dataUrl: string;
 }
 
 export interface ApprovalEvent {
@@ -238,4 +249,6 @@ export interface ToolRun {
   args: unknown;
   status: "running" | "ok" | "error";
   output?: string;
+  /** A `data:` URL picture, for `browser_screenshot`. */
+  shot?: string;
 }

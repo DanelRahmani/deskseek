@@ -33,6 +33,7 @@ uuid = { version = "1", features = ["v4"] }
 tauri-plugin-dialog = "2.8.2"
 rmcp = { version = "3.5.1", default-features = false, features = ["client", "transport-child-process", "which-command"] }
 notify = "8.2.0"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "handshake"] }
 
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]

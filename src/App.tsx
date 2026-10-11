@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { api, onApproval, onDelta, onDone, onError, onGuard, onTool } from "./api";
+import { api, onApproval, onDelta, onDone, onError, onGuard, onShot, onTool } from "./api";
 import { filesToAttachments } from "./lib/attachments";
 import type {
   ApprovalEvent,
@@ -191,6 +191,14 @@ export default function App() {
         patch(e.chatId, (rt) => ({
           ...rt,
           approvals: [...rt.approvals.filter((a) => a.requestId !== e.requestId), e],
+        }));
+      }),
+      onShot((e) => {
+        // The picture arrives on its own event and is pinned to the tool call
+        // that took it, so a screenshot stays with the step it belongs to.
+        patch(e.chatId, (rt) => ({
+          ...rt,
+          tools: rt.tools.map((t) => (t.id === e.callId ? { ...t, shot: e.dataUrl } : t)),
         }));
       }),
       onDone((e) => {

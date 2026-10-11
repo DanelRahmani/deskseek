@@ -19,6 +19,7 @@ import type {
   PermissionMode,
   SectionKind,
   Settings,
+  ShotEvent,
   SkillView,
   ToolEvent,
   TreeListing,
@@ -102,6 +103,11 @@ export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {
 
 export function onTool(handler: (e: ToolEvent) => void): Promise<UnlistenFn> {
   return listen<ToolEvent>("chat-tool", (event) => handler(event.payload));
+}
+
+/** A picture from `browser_screenshot`, for the user to see. */
+export function onShot(handler: (e: ShotEvent) => void): Promise<UnlistenFn> {
+  return listen<ShotEvent>("chat-shot", (event) => handler(event.payload));
 }
 
 export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {

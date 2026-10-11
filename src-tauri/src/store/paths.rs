@@ -45,6 +45,12 @@ impl AppPaths {
         self.root.join("mcp.json")
     }
 
+    /// The automation browser's own profile. Never the user's: DeskSeek must not
+    /// be able to read their tabs, cookies or saved logins.
+    pub fn browser_dir(&self) -> PathBuf {
+        self.root.join("browser")
+    }
+
     /// Where chat-mode documents live by default. A chat can point elsewhere.
     pub fn documents_dir(&self) -> PathBuf {
         self.root.join("documents")
