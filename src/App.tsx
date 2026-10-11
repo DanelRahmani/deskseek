@@ -16,12 +16,13 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { MemoryPanel } from "./components/MemoryPanel";
+import { McpPanel } from "./components/McpPanel";
 import { SkillsPanel } from "./components/SkillsPanel";
 
-type Panel = "none" | "memory" | "skills";
+type Panel = "none" | "memory" | "skills" | "mcp";
 
 const HELP =
-  "/compact summarise and reset the context · /memory · /skills · /folder · /new · /help";
+  "/compact summarise and reset the context · /memory · /skills · /mcp · /folder · /new · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -202,6 +203,9 @@ export default function App() {
           case "/skills":
             setPanel("skills");
             return;
+          case "/mcp":
+            setPanel("mcp");
+            return;
           case "/settings":
             setShowSettings(true);
             return;
@@ -359,6 +363,7 @@ export default function App() {
         onSettings={() => setShowSettings(true)}
         onMemory={() => setPanel("memory")}
         onSkills={() => setPanel("skills")}
+        onMcp={() => setPanel("mcp")}
         keyMask={keyMask}
       />
 
@@ -398,6 +403,7 @@ export default function App() {
         />
       )}
       {panel === "skills" && <SkillsPanel chatId={activeId} onClose={() => setPanel("none")} />}
+      {panel === "mcp" && <McpPanel onClose={() => setPanel("none")} />}
 
       {showSettings && settings && (
         <SettingsDialog

@@ -2,12 +2,13 @@ mod api;
 mod approvals;
 mod commands;
 mod conversation;
+mod mcp;
 mod memory;
 mod skills;
 mod store;
 mod tools;
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
@@ -17,6 +18,8 @@ pub struct AppState {
     pub paths: store::paths::AppPaths,
     pub settings: Mutex<store::settings::Settings>,
     pub approvals: approvals::Approvals,
+    /// Long-running, so it waits on an async lock rather than blocking the UI.
+    pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -39,12 +42,23 @@ pub fn run() {
                 eprintln!("could not write example skills: {err}");
             }
 
+            let mcp_manager = Arc::new(tokio::sync::RwLock::new(mcp::McpManager::new(
+                paths.mcp_file(),
+            )));
+
             app.manage(AppState {
                 db: Mutex::new(conn),
                 http,
                 paths,
                 settings: Mutex::new(settings),
                 approvals: approvals::Approvals::default(),
+                mcp: mcp_manager.clone(),
+            });
+
+            // Starting MCP servers can involve downloading a package, so it
+            // happens in the background: the window opens immediately.
+            tauri::async_runtime::spawn(async move {
+                mcp_manager.write().await.load().await;
             });
             Ok(())
         })
@@ -82,7 +96,24 @@ pub fn run() {
             commands::list_tool_permissions,
             commands::revoke_tool_permission,
             commands::send_message,
+            commands::mcp_status,
+            commands::mcp_config_path,
+            commands::mcp_servers,
+            commands::mcp_save_servers,
+            commands::mcp_reload,
+            commands::mcp_restart,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|handle, event| {
+            // MCP servers are child processes; none may outlive the app.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = handle.try_state::<AppState>() {
+                    let mcp = state.mcp.clone();
+                    tauri::async_runtime::block_on(async move {
+                        mcp.write().await.stop_all().await;
+                    });
+                }
+            }
+        });
 }

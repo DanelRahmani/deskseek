@@ -11,6 +11,7 @@ interface Props {
   onSettings: () => void;
   onMemory: () => void;
   onSkills: () => void;
+  onMcp: () => void;
   keyMask: string | null;
 }
 
@@ -30,6 +31,7 @@ export function Sidebar({
   onSettings,
   onMemory,
   onSkills,
+  onMcp,
   keyMask,
 }: Props) {
   return (
@@ -109,6 +111,12 @@ export function Sidebar({
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
         >
           Skills
+        </button>
+        <button
+          onClick={onMcp}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition hover:bg-neutral-900 hover:text-neutral-200"
+        >
+          MCP servers
         </button>
         <button
           onClick={onSettings}

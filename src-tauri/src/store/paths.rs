@@ -39,6 +39,12 @@ impl AppPaths {
         self.root.join("skills")
     }
 
+    /// Which MCP servers to run. Hand-editable, so it lives beside the settings
+    /// rather than inside them.
+    pub fn mcp_file(&self) -> PathBuf {
+        self.root.join("mcp.json")
+    }
+
     /// Where chat-mode documents live by default. A chat can point elsewhere.
     pub fn documents_dir(&self) -> PathBuf {
         self.root.join("documents")

@@ -7,6 +7,7 @@ use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
 use crate::conversation::{agent, summarize};
+use crate::mcp::{McpServer, ServerStatus};
 use crate::memory;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
@@ -388,6 +389,72 @@ pub async fn send_message(
     }
 
     agent::run(app, &state, &chat_id).await
+}
+
+// ------------------------------------------------------------------- MCP
+
+/// Everything the MCP panel needs in one round trip.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpStatus {
+    pub servers: Vec<ServerStatus>,
+    pub config_error: Option<String>,
+    pub tool_count: usize,
+    pub running_count: usize,
+    pub config_path: String,
+}
+
+async fn mcp_snapshot(state: &AppState) -> McpStatus {
+    let mcp = state.mcp.read().await;
+    McpStatus {
+        servers: mcp.status(),
+        config_error: mcp.config_error(),
+        tool_count: mcp.tool_count(),
+        running_count: mcp.serviced_count(),
+        config_path: state.paths.mcp_file().to_string_lossy().to_string(),
+    }
+}
+
+#[tauri::command]
+pub async fn mcp_status(state: State<'_, AppState>) -> Result<McpStatus, String> {
+    Ok(mcp_snapshot(&state).await)
+}
+
+#[tauri::command]
+pub async fn mcp_config_path(state: State<'_, AppState>) -> Result<String, String> {
+    Ok(state.paths.mcp_file().to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn mcp_servers(state: State<'_, AppState>) -> Result<Vec<McpServer>, String> {
+    Ok(state.mcp.read().await.configured_servers())
+}
+
+#[tauri::command]
+pub async fn mcp_save_servers(
+    state: State<'_, AppState>,
+    servers: Vec<McpServer>,
+) -> Result<McpStatus, String> {
+    state.mcp.write().await.replace_servers(servers).await?;
+    Ok(mcp_snapshot(&state).await)
+}
+
+/// Re-read `mcp.json` in case the user edited it by hand.
+#[tauri::command]
+pub async fn mcp_reload(state: State<'_, AppState>) -> Result<McpStatus, String> {
+    state.mcp.write().await.reload().await;
+    Ok(mcp_snapshot(&state).await)
+}
+
+/// Restart one server. A failure is reported through the status, not as an
+/// error, so the panel can show *which* server is unhappy.
+#[tauri::command]
+pub async fn mcp_restart(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<McpStatus, String> {
+    let _ = state.mcp.write().await.restart_one(&name).await;
+    Ok(mcp_snapshot(&state).await)
 }
 
 #[cfg(test)]

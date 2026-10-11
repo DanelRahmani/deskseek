@@ -8,6 +8,8 @@ import type {
   DoneEvent,
   ErrorEvent,
   MemoryProposal,
+  McpServer,
+  McpStatus,
   MessageRow,
   ModelInfo,
   SectionKind,
@@ -63,6 +65,13 @@ export const api = {
     invoke<void>("revoke_tool_permission", { workspace, tool }),
 
   documentsDir: () => invoke<string>("documents_dir"),
+
+  mcpStatus: () => invoke<McpStatus>("mcp_status"),
+  mcpServers: () => invoke<McpServer[]>("mcp_servers"),
+  mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),
+  mcpReload: () => invoke<McpStatus>("mcp_reload"),
+  mcpRestart: (name: string) => invoke<McpStatus>("mcp_restart", { name }),
+  mcpConfigPath: () => invoke<string>("mcp_config_path"),
 
   sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
     invoke<void>("send_message", { chatId, text, attachments }),

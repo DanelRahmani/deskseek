@@ -66,6 +66,34 @@ export interface Settings {
   browserPath: string;
 }
 
+/** One MCP server, as stored in mcp.json. */
+export interface McpServer {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  enabled: boolean;
+  /** Run this server's readOnlyHint tools without asking. Off by default. */
+  trustReadOnly: boolean;
+}
+
+export interface McpServerStatus {
+  name: string;
+  enabled: boolean;
+  running: boolean;
+  toolCount: number;
+  /** Why the server is not running, when it is not. */
+  error: string | null;
+}
+
+export interface McpStatus {
+  servers: McpServerStatus[];
+  configError: string | null;
+  toolCount: number;
+  runningCount: number;
+  configPath: string;
+}
+
 export interface Usage {
   prompt_tokens: number;
   completion_tokens: number;

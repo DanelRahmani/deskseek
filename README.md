@@ -6,8 +6,8 @@ A lightweight desktop client for the DeepSeek API — built with **Tauri v2** (R
 Two sections share one core:
 
 - **Chat** — a general assistant with streaming replies, a collapsible *thinking* pane, and a
-  global `memory.md` that is always injected into the system prompt.
-- **Coding** — an agent that works inside a folder you trust (planned; see *Status*).
+  global `MEMORY.md` that is always injected into the system prompt.
+- **Coding** — an agent that works inside a folder you trust.
 
 Bring your own API key: it is stored in the **OS keychain** (Credential Manager / Keychain /
 Secret Service), never in a config file and never in a log.
@@ -31,7 +31,7 @@ Both sections are functional:
 - **Skills** — drop-in instruction files at `skills/<id>/SKILL.md`, toggled per chat
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
-- `/compact` and friends — `/help` lists the built-in commands
+- `/compact` and friends — `/help` lists the built-in commands, including `/mcp`
 - Approximate **context-window meter** in the header
 
 **Coding**
@@ -45,7 +45,47 @@ Both sections are functional:
   symlink escapes; the API key is stripped from every child process environment
 - Project context from `AGENTS.md`, else `.deskseek/context.md`
 
-MCP plugins are the next milestone.
+**Internet access** (both sections)
+
+- `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
+  JavaScript-built pages work), and `web_search` queries a **SearXNG** instance
+- All three are read-only, so they never prompt; turn them off in **Settings → Browsing**
+- `browser_read` drives the Chromium-family browser already on your machine — nothing to
+  download. Point it at Chrome or Edge explicitly if auto-detection picks the wrong one
+
+**MCP servers**
+
+DeskSeek is an MCP *client*. Servers you configure are launched as child processes and their
+tools are offered to the model in **both** sections:
+
+- Config lives in `mcp.json` next to your settings, and can be edited in the app under
+  **MCP servers** or by hand (the panel has a *Re-read file* button for that)
+- Tools are exposed as `mcp__<server>__<tool>`, so two servers offering `search` never collide
+- **Every MCP call asks first.** A server's own `readOnlyHint` does not skip the prompt unless
+  you tick *trust read-only* for that server — a server describes its own tools, so that
+  shortcut is opt-in
+- Server output is treated as data, not instructions
+- Servers start in the background, so a slow `npx` download never blocks the window
+- Child processes are stopped when the app exits
+
+```json
+{
+  "servers": [
+    {
+      "name": "everything",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-everything"],
+      "env": {},
+      "enabled": true,
+      "trustReadOnly": false
+    }
+  ]
+}
+```
+
+The protocol work is done by the official [`rmcp`](https://github.com/modelcontextprotocol/rust-sdk)
+SDK, so discovery, version negotiation, pagination and multi-round-trip requests are handled for
+you. Built with `default-features = false` and only the client + stdio transport features.
 
 ## Requirements
 
