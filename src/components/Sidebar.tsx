@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ChatRow, SectionKind } from "../types";
 
 interface Props {
@@ -37,6 +38,18 @@ export function Sidebar({
   keyMask,
   runningIds,
 }: Props) {
+  const [query, setQuery] = useState("");
+  // A plain substring match on the title or the folder. A search box over a
+  // short list does not need more, and anything fancier would need a reason.
+  const needle = query.trim().toLowerCase();
+  const shown = needle
+    ? chats.filter(
+        (c) =>
+          c.title.toLowerCase().includes(needle) ||
+          (c.workspace ?? "").toLowerCase().includes(needle),
+      )
+    : chats;
+
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
       <div className="px-3 pt-3">
@@ -71,11 +84,25 @@ export function Sidebar({
         </button>
       </div>
 
+      <div className="px-3 pb-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search…"
+          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+        />
+      </div>
+
       <nav className="flex-1 overflow-y-auto px-3 pb-2">
         {chats.length === 0 && (
           <p className="px-1 py-4 text-xs text-neutral-600">No conversations yet.</p>
         )}
-        {chats.map((c) => (
+        {chats.length > 0 && shown.length === 0 && (
+          <p className="px-1 py-4 text-xs text-neutral-600">
+            Nothing matches "{query.trim()}".
+          </p>
+        )}
+        {shown.map((c) => (
           <div
             key={c.id}
             className={`group flex items-center gap-1 rounded-md px-2 py-1.5 text-sm transition ${
@@ -97,6 +124,14 @@ export function Sidebar({
               )}
               <span className="truncate">{c.title}</span>
             </button>
+            {c.cost_usd > 0 && (
+              <span
+                className="shrink-0 text-[10px] text-neutral-600"
+                title="Total spent on this chat"
+              >
+                {c.cost_usd < 0.01 ? "<$0.01" : `$${c.cost_usd.toFixed(2)}`}
+              </span>
+            )}
             <button
               onClick={() => onDelete(c.id)}
               className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-red-400 group-hover:block"

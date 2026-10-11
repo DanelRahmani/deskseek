@@ -29,6 +29,7 @@ assert(resolveShortcut(press("w", { ctrlKey: true })) === "close-tab", "Ctrl+W c
 assert(resolveShortcut(press("b", { ctrlKey: true })) === "toggle-files", "Ctrl+B toggles files");
 assert(resolveShortcut(press("m", { ctrlKey: true })) === "open-memory", "Ctrl+M opens memory");
 assert(resolveShortcut(press(",", { ctrlKey: true })) === "open-settings", "Ctrl+, opens settings");
+assert(resolveShortcut(press("k", { ctrlKey: true })) === "command-palette", "Ctrl+K opens the palette");
 assert(resolveShortcut(press("\\", { ctrlKey: true })) === "toggle-split", "Ctrl+\\ toggles the split");
 assert(resolveShortcut(press("1", { ctrlKey: true })) === "focus-pane-0", "Ctrl+1 focuses pane 0");
 assert(resolveShortcut(press("2", { ctrlKey: true })) === "focus-pane-1", "Ctrl+2 focuses pane 1");
@@ -67,6 +68,7 @@ for (const action of [
   "toggle-files",
   "open-memory",
   "open-settings",
+  "command-palette",
   "toggle-split",
   "focus-pane-0",
   "focus-pane-1",

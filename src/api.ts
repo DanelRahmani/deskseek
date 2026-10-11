@@ -94,6 +94,8 @@ export const api = {
     invoke<void>("revoke_tool_permission", { workspace, tool }),
 
   documentsDir: () => invoke<string>("documents_dir"),
+  /** Write a whole chat to a Markdown file in the documents folder. */
+  exportChat: (chatId: string) => invoke<string>("export_chat", { chatId }),
   /** Open a generated document in the app that owns its type. */
   openDocument: (path: string) => invoke<void>("open_document", { path }),
   /** Show a file or folder in the system file manager. */

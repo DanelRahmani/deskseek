@@ -20,6 +20,8 @@ pub struct ChatRow {
     pub effort: String,
     /// `manual` | `auto` | `skip` — see `tools::guard::PermissionMode`.
     pub permission_mode: String,
+    /// Accumulated USD for this chat, summed from each turn's usage.
+    pub cost_usd: f64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -48,6 +50,10 @@ CREATE TABLE IF NOT EXISTS chats (
     thinking     INTEGER NOT NULL DEFAULT 1,
     effort       TEXT NOT NULL DEFAULT 'high',
     permission_mode TEXT NOT NULL DEFAULT 'manual',
+    -- Accumulated USD spent across this chat's turns. Written as each run
+    -- finishes, so the total survives a reload; the live usage in the UI is
+    -- only ever the last turn's.
+    cost_usd     REAL NOT NULL DEFAULT 0,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
@@ -183,12 +189,16 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE memory_proposals ADD COLUMN target TEXT NOT NULL DEFAULT 'profile'",
         [],
     );
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(conn)
 }
 
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -201,8 +211,9 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             thinking: r.get::<_, i64>(5)? != 0,
             effort: r.get(6)?,
             permission_mode: r.get(7)?,
-            created_at: r.get(8)?,
-            updated_at: r.get(9)?,
+            cost_usd: r.get(8)?,
+            created_at: r.get(9)?,
+            updated_at: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -233,6 +244,7 @@ pub fn create_chat(
         thinking,
         effort: effort.to_string(),
         permission_mode: permission_mode.to_string(),
+        cost_usd: 0.0,
         created_at: ts,
         updated_at: ts,
     })
@@ -240,7 +252,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, created_at, updated_at
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -253,11 +265,21 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 thinking: r.get::<_, i64>(5)? != 0,
                 effort: r.get(6)?,
                 permission_mode: r.get(7)?,
-                created_at: r.get(8)?,
-                updated_at: r.get(9)?,
+                cost_usd: r.get(8)?,
+                created_at: r.get(9)?,
+                updated_at: r.get(10)?,
             })
         },
     )
+}
+
+/// Adds one turn's spend to a chat's running total, so it survives a reload.
+pub fn add_chat_cost(conn: &Connection, id: &str, cost: f64) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET cost_usd = cost_usd + ?2 WHERE id = ?1",
+        params![id, cost],
+    )?;
+    Ok(())
 }
 
 pub fn set_chat_permission_mode(

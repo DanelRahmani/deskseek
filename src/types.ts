@@ -17,6 +17,8 @@ export interface ChatRow {
   effort: string;
   /** `manual` asks before every write and command; `auto` and `skip` do not. */
   permission_mode: PermissionMode;
+  /** Accumulated USD spent across this chat's turns. */
+  cost_usd: number;
   created_at: number;
   updated_at: number;
 }

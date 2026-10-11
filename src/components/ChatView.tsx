@@ -73,6 +73,7 @@ export const COMMANDS = [
   { name: "/folder", description: "Pick the folder for a coding task" },
   { name: "/settings", description: "Open settings" },
   { name: "/new", description: "Start a new chat" },
+  { name: "/export", description: "Write this chat to a Markdown file" },
   { name: "/help", description: "List the commands" },
 ];
 

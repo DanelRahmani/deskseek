@@ -48,7 +48,11 @@ Both sections are functional:
   the panel's file picker and remove one from the same list (the panel also opens the folder)
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
-- `/compact` and friends — `/help` lists the built-in commands, including `/mcp`
+- `/compact` and friends — `/help` lists the built-in commands, including `/mcp` and `/export`
+- **Command palette** (`Ctrl+K`) — type to jump to a conversation or to run the same action a
+  panel button does; every entry is a state change the UI already makes
+- **Sidebar search** — filter the conversation list by title or folder as you type
+- `/export` — write the whole conversation to a Markdown file in your documents folder
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
   and the checklist is pinned above the composer, ticking over as steps start and finish. It is
   collapsible, and a step in progress pulses so a long job is visible at a glance
@@ -57,6 +61,8 @@ Both sections are functional:
 - **Documents** — `doc_create`, `sheet_create` and `slides_create` write real `.md`/`.docx`/`.pdf`,
   `.xlsx` and `.pptx` files to your documents folder, with an *Open* button on the result
 - Approximate **context-window meter** in the header
+- **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
+  real usage as every turn ends
 
 **Coding**
 
@@ -167,6 +173,7 @@ reaches the state change its button already makes:
 | `Ctrl+W` | Close the focused tab |
 | `Ctrl+B` | Show or hide the file tree |
 | `Ctrl+M` | Memory panel |
+| `Ctrl+K` | Command palette |
 | `Ctrl+,` | Settings |
 | `Ctrl+\` | Split into two panes, or back to one |
 | `Ctrl+1` / `Ctrl+2` | Move focus to the left / right pane |

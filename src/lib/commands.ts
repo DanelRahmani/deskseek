@@ -1,0 +1,66 @@
+/**
+ * The command palette's contents and its matching rule, kept pure so both can be
+ * pinned without a browser (see commands.check.ts). App.tsx builds the list and
+ * turns the chosen id back into the same state change its button would make.
+ */
+
+export interface PaletteItem {
+  id: string;
+  label: string;
+  hint: string;
+}
+
+/**
+ * Statics first, then one entry per chat. Chat entries carry `chat:<id>`, so the
+ * caller can tell a navigation apart from an action without a second lookup.
+ */
+export function buildPalette(
+  chats: ReadonlyArray<{ id: string; title: string; kind: string }>,
+  hasChat: boolean,
+): PaletteItem[] {
+  const items: PaletteItem[] = [
+    { id: "new-chat", label: "New chat", hint: "Action" },
+    { id: "settings", label: "Settings", hint: "Action" },
+    { id: "memory", label: "Memory", hint: "Action" },
+    { id: "skills", label: "Skills", hint: "Action" },
+    { id: "mcp", label: "MCP servers", hint: "Action" },
+    { id: "files", label: "Show or hide the file tree", hint: "Action" },
+    { id: "split", label: "Split into two panes", hint: "Action" },
+  ];
+  // Exporting needs something to export.
+  if (hasChat) {
+    items.push({ id: "export", label: "Export this chat to Markdown", hint: "Action" });
+  }
+  for (const chat of chats) {
+    items.push({
+      id: `chat:${chat.id}`,
+      label: chat.title,
+      hint: chat.kind === "coding" ? "Coding" : "Chat",
+    });
+  }
+  return items;
+}
+
+/**
+ * Filter and rank. Every whitespace-separated term must appear somewhere in the
+ * item, so a second word narrows rather than widens. A label that *starts with*
+ * the query outranks one that merely contains it, and a label match outranks one
+ * that only came from the hint. Ties keep the input order, which is why the sort
+ * has to be stable.
+ */
+export function matchPalette(items: readonly PaletteItem[], query: string): PaletteItem[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return items.slice();
+
+  const scored: { item: PaletteItem; score: number }[] = [];
+  for (const item of items) {
+    const label = item.label.toLowerCase();
+    const haystack = `${label} ${item.hint.toLowerCase()}`;
+    if (!terms.every((term) => haystack.includes(term))) continue;
+    const first = terms[0];
+    const score = label.startsWith(first) ? 0 : label.includes(first) ? 1 : 2;
+    scored.push({ item, score });
+  }
+  scored.sort((a, b) => a.score - b.score);
+  return scored.map((entry) => entry.item);
+}

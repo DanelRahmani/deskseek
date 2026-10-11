@@ -854,6 +854,10 @@ pub async fn run(
         let peak = models::is_peak(chrono::Utc::now());
         if let Some(cost) = models::cost_usd(&chat.model, &outcome.usage, peak) {
             cost_total += cost;
+            // Fold this turn's spend into the chat as it happens, so a stop or
+            // an error later in the run does not lose what was already paid for.
+            let conn = state.db.lock().unwrap();
+            let _ = db::add_chat_cost(&conn, chat_id, cost);
         }
         last_usage = Some(outcome.usage.clone());
         last_finish = outcome.finish_reason.clone();

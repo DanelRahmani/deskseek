@@ -300,13 +300,74 @@ pub async fn compact_chat(state: State<'_, AppState>, chat_id: String) -> Result
 
 #[tauri::command]
 pub fn documents_dir(state: State<'_, AppState>) -> String {
+    documents_dir_path(&state).display().to_string()
+}
+
+/// The folder generated documents land in: the configured one, else the default.
+/// Shared so the export cannot pick a different folder than the document tools.
+fn documents_dir_path(state: &AppState) -> PathBuf {
     let configured = state.settings.lock().unwrap().documents_dir.clone();
-    let dir = if configured.trim().is_empty() {
+    if configured.trim().is_empty() {
         state.paths.documents_dir()
     } else {
-        std::path::PathBuf::from(configured)
+        PathBuf::from(configured)
+    }
+}
+
+/// Write a chat to a Markdown file in the documents folder, so it can be read,
+/// printed or mailed. A second export of the same chat becomes `name-2` rather
+/// than overwriting the first. Returns the path written.
+#[tauri::command]
+pub fn export_chat(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    let (chat, messages) = {
+        let conn = state.db.lock().unwrap();
+        let chat = db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?;
+        let messages = db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
+        (chat, messages)
     };
-    dir.display().to_string()
+    let dir = documents_dir_path(&state);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let path = crate::tools::docs::free_path(&dir, &crate::tools::docs::slug(&chat.title), "md");
+    std::fs::write(&path, chat_markdown(&chat, &messages)).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// Render a conversation as Markdown.
+///
+/// Only what a reader would want: the user's words and the assistant's written
+/// replies. Tool rows are the machinery behind a reply — their output can be
+/// enormous and is not the conversation — and a turn that produced only a tool
+/// call has nothing to say on its own, so both are left out.
+fn chat_markdown(chat: &db::ChatRow, messages: &[db::MessageRow]) -> String {
+    let mut out = format!("# {}\n\n", chat.title);
+    if let Some(workspace) = &chat.workspace {
+        out.push_str(&format!("_Working in `{workspace}`._\n\n"));
+    }
+    for message in messages {
+        let heading = match message.role.as_str() {
+            "user" => "## You",
+            "assistant" => "## DeskSeek",
+            _ => continue,
+        };
+        let Some(body) = message
+            .content
+            .as_deref()
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+        else {
+            continue;
+        };
+        out.push_str(&format!("{heading}\n\n{body}\n\n"));
+        if let Some(json) = message.attachments_json.as_deref() {
+            if let Ok(items) = serde_json::from_str::<Vec<Attachment>>(json) {
+                let names: Vec<&str> = items.iter().map(|a| a.name.as_str()).collect();
+                if !names.is_empty() {
+                    out.push_str(&format!("_(attached: {})_\n\n", names.join(", ")));
+                }
+            }
+        }
+    }
+    out
 }
 
 #[tauri::command]
@@ -1139,7 +1200,66 @@ pub async fn mcp_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::title_from;
+    use super::{chat_markdown, title_from};
+    use crate::store::db;
+
+    fn chat() -> db::ChatRow {
+        db::ChatRow {
+            id: "c1".to_string(),
+            title: "Roadmap".to_string(),
+            kind: "chat".to_string(),
+            workspace: None,
+            model: "deepseek-flash".to_string(),
+            thinking: true,
+            effort: "high".to_string(),
+            permission_mode: "manual".to_string(),
+            cost_usd: 0.0,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn message(role: &str, content: Option<&str>, attachments: Option<&str>) -> db::MessageRow {
+        db::MessageRow {
+            id: "m".to_string(),
+            chat_id: "c1".to_string(),
+            seq: 0,
+            role: role.to_string(),
+            content: content.map(str::to_string),
+            reasoning_content: None,
+            tool_calls_json: None,
+            tool_call_id: None,
+            attachments_json: attachments.map(str::to_string),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn an_export_keeps_the_speakers_and_drops_the_machinery() {
+        let messages = vec![
+            message(
+                "user",
+                Some("Plan the launch"),
+                Some(r#"[{"name":"brief.pdf","mime":"application/pdf","data_url":"data:,"}]"#),
+            ),
+            message("user", Some("   "), None), // blank: nothing to say
+            message("assistant", None, None),   // tool-only turn: nothing to say
+            message("tool", Some("noisy output"), None), // machinery, not the chat
+            message("assistant", Some("Here is the plan."), None),
+        ];
+        let md = chat_markdown(&chat(), &messages);
+
+        assert!(md.starts_with("# Roadmap"));
+        assert!(md.contains("## You\n\nPlan the launch"));
+        assert!(md.contains("_(attached: brief.pdf)_"));
+        assert!(md.contains("## DeskSeek\n\nHere is the plan."));
+        assert!(
+            !md.contains("noisy output"),
+            "tool output is machinery, not the conversation"
+        );
+        // The blank user row was dropped, so exactly one "## You" survives.
+        assert_eq!(md.matches("## You").count(), 1);
+    }
 
     #[test]
     fn title_comes_from_the_first_line() {

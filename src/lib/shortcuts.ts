@@ -12,6 +12,7 @@ export type Shortcut =
   | "toggle-files"
   | "open-memory"
   | "open-settings"
+  | "command-palette"
   | "toggle-split"
   | "focus-pane-0"
   | "focus-pane-1"
@@ -31,6 +32,7 @@ export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: s
   { keys: "Ctrl+B", action: "toggle-files", label: "Show or hide the file tree" },
   { keys: "Ctrl+M", action: "open-memory", label: "Open the memory panel" },
   { keys: "Ctrl+,", action: "open-settings", label: "Open settings" },
+  { keys: "Ctrl+K", action: "command-palette", label: "Open the command palette" },
   { keys: "Ctrl+\\", action: "toggle-split", label: "Split the view" },
   { keys: "Ctrl+1", action: "focus-pane-0", label: "Focus the left pane" },
   { keys: "Ctrl+2", action: "focus-pane-1", label: "Focus the right pane" },
@@ -72,6 +74,8 @@ export function resolveShortcut(e: KeyPress, typing = false): Shortcut | null {
       return e.shiftKey ? null : "open-memory";
     case ",":
       return e.shiftKey ? null : "open-settings";
+    case "k":
+      return e.shiftKey ? null : "command-palette";
     case "\\":
       return e.shiftKey ? null : "toggle-split";
     case "1":

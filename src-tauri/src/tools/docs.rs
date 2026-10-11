@@ -185,7 +185,7 @@ pub fn slug_with(name: &str, fallback: &str) -> String {
 
 /// A path in `dir` that is not taken yet, so a second document with the same
 /// name is `name-2` rather than overwriting the first.
-fn free_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
+pub(crate) fn free_path(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     let first = dir.join(format!("{stem}.{ext}"));
     if !first.exists() {
         return first;

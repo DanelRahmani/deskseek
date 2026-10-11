@@ -39,9 +39,11 @@ import { FilesPanel } from "./components/FilesPanel";
 import { ArtifactPanel } from "./components/ArtifactPanel";
 import { ContextPanel } from "./components/ContextPanel";
 import { TabStrip } from "./components/TabStrip";
+import { CommandPalette } from "./components/CommandPalette";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
 import { resolveShortcut } from "./lib/shortcuts";
+import { buildPalette } from "./lib/commands";
 import { resolveMode, resolveTheme } from "./lib/theme";
 import { tokensFromChars } from "./lib/context";
 
@@ -68,7 +70,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /help";
+  "/compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -90,6 +92,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
+  const [palette, setPalette] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Live turn state, keyed by chat — so a run in a background chat keeps
@@ -474,6 +477,10 @@ export default function App() {
           case "/new":
             await newChat();
             return;
+          case "/export":
+            if (chatId) await exportChat(chatId);
+            else setError("Open a chat to export.");
+            return;
           case "/compact": {
             if (!chatId) {
               setError("Nothing to compact yet.");
@@ -641,6 +648,58 @@ export default function App() {
     }));
   }, []);
 
+  // Write the whole conversation to the documents folder. The file name comes
+  // back so the notice can name it rather than say "somewhere".
+  const exportChat = useCallback(async (chatId: string) => {
+    try {
+      const path = await api.exportChat(chatId);
+      const name = path.split(/[\\/]/).pop() ?? path;
+      setNotice(`Exported to ${name} in your documents folder.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  // The palette lists what the buttons already do for the current section, plus
+  // a jump to each of its chats — every entry is a state change the UI can make.
+  const paletteItems = useMemo(() => buildPalette(chats, !!activeId), [chats, activeId]);
+  const runPalette = useCallback(
+    (id: string) => {
+      setPalette(false);
+      if (id.startsWith("chat:")) {
+        selectChat(id.slice("chat:".length));
+        return;
+      }
+      switch (id) {
+        case "new-chat":
+          void newChat();
+          return;
+        case "settings":
+          setShowSettings(true);
+          return;
+        case "memory":
+          setPanel("memory");
+          return;
+        case "skills":
+          setPanel("skills");
+          return;
+        case "mcp":
+          setPanel("mcp");
+          return;
+        case "files":
+          setPanel((current) => (current === "files" ? "none" : "files"));
+          return;
+        case "split":
+          toggleSplit();
+          return;
+        case "export":
+          if (activeIdRef.current) void exportChat(activeIdRef.current);
+          return;
+      }
+    },
+    [exportChat, newChat, selectChat, toggleSplit],
+  );
+
   // One window listener, resolved by the pure map in lib/shortcuts.ts. Every
   // action below is the same state change its button makes, so the keyboard can
   // never do something the UI cannot.
@@ -668,6 +727,9 @@ export default function App() {
         case "open-settings":
           setShowSettings(true);
           return;
+        case "command-palette":
+          setPalette((open) => !open);
+          return;
         case "toggle-split":
           toggleSplit();
           return;
@@ -678,8 +740,9 @@ export default function App() {
           return;
         }
         case "dismiss":
-          // Topmost first: a dialog covers a panel.
-          if (showSettings) setShowSettings(false);
+          // Topmost first: the palette sits above a dialog, which covers a panel.
+          if (palette) setPalette(false);
+          else if (showSettings) setShowSettings(false);
           else if (showSetup) setShowSetup(false);
           else setPanel("none");
           return;
@@ -687,7 +750,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, closeTab, newChat, showSettings, showSetup, toggleSplit]);
+  }, [activeId, closeTab, newChat, palette, runPalette, showSettings, showSetup, toggleSplit]);
 
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),
@@ -904,6 +967,14 @@ export default function App() {
             setSettings(saved);
             setKeyMask(mask);
           }}
+        />
+      )}
+
+      {palette && (
+        <CommandPalette
+          items={paletteItems}
+          onRun={runPalette}
+          onClose={() => setPalette(false)}
         />
       )}
 
