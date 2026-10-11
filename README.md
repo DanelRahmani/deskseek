@@ -52,8 +52,9 @@ Both sections are functional:
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - `/compact` and friends — `/help` lists the built-in commands, including `/mcp` and `/export`
-- **Command palette** (`Ctrl+K`) — type to jump to a conversation or to run the same action a
-  panel button does; every entry is a state change the UI already makes
+- **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
+  recently used first, or to run the same action a panel button does; every entry is a state
+  change the UI already makes
 - **Sidebar search** — filter the conversation list by title or folder as you type
 - `/export` — write the whole conversation to a Markdown file in your documents folder
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool

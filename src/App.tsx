@@ -660,14 +660,23 @@ export default function App() {
     }
   }, []);
 
-  // The palette lists what the buttons already do for the current section, plus
-  // a jump to each of its chats — every entry is a state change the UI can make.
-  const paletteItems = useMemo(() => buildPalette(chats, !!activeId), [chats, activeId]);
+  // The palette is global — both sections' chats, most recently used first — so
+  // Ctrl+K finds a coding task while you are in chat and the reverse. The hint
+  // already names the section, and picking one switches to it below.
+  const paletteItems = useMemo(() => {
+    const all = Object.values(chatsById).sort((a, b) => b.updated_at - a.updated_at);
+    return buildPalette(all, !!activeId);
+  }, [chatsById, activeId]);
   const runPalette = useCallback(
     (id: string) => {
       setPalette(false);
       if (id.startsWith("chat:")) {
-        selectChat(id.slice("chat:".length));
+        const chatId = id.slice("chat:".length);
+        const target = chatsById[chatId];
+        // A chat from the other section: follow it there, or the sidebar and
+        // the tab strip would still be showing the one you left.
+        if (target && target.kind !== kindRef.current) setKind(target.kind);
+        void selectChat(chatId);
         return;
       }
       switch (id) {
@@ -697,7 +706,7 @@ export default function App() {
           return;
       }
     },
-    [exportChat, newChat, selectChat, toggleSplit],
+    [chatsById, exportChat, newChat, selectChat, toggleSplit],
   );
 
   // One window listener, resolved by the pure map in lib/shortcuts.ts. Every
