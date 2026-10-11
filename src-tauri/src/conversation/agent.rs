@@ -132,6 +132,15 @@ fn build_system(
         }
     }
 
+    base.push_str(
+        "\n\n# Planning\n\n\
+For anything with more than two or three steps, call `update_tasks` with the whole plan before \
+you start working, and call it again each time a step starts or finishes — send the full list \
+every time, it replaces the previous one. One short line per step, exactly one step \
+`in_progress` at a time, and a step is `completed` only when it is actually finished. The user \
+watches this list, so an out-of-date one is worse than none.",
+    );
+
     if settings.browsing_enabled {
         let search = if settings.searxng_url.trim().is_empty() {
             "Web search is not configured on this machine yet, so `web_search` will fail — reach \
@@ -362,6 +371,26 @@ async fn run_tool(
             "Saved {} entr{} to MEMORY.md.",
             entries.len(),
             if entries.len() == 1 { "y" } else { "ies" }
+        ));
+    }
+
+    if name == "update_tasks" {
+        // Nothing is written and nothing runs: this is the model publishing its
+        // plan for the UI to render. A bad shape is rejected so the model fixes
+        // the call instead of the panel silently showing nothing.
+        let tasks = tools::parse_tasks(args)?;
+        let done = tasks
+            .iter()
+            .filter(|t| t.status == tools::TaskStatus::Completed)
+            .count();
+        let doing = tasks
+            .iter()
+            .filter(|t| t.status == tools::TaskStatus::InProgress)
+            .count();
+        return Ok(format!(
+            "Checklist updated: {} task{}, {done} done, {doing} in progress.",
+            tasks.len(),
+            if tasks.len() == 1 { "" } else { "s" }
         ));
     }
 

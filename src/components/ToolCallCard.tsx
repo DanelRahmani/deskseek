@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ToolRun } from "../types";
+import { tasksFrom } from "../lib/tasks";
 
 const ICONS: Record<string, string> = {
   read_file: "📄",
@@ -14,6 +15,7 @@ const ICONS: Record<string, string> = {
   git_log: "🌿",
   git_commit: "🌿",
   git_push: "🌿",
+  update_tasks: "☑",
 };
 
 function describe(run: ToolRun): string {
@@ -34,6 +36,13 @@ function describe(run: ToolRun): string {
       return pick("pattern");
     case "git_commit":
       return pick("message");
+    case "update_tasks": {
+      // The plan itself is pinned above the composer; here a count is enough.
+      const tasks = tasksFrom([run]);
+      return tasks.length
+        ? `${tasks.filter((t) => t.status === "completed").length}/${tasks.length} done`
+        : "";
+    }
     default:
       return "";
   }
@@ -41,6 +50,12 @@ function describe(run: ToolRun): string {
 
 export function ToolCallCard({ run }: { run: ToolRun }) {
   const [open, setOpen] = useState(false);
+
+  // A failed call opens itself: the error is the reason the card is there.
+  useEffect(() => {
+    if (run.status === "error") setOpen(true);
+  }, [run.status]);
+
   const tone =
     run.status === "running"
       ? "border-sky-900/60 bg-sky-950/30 text-sky-300"
@@ -62,7 +77,11 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
         </span>
       </button>
       {open && run.output && (
-        <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap border-t border-white/5 pt-2 text-[11px] leading-relaxed text-neutral-400">
+        <pre
+          className={`mt-2 max-h-72 overflow-auto whitespace-pre-wrap border-t border-white/5 pt-2 text-[11px] leading-relaxed ${
+            run.status === "error" ? "text-red-300/90" : "text-neutral-400"
+          }`}
+        >
           {run.output}
         </pre>
       )}

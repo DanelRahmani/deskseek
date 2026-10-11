@@ -35,6 +35,71 @@ fn params(props: serde_json::Value, required: &[&str]) -> serde_json::Value {
     })
 }
 
+/// How many steps a plan may have. The panel is a progress indicator, not a
+/// project tracker; a model that needs more than this needs to re-plan.
+pub const MAX_TASKS: usize = 20;
+
+/// One line of the model's plan. A closed set, so a typo in the tool call is
+/// caught here rather than rendering as a mystery glyph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Task {
+    pub text: String,
+    pub status: TaskStatus,
+}
+
+/// Validates the `update_tasks` arguments. Strict about the shape: the error
+/// text is fed back to the model, so it should say what to send instead.
+///
+/// The frontend parses the same arguments for display and is deliberately
+/// forgiving — this is where the model gets corrected.
+pub fn parse_tasks(args: &serde_json::Value) -> Result<Vec<Task>, String> {
+    let raw = args
+        .get("tasks")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("update_tasks needs a \"tasks\" array")?;
+    if raw.is_empty() {
+        return Err("update_tasks needs at least one task".to_string());
+    }
+    if raw.len() > MAX_TASKS {
+        return Err(format!("update_tasks takes at most {MAX_TASKS} tasks"));
+    }
+
+    let mut tasks = Vec::with_capacity(raw.len());
+    for (index, item) in raw.iter().enumerate() {
+        let at = index + 1;
+        let text = item
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("task {at} needs a non-empty \"text\""))?;
+        let status = match item.get("status").and_then(serde_json::Value::as_str) {
+            None | Some("pending") => TaskStatus::Pending,
+            Some("in_progress") => TaskStatus::InProgress,
+            Some("completed") => TaskStatus::Completed,
+            Some(other) => {
+                return Err(format!(
+                    "task {at} has status '{other}'; use pending, in_progress or completed"
+                ))
+            }
+        };
+        tasks.push(Task {
+            // Capped so one runaway line cannot swamp the panel.
+            text: text.chars().take(200).collect(),
+            status,
+        });
+    }
+    Ok(tasks)
+}
+
 /// (spec, class) for every built-in coding tool.
 pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
     vec![
@@ -118,6 +183,31 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                         }
                     }),
                     &["entries"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "update_tasks",
+                "Publish or replace the plan for the current job — one line per step, with its status. Call it before starting multi-step work and again as steps start and finish. The user watches this list.",
+                params(
+                    json!({
+                        "tasks": {
+                            "type": "array",
+                            "description": "The whole plan, in order. Send all of it every time.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "text": {"type": "string", "description": "One step, short and in the imperative"},
+                                    "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]}
+                                },
+                                "required": ["text", "status"],
+                                "additionalProperties": false
+                            }
+                        }
+                    }),
+                    &["tasks"],
                 ),
             ),
             ToolClass::Internal,
@@ -233,6 +323,53 @@ mod tests {
     #[test]
     fn an_unknown_tool_is_treated_as_the_riskiest_class() {
         assert_eq!(class_of("something_new"), ToolClass::Command);
+    }
+
+    #[test]
+    fn update_tasks_is_internal_so_it_never_prompts() {
+        assert_eq!(class_of("update_tasks"), ToolClass::Internal);
+        // But a plan is useful in both sections, unlike the git tools.
+        assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "update_tasks"));
+        assert!(tools_for("coding").iter().any(|(t, _)| t.function.name == "update_tasks"));
+    }
+
+    #[test]
+    fn a_well_formed_plan_survives_the_round_trip() {
+        let tasks = parse_tasks(&json!({
+            "tasks": [
+                {"text": "Read the tests", "status": "completed"},
+                {"text": "Fix the parser", "status": "in_progress"},
+                {"text": "  Ship it  "},
+            ]
+        }))
+        .unwrap();
+        assert_eq!(tasks.len(), 3);
+        assert_eq!(tasks[0].status, TaskStatus::Completed);
+        assert_eq!(tasks[1].status, TaskStatus::InProgress);
+        // A missing status defaults to pending, and the text is trimmed.
+        assert_eq!(tasks[2].status, TaskStatus::Pending);
+        assert_eq!(tasks[2].text, "Ship it");
+    }
+
+    #[test]
+    fn a_malformed_plan_is_rejected_with_a_reason_the_model_can_act_on() {
+        // Every one of these is a shape a model actually produces.
+        let bad = [
+            json!({}),
+            json!({"tasks": []}),
+            json!({"tasks": "fix the bug"}),
+            json!({"tasks": [{}]}),
+            json!({"tasks": [{"text": "   "}]}),
+            json!({"tasks": [{"text": "Fix it", "status": "done"}]}),
+            json!({"tasks": (0..MAX_TASKS + 1).map(|i| json!({"text": format!("step {i}")})).collect::<Vec<_>>()}),
+        ];
+        for args in bad {
+            let err = parse_tasks(&args).expect_err("should have been rejected");
+            assert!(!err.is_empty(), "a rejection must explain itself");
+        }
+        // The status message names the values it will accept.
+        let err = parse_tasks(&json!({"tasks": [{"text": "x", "status": "done"}]})).unwrap_err();
+        assert!(err.contains("in_progress"), "got: {err}");
     }
 
     #[test]

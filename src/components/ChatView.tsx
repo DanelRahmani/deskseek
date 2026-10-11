@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import type {
   ApprovalEvent,
@@ -10,10 +10,12 @@ import type {
   PermissionMode,
   ToolRun,
 } from "../types";
+import { tasksFrom } from "../lib/tasks";
 import { Markdown } from "./Markdown";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolCallCard } from "./ToolCallCard";
 import { ApprovalPrompt } from "./ApprovalPrompt";
+import { TaskList } from "./TaskList";
 
 interface Props {
   chat: ChatRow | null;
@@ -96,6 +98,9 @@ export function ChatView({
 }: Props) {
   const [draft, setDraft] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
+  // Derived from the tool calls rather than plumbed through as its own prop:
+  // `update_tasks` already carries the plan, and only the newest one counts.
+  const tasks = useMemo(() => tasksFrom(tools), [tools]);
   // Tracks which draft the user dismissed the menu for, so Esc stays dismissed
   // until they type something new.
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
@@ -361,6 +366,8 @@ export function ChatView({
 
       <div className="shrink-0 px-4 pb-4">
         <div className="mx-auto max-w-3xl">
+          {tasks.length > 0 && <TaskList tasks={tasks} />}
+
           {approvals.map((request) => (
             <ApprovalPrompt key={request.requestId} request={request} onDecide={onDecideApproval} />
           ))}

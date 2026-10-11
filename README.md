@@ -32,6 +32,9 @@ Both sections are functional:
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - `/compact` and friends — `/help` lists the built-in commands, including `/mcp`
+- **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
+  and the checklist is pinned above the composer, ticking over as steps start and finish. It is
+  collapsible, and a step in progress pulses so a long job is visible at a glance
 - Approximate **context-window meter** in the header
 
 **Coding**
@@ -47,6 +50,9 @@ Both sections are functional:
   the agent creates or edits appear as it works. Click any file to read it without
   interrupting the run; if the agent writes to the file you are reading, it re-reads itself
 - Project context from `AGENTS.md`, else `.deskseek/context.md`
+- A **task list** the model keeps up to date as it works — see the chat section above
+- Tool cards **open themselves when a call fails**, so a broken build is readable without a
+  click
 
 **Approvals, permission modes and stopping a run**
 
@@ -190,9 +196,11 @@ npm run check
 cd src-tauri && cargo test
 ```
 
-`npm run check` is the frontend's one hand-rolled check (plain Node, no test framework): it
-pins the tab/pane rules in `src/lib/shell.ts` — the panes must never show the same chat twice,
-and closing a tab must never leave a pane blank while another tab is still open.
+`npm run check` is the frontend's own checks (plain Node, no test framework). It pins the tab and
+pane rules in `src/lib/shell.ts` — the panes must never show the same chat twice, and closing a
+tab must never leave a pane blank while another tab is still open — and the task-list reader in
+`src/lib/tasks.ts`, which parses arguments the model wrote and must therefore survive every
+malformed shape it can produce.
 
 ## Architecture
 
