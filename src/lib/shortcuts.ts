@@ -13,6 +13,7 @@ export type Shortcut =
   | "open-memory"
   | "open-settings"
   | "command-palette"
+  | "cheatsheet"
   | "toggle-split"
   | "focus-pane-0"
   | "focus-pane-1"
@@ -33,6 +34,7 @@ export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: s
   { keys: "Ctrl+M", action: "open-memory", label: "Open the memory panel" },
   { keys: "Ctrl+,", action: "open-settings", label: "Open settings" },
   { keys: "Ctrl+K", action: "command-palette", label: "Open the command palette" },
+  { keys: "?", action: "cheatsheet", label: "Show this list" },
   { keys: "Ctrl+\\", action: "toggle-split", label: "Split the view" },
   { keys: "Ctrl+1", action: "focus-pane-0", label: "Focus the left pane" },
   { keys: "Ctrl+2", action: "focus-pane-1", label: "Focus the right pane" },
@@ -59,7 +61,12 @@ export interface KeyPress {
 export function resolveShortcut(e: KeyPress, typing = false): Shortcut | null {
   const mod = e.ctrlKey || e.metaKey;
   if (!mod) {
-    return e.key === "Escape" && !typing && !e.altKey && !e.shiftKey ? "dismiss" : null;
+    if (typing || e.altKey) return null;
+    if (e.key === "Escape") return e.shiftKey ? null : "dismiss";
+    // `?` is Shift+/ on most layouts, so it arrives as the character itself
+    // rather than as a shifted slash — the shift flag is not the thing to test.
+    if (e.key === "?") return "cheatsheet";
+    return null;
   }
   // AltGr arrives as Ctrl+Alt on some layouts; never treat it as our chord.
   if (e.altKey) return null;

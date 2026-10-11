@@ -41,6 +41,7 @@ import { ArtifactPanel } from "./components/ArtifactPanel";
 import { ContextPanel } from "./components/ContextPanel";
 import { TabStrip } from "./components/TabStrip";
 import { CommandPalette } from "./components/CommandPalette";
+import { ShortcutSheet } from "./components/ShortcutSheet";
 import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
 import type { Shell } from "./lib/shell";
 import { resolveShortcut } from "./lib/shortcuts";
@@ -94,6 +95,9 @@ export default function App() {
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
   const [palette, setPalette] = useState(false);
+  // The shortcut list, on top of everything: `?` is the one chord nothing else
+  // in the UI advertises.
+  const [sheet, setSheet] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Full-text results for the sidebar's search box. The query itself lives in
@@ -855,6 +859,9 @@ export default function App() {
         case "command-palette":
           setPalette((open) => !open);
           return;
+        case "cheatsheet":
+          setSheet((open) => !open);
+          return;
         case "toggle-split":
           toggleSplit();
           return;
@@ -865,8 +872,10 @@ export default function App() {
           return;
         }
         case "dismiss":
-          // Topmost first: the palette sits above a dialog, which covers a panel.
-          if (palette) setPalette(false);
+          // Topmost first: the sheet and the palette sit above a dialog, which
+          // covers a panel.
+          if (sheet) setSheet(false);
+          else if (palette) setPalette(false);
           else if (showSettings) setShowSettings(false);
           else if (showSetup) setShowSetup(false);
           else setPanel("none");
@@ -875,7 +884,7 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, closeTab, newChat, palette, runPalette, showSettings, showSetup, toggleSplit]);
+  }, [activeId, closeTab, newChat, palette, runPalette, sheet, showSettings, showSetup, toggleSplit]);
 
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),
@@ -1106,6 +1115,8 @@ export default function App() {
           onClose={() => setPalette(false)}
         />
       )}
+
+      {sheet && <ShortcutSheet onClose={() => setSheet(false)} />}
 
       {dropping && (
         // Inert on purpose: the drop is handled natively by the window, so the

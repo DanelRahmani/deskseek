@@ -204,6 +204,7 @@ reaches the state change its button already makes:
 | `Ctrl+B` | Show or hide the file tree |
 | `Ctrl+M` | Memory panel |
 | `Ctrl+K` | Command palette |
+| `?` | This list, over whatever is on screen |
 | `Ctrl+,` | Settings |
 | `Ctrl+\` | Split into two panes, or back to one |
 | `Ctrl+1` / `Ctrl+2` | Move focus to the left / right pane |

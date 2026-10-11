@@ -47,6 +47,8 @@ assert(resolveShortcut(press("1", { ctrlKey: true, shiftKey: true })) === null, 
 assert(resolveShortcut(press("n")) === null, "N alone is just typing");
 assert(resolveShortcut(press("Escape")) === "dismiss", "Escape dismisses the top panel");
 assert(resolveShortcut(press("Escape", { shiftKey: true })) === null, "Shift+Escape is not ours");
+assert(resolveShortcut(press("?")) === "cheatsheet", "? opens the shortcut list");
+assert(resolveShortcut(press("?"), true) === null, "? while typing stays a question mark");
 
 // Escape belongs to whatever field has focus; it must not also close a panel.
 assert(resolveShortcut(press("Escape"), true) === null, "Escape while typing is the field's");
@@ -69,6 +71,7 @@ for (const action of [
   "open-memory",
   "open-settings",
   "command-palette",
+  "cheatsheet",
   "toggle-split",
   "focus-pane-0",
   "focus-pane-1",
