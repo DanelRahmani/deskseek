@@ -22,6 +22,7 @@ import type {
   McpReadyEvent,
   McpServer,
   McpStatus,
+  MessageHit,
   MessageRow,
   ModelInfo,
   PermissionMode,
@@ -56,6 +57,8 @@ export const api = {
   createChat: (kind: SectionKind, workspace: string | null = null) =>
     invoke<ChatRow>("create_chat", { kind, workspace }),
   getMessages: (chatId: string) => invoke<MessageRow[]>("get_messages", { chatId }),
+  /** Search what was said, across every conversation. */
+  searchMessages: (query: string) => invoke<MessageHit[]>("search_messages", { query }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>

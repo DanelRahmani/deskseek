@@ -121,6 +121,17 @@ pub fn get_messages(state: State<'_, AppState>, chat_id: String) -> Result<Vec<d
     db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())
 }
 
+/// Search every conversation by what was said in it, not just by its title.
+#[tauri::command]
+pub fn search_messages(
+    state: State<'_, AppState>,
+    query: String,
+) -> Result<Vec<db::MessageHit>, String> {
+    const HITS: i64 = 40;
+    let conn = state.db.lock().unwrap();
+    db::search_messages(&conn, &query, HITS).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn rename_chat(state: State<'_, AppState>, chat_id: String, title: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();

@@ -25,6 +25,17 @@ export interface ChatRow {
   updated_at: number;
 }
 
+/** One message that matched a full-text search, with its match in context. */
+export interface MessageHit {
+  chatId: string;
+  chatTitle: string;
+  chatKind: SectionKind;
+  messageId: string;
+  role: string;
+  /** The matched window, with the search terms bracketed. */
+  snippet: string;
+}
+
 export type PermissionMode = "manual" | "auto" | "skip";
 
 export interface MessageRow {

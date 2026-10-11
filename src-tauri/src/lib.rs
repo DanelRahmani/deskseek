@@ -154,6 +154,7 @@ pub fn run() {
             commands::list_chats,
             commands::create_chat,
             commands::get_messages,
+            commands::search_messages,
             commands::rename_chat,
             commands::delete_chat,
             commands::set_chat_model,

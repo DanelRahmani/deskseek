@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ChatRow, SectionKind } from "../types";
+import type { ChatRow, MessageHit, SectionKind } from "../types";
 
 interface Props {
   kind: SectionKind;
@@ -16,6 +16,10 @@ interface Props {
   keyMask: string | null;
   /** Chats with a run in flight, so a background turn is visible at a glance. */
   runningIds: string[];
+  /** Messages matching the search box, from every conversation. */
+  hits: MessageHit[];
+  /** The raw box text; the owner debounces and runs the full-text query. */
+  onSearch: (query: string) => void;
 }
 
 const SECTIONS: { id: SectionKind; label: string }[] = [
@@ -37,6 +41,8 @@ export function Sidebar({
   onMcp,
   keyMask,
   runningIds,
+  hits,
+  onSearch,
 }: Props) {
   const [query, setQuery] = useState("");
   // A plain substring match on the title or the folder. A search box over a
@@ -87,17 +93,46 @@ export function Sidebar({
       <div className="px-3 pb-2">
         <input
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            onSearch(e.target.value);
+          }}
           placeholder="Search…"
           className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-700"
         />
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 pb-2">
+        {query.trim() && hits.length > 0 && (
+          <div className="mb-2">
+            <p className="px-1 pb-1 text-[10px] font-medium tracking-wide text-neutral-600 uppercase">
+              In messages
+            </p>
+            {hits.map((hit) => (
+              <button
+                key={hit.messageId}
+                onClick={() => onSelect(hit.chatId)}
+                className="mb-1 block w-full rounded-md px-2 py-1.5 text-left transition hover:bg-neutral-900"
+                title={hit.chatTitle}
+              >
+                <span className="block truncate text-[11px] text-neutral-400">
+                  {hit.chatTitle}
+                  <span className="text-neutral-600">
+                    {" · "}
+                    {hit.chatKind === "coding" ? "Coding" : "Chat"}
+                  </span>
+                </span>
+                <span className="mt-0.5 line-clamp-2 block text-[11px] text-neutral-500">
+                  {hit.snippet}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         {chats.length === 0 && (
           <p className="px-1 py-4 text-xs text-neutral-600">No conversations yet.</p>
         )}
-        {chats.length > 0 && shown.length === 0 && (
+        {chats.length > 0 && shown.length === 0 && hits.length === 0 && (
           <p className="px-1 py-4 text-xs text-neutral-600">
             Nothing matches "{query.trim()}".
           </p>

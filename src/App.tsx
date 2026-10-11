@@ -21,6 +21,7 @@ import type {
   Attachment,
   ChatRow,
   DoneEvent,
+  MessageHit,
   MessageRow,
   ModelInfo,
   PermissionMode,
@@ -95,6 +96,9 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Full-text results for the sidebar's search box. The query itself lives in
+  // the Sidebar; this side debounces it and owns the results.
+  const [hits, setHits] = useState<MessageHit[]>([]);
   // Live turn state, keyed by chat — so a run in a background chat keeps
   // streaming while the user reads a different conversation.
   const [sessions, setSessions] = useState<Record<string, SessionRuntime>>({});
@@ -660,6 +664,22 @@ export default function App() {
     }
   }, []);
 
+  // The sidebar's search box is a full-text lookup over every message. The box
+  // state lives in the Sidebar, so this debounces the keystrokes and owns the
+  // results.
+  const searchTimer = useRef<number | null>(null);
+  const searchMessages = useCallback((query: string) => {
+    if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
+    const needle = query.trim();
+    if (needle.length < 2) {
+      setHits([]);
+      return;
+    }
+    searchTimer.current = window.setTimeout(() => {
+      api.searchMessages(needle).then(setHits).catch(() => setHits([]));
+    }, 180);
+  }, []);
+
   // The palette is global — both sections' chats, most recently used first — so
   // Ctrl+K finds a coding task while you are in chat and the reverse. The hint
   // already names the section, and picking one switches to it below.
@@ -807,6 +827,8 @@ export default function App() {
         onKind={setKind}
         chats={chats}
         activeId={activeId}
+        hits={hits}
+        onSearch={searchMessages}
         onSelect={selectChat}
         onNew={newChat}
         onDelete={async (id) => {

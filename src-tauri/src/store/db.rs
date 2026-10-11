@@ -170,6 +170,31 @@ CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
     VALUES ('delete', old.rowid, old.text);
     INSERT INTO memory_facts_fts(rowid, text) VALUES (new.rowid, new.text);
 END;
+
+-- Full-text search over what was actually said, so a conversation can be found
+-- by its contents and not only by its title. External-content, exactly like
+-- memory_facts_fts above: the text lives once in `messages`, and the triggers
+-- keep the index in step so no insert path can forget to update it.
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    content,
+    content='messages',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+    VALUES ('delete', old.rowid, old.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -193,6 +218,20 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0",
         [],
     );
+    // Databases written before the search index existed have no rows in it. The
+    // triggers only fire on new writes, so an empty index over a non-empty table
+    // means "first launch after the upgrade" and gets one build. `rebuild` is
+    // FTS5's own external-content command; running it only in that case keeps a
+    // normal launch free.
+    let indexed: i64 = conn.query_row("SELECT count(*) FROM messages_fts", [], |r| r.get(0))?;
+    let said: i64 = conn.query_row(
+        "SELECT count(*) FROM messages WHERE content IS NOT NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    if indexed == 0 && said > 0 {
+        conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')", [])?;
+    }
     Ok(conn)
 }
 
@@ -408,6 +447,81 @@ pub fn insert_message(
         attachments_json: attachments_json.map(str::to_string),
         created_at: ts,
     })
+}
+
+// ---------------------------------------------------------------- search
+
+/// One message that matched a search, with enough context to show a result row.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessageHit {
+    pub chat_id: String,
+    pub chat_title: String,
+    pub chat_kind: String,
+    pub message_id: String,
+    pub role: String,
+    /// The matched window, with the search terms bracketed.
+    pub snippet: String,
+}
+
+/// Search what was actually said, across every chat.
+///
+/// The snippet shows the matched words in context, so a hit explains itself
+/// rather than repeating a title the user can already see. Results are ordered
+/// by relevance (`bm25`, best first) rather than recency: a search is a lookup,
+/// not a feed.
+pub fn search_messages(
+    conn: &Connection,
+    query: &str,
+    limit: i64,
+) -> rusqlite::Result<Vec<MessageHit>> {
+    let Some(expr) = fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let mut stmt = conn.prepare(
+        "SELECT m.chat_id, c.title, c.kind, m.id, m.role,
+                snippet(messages_fts, 0, '[', ']', ' … ', 12)
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         JOIN chats c ON c.id = m.chat_id
+         WHERE messages_fts MATCH ?1
+         ORDER BY bm25(messages_fts)
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![expr, limit], |r| {
+        Ok(MessageHit {
+            chat_id: r.get(0)?,
+            chat_title: r.get(1)?,
+            chat_kind: r.get(2)?,
+            message_id: r.get(3)?,
+            role: r.get(4)?,
+            snippet: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Turn free text into an FTS5 MATCH expression, or None when there is nothing
+/// worth searching for.
+///
+/// Every term is quoted, because a bare `*`, `-`, `:` or `(` in the box is FTS5
+/// syntax and would be a parse error rather than a search. The trailing `*`
+/// makes it a prefix match, so a result appears while the word is still being
+/// typed. A one-character term is dropped: prefix-matching `a` would return most
+/// of the database. (A single-character CJK query is therefore not searchable;
+/// two characters are, which is the practical case.)
+fn fts_query(raw: &str) -> Option<String> {
+    let terms: Vec<String> = raw
+        .split_whitespace()
+        .map(|t| t.replace('"', "\"\""))
+        .filter(|t| t.chars().count() >= 2 && t.chars().any(|c| c.is_alphanumeric()))
+        .map(|t| format!("\"{t}\"*"))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(terms.join(" "))
+    }
 }
 
 // ---------------------------------------------------------------- summaries
@@ -873,6 +987,39 @@ mod tests {
         assert_eq!(list_chats(&conn, "chat").unwrap().len(), 1);
         assert_eq!(list_chats(&conn, "coding").unwrap().len(), 1);
         assert_eq!(list_chats(&conn, "nothing").unwrap().len(), 0);
+    }
+
+    #[test]
+    fn a_search_finds_a_message_and_brackets_the_match() {
+        let conn = mem();
+        let a = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let b = create_chat(&conn, "coding", None, "m", true, "high", "manual").unwrap();
+        insert_message(&conn, &a.id, "user", Some("where is the parser bug"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &b.id, "assistant", Some("the parser lives here"), None, None, None, None)
+            .unwrap();
+
+        // Both sections, prefix match, and the snippet says why it matched.
+        let hits = search_messages(&conn, "pars", 10).unwrap();
+        assert_eq!(hits.len(), 2, "got {hits:?}");
+        assert!(hits.iter().all(|h| h.snippet.contains("[pars")));
+        assert!(hits.iter().any(|h| h.chat_kind == "coding"));
+
+        // A row with no content is not a hit, and a nonsense query is empty.
+        assert!(search_messages(&conn, "x", 10).unwrap().is_empty());
+        assert!(search_messages(&conn, "absentword", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_fts_metacharacter_is_a_search_and_not_a_syntax_error() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        insert_message(&conn, &chat.id, "user", Some("quotes and \"stars\""), None, None, None, None)
+            .unwrap();
+        // Each of these would be a MATCH parse error if it were not quoted.
+        for raw in ["\"stars\"", "a - b", "a:b", "(a)", "**"] {
+            search_messages(&conn, raw, 10).unwrap();
+        }
     }
 
     #[test]

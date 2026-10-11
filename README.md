@@ -55,7 +55,9 @@ Both sections are functional:
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
-- **Sidebar search** — filter the conversation list by title or folder as you type
+- **Sidebar search** — filter the conversation list by title or folder as you type, and search
+  the *text* of every conversation: matching messages are listed with the words in context, from
+  both sections, so a chat can be found by what was said in it rather than by its name
 - `/export` — write the whole conversation to a Markdown file in your documents folder
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
   and the checklist is pinned above the composer, ticking over as steps start and finish. It is
