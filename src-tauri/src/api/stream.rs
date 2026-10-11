@@ -99,10 +99,6 @@ impl MessageAccumulator {
         }
     }
 
-    pub fn tool_calls(&self) -> &[ToolCall] {
-        &self.tool_calls
-    }
-
     pub fn into_message(self) -> ChatMessage {
         let has_tools = !self.tool_calls.is_empty();
         ChatMessage {

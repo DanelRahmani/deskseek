@@ -65,6 +65,11 @@ impl Client {
     }
 
     /// Stream one assistant turn, invoking `on_event` as deltas arrive.
+    ///
+    /// ponytail: there is no cancellation token yet — a request runs to
+    /// completion or the app closes. Ceiling: a runaway answer cannot be
+    /// aborted from the UI. Upgrade path: thread a `CancellationToken` in here
+    /// and check it each loop iteration, plus a `cancel_stream` command.
     pub async fn stream_chat<F>(
         &self,
         req: &ChatRequest,

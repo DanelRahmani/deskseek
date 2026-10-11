@@ -32,10 +32,6 @@ pub const MODELS: &[ModelInfo] = &[
     },
 ];
 
-pub fn is_known_model(id: &str) -> bool {
-    MODELS.iter().any(|m| m.id == id)
-}
-
 pub fn is_peak(now: DateTime<Utc>) -> bool {
     if matches!(now.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
         return false;

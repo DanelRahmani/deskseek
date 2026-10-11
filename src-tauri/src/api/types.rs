@@ -79,6 +79,9 @@ pub struct Tool {
 }
 
 impl Tool {
+    /// ponytail: unused until the tool-calling milestone wires MCP/skills in;
+    /// kept because the request shape is already defined and tested here.
+    #[allow(dead_code)]
     pub fn function(name: &str, description: &str, parameters: serde_json::Value) -> Self {
         Self {
             kind: "function".to_string(),

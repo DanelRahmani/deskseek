@@ -135,10 +135,12 @@ export default function App() {
 
         await api.sendMessage(chatId, text);
 
+        // The user may have switched chats while this was streaming; only
+        // refresh the view if this chat is still the one on screen.
         const [msgs] = await Promise.all([api.getMessages(chatId), refreshChats(kind)]);
-        setMessages(msgs);
+        if (activeIdRef.current === chatId) setMessages(msgs);
       } catch (e) {
-        setError(String(e));
+        if (activeIdRef.current === chatId) setError(String(e));
       } finally {
         setBusy(false);
         setStream(null);
