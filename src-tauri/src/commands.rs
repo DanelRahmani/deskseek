@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use chrono::Local;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::api::models::{self, ModelInfo};
@@ -281,6 +281,63 @@ pub fn restore_discarded_tail(
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::restore_tail(&conn, &chat_id, after_seq)
+}
+
+/// Copies a conversation: its transcript, and for a chat-mode one its folder of
+/// files too.
+///
+/// A coding chat's folder belongs to the project it works in, and duplicating a
+/// conversation is not a reason to copy a client's working tree — so there the
+/// copy shares the workspace, exactly as any other chat in that project does.
+///
+/// The copy starts with no spend; `db::duplicate_chat` says why.
+#[tauri::command]
+pub fn duplicate_chat(state: State<'_, AppState>, chat_id: String) -> Result<db::ChatRow, String> {
+    let source = {
+        let conn = state.db.lock().unwrap();
+        db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?
+    };
+    let copy = {
+        let conn = state.db.lock().unwrap();
+        db::duplicate_chat(&conn, &chat_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("That conversation is gone.")?
+    };
+    if source.workspace.is_none() {
+        // A chat with nothing in its folder yet is fine, not an error.
+        if let (Ok(from), Ok(to)) = (chat_dir(&state, &chat_id), chat_dir(&state, &copy.id)) {
+            let _ = copy_files(&from, &to);
+        }
+    }
+    Ok(copy)
+}
+
+/// Copies a chat folder into another one, subfolders and all.
+///
+/// A chat folder is what the conversation produced or was handed, so this
+/// mirrors whatever is actually there rather than guessing at names. Files are
+/// copied, never moved: the original has to stay exactly as it was.
+fn copy_files(from: &Path, to: &Path) -> Result<usize, String> {
+    let mut copied = 0;
+    let mut stack = vec![(from.to_path_buf(), to.to_path_buf())];
+    while let Some((src, dst)) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&src) else {
+            continue;
+        };
+        std::fs::create_dir_all(&dst)
+            .map_err(|e| format!("could not make {}: {e}", dst.display()))?;
+        for entry in entries.flatten() {
+            let target = dst.join(entry.file_name());
+            if entry.path().is_dir() {
+                stack.push((entry.path(), target));
+                continue;
+            }
+            std::fs::copy(entry.path(), &target)
+                .map_err(|e| format!("could not copy {}: {e}", entry.path().display()))?;
+            copied += 1;
+        }
+    }
+    Ok(copied)
 }
 
 #[tauri::command]
@@ -601,6 +658,84 @@ pub fn export_chat(state: State<'_, AppState>, chat_id: String) -> Result<String
     let path = crate::tools::docs::free_path(&dir, &crate::tools::docs::slug(&chat.title), "md");
     std::fs::write(&path, chat_markdown(&chat, &messages)).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
+}
+
+/// The whole conversation as JSON, so it can be carried to another machine.
+///
+/// Versioned from the first release of the format: a file that outlives the code
+/// that wrote it is the entire point, so it says which shape it is in and the
+/// importer refuses what it does not know rather than guessing.
+///
+/// Attachments are referenced, not embedded. A conversation's images and
+/// documents live in its folder as files; a JSON that swallowed them would be a
+/// container, and the honest thing is to say the copy is the transcript only.
+#[derive(Serialize, Deserialize)]
+struct ChatBundle {
+    version: u32,
+    chat: db::ChatRow,
+    messages: Vec<db::MessageRow>,
+}
+
+const BUNDLE_VERSION: u32 = 1;
+
+#[tauri::command]
+pub fn export_chat_json(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    let bundle = {
+        let conn = state.db.lock().unwrap();
+        ChatBundle {
+            version: BUNDLE_VERSION,
+            chat: db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?,
+            messages: db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?,
+        }
+    };
+    let json = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
+    let dir = chat_dir(&state, &chat_id)?;
+    let path = crate::tools::docs::free_path(&dir, &crate::tools::docs::slug(&bundle.chat.title), "chat.json");
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+/// Brings a bundle back as a new conversation. The original is untouched, and
+/// the import is additive: nothing is overwritten, so a half-typed file cannot
+/// cost the user a chat.
+#[tauri::command]
+pub fn import_chat_json(state: State<'_, AppState>, path: String) -> Result<db::ChatRow, String> {
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))?;
+    let bundle: ChatBundle = serde_json::from_str(&raw)
+        .map_err(|e| format!("that is not a DeskSeek conversation: {e}"))?;
+    if bundle.version > BUNDLE_VERSION {
+        return Err(format!(
+            "That file was written by a newer DeskSeek (format {}); this one understands {}.",
+            bundle.version, BUNDLE_VERSION
+        ));
+    }
+    let conn = state.db.lock().unwrap();
+    let chat = db::create_chat(
+        &conn,
+        "chat",
+        None,
+        &bundle.chat.model,
+        bundle.chat.thinking,
+        &bundle.chat.effort,
+        &bundle.chat.permission_mode,
+    )
+    .map_err(|e| e.to_string())?;
+    db::rename_chat(&conn, &chat.id, &bundle.chat.title).map_err(|e| e.to_string())?;
+    db::set_chat_mode(&conn, &chat.id, &bundle.chat.agent_mode).map_err(|e| e.to_string())?;
+    for m in &bundle.messages {
+        db::insert_message(
+            &conn,
+            &chat.id,
+            &m.role,
+            m.content.as_deref(),
+            m.reasoning_content.as_deref(),
+            m.tool_calls_json.as_deref(),
+            m.tool_call_id.as_deref(),
+            m.attachments_json.as_deref(),
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    db::get_chat(&conn, &chat.id).map_err(|e| e.to_string())
 }
 
 /// Write a chat to a PDF in the chat's own folder.

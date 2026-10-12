@@ -162,6 +162,17 @@ Both sections are functional:
 - `/export` — write the whole conversation to a Markdown file in the chat's own folder; the
   palette also offers **Export this chat as a PDF**, printed by the browser on this machine
   through the same pipeline `doc_create` uses rather than a second implementation of its own
+- **Duplicate a conversation** — *Duplicate* in a sidebar row's right-click menu. The copy gets
+  its own transcript and, for a chat-mode conversation, its own copy of the folder; a coding
+  chat shares the project's folder, because duplicating a conversation is not a reason to copy a
+  client's working tree. It starts at **no spend**: nothing was paid for the copy, and a second
+  chat claiming the same dollars would double-count in the *Spend* view
+- **Move a conversation between machines** — *Export this chat as JSON* writes a versioned
+  `name.chat.json` beside the conversation's own files, and *Import a conversation from JSON…*
+  reads one back as a new chat. Importing is additive, so a file that turns out to be the wrong
+  one costs nothing. **Honest limit: it is the transcript, not the conversation.** Attachments
+  are referenced by name and live as files in the folder the export came from, so the imported
+  copy remembers them but does not have them; take the folder too, or re-attach them
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
   and the checklist is pinned above the composer, ticking over as steps start and finish. It is
   collapsible, and a step in progress pulses so a long job is visible at a glance

@@ -36,12 +36,15 @@ export function buildPalette(
     { id: "split", label: "Split into two panes", hint: "Action" },
     { id: "backup", label: "Back up settings and MCP servers", hint: "Action" },
     { id: "restore", label: "Restore settings from a backup…", hint: "Action" },
+    { id: "import-chat", label: "Import a conversation from JSON…", hint: "Action" },
   ];
   // Exporting needs something to export; undoing needs something to undo, which
   // is also only true once a chat is open.
   if (hasChat) {
     items.push({ id: "export", label: "Export this chat to Markdown", hint: "Action" });
     items.push({ id: "export-pdf", label: "Export this chat as a PDF", hint: "Action" });
+    items.push({ id: "export-json", label: "Export this chat as JSON", hint: "Action" });
+    items.push({ id: "duplicate", label: "Duplicate this chat", hint: "Action" });
     items.push({ id: "rewind", label: "Undo the agent's last file changes", hint: "Action" });
     // One entry either way, never both: from inside an archived chat the only
     // useful move is back out of the archive.

@@ -1,9 +1,8 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1,
-2.2, 2.3 and 2.4 are done, the rest of 2 is the plan. Items 3–6 have not been
-started.
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.5
+are done, the rest of 2 is the plan. Items 3–6 have not been started.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
@@ -242,13 +241,29 @@ Ordered by how often the author would actually reach for it.
   than a branching tree. Real branching is still worth doing *later* if this
   proves too small — which is what the plan said when it chose the cheap version.
 
-### 2.5 [S] Duplicate a conversation, and export/import it
-- **Why**: `export_chat` writes markdown; there is no way to fork a conversation
-  or move one between machines.
-- **Do**: `duplicate_chat` (messages + attachments folder copy, new folder) and a
-  JSON export/import reusing the settings export shape.
-- **Test**: a duplicated chat has independent messages, folder and cost.
-- **Stop**: duplication from the context menu; the original is untouched.
+### 2.5 [S] Duplicate a conversation, and export/import it ✅ done
+- **Why**: `export_chat` wrote markdown and there was no way to fork a
+  conversation or move one between machines.
+- **Now**: `db::duplicate_chat` — a new row with the same settings, the same
+  per-chat switches, and its own copies of the messages, inserted through
+  `insert_message` so they are numbered by the one thing that decides what a seq
+  means. Not copied on purpose: `cost_usd` (nothing was paid for the copy, and a
+  second chat claiming it would double-count in the *Spend* view) and `folder`
+  (the copy gets its own). `commands::duplicate_chat` then copies the folder —
+  **chat mode only**, because a coding chat's folder is the project's and
+  duplicating a conversation is not a reason to copy a client's working tree.
+  The JSON half is a versioned `ChatBundle { version, chat, messages }`, written
+  beside the chat's own files and refused on import when the version is newer
+  than this build understands. Import is additive and always creates a new chat.
+- **Test**: `a_duplicate_is_its_own_conversation` — new id, title `(copy)`, same
+  model, **cost 0 against the original's 1.5**, no folder of its own yet, skills
+  carried over, the transcript re-keyed with the tool-call pairing intact, and an
+  edit to the copy leaving the original alone; plus `None` for a chat that is gone.
+- **Stop**: duplication from the context menu; the original is untouched. ✅
+- **Honest limit, stated in the README**: the JSON is the transcript, not the
+  conversation. Attachments are referenced by name and stay files in the folder
+  the export came from — a bundle that swallowed them would be a container, and a
+  half-copy that pretends otherwise is worse than saying so.
 
 ### 2.6 [L] Let the agent analyse data, not just describe it
 - **Why**: the sandbox (Docker/WSL rungs) and `sheet_create` exist, but there is

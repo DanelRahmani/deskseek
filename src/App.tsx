@@ -1014,6 +1014,56 @@ export default function App() {
   const openMenu = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), []);
 
   /**
+   * A copy of a conversation, and of its folder when it owns one. The original is
+   * untouched, and the copy starts at no spend — nothing was paid for it.
+   */
+  const duplicateChat = useCallback(
+    async (chatId: string) => {
+      try {
+        const copy = await api.duplicateChat(chatId);
+        await refreshChats(kindRef.current);
+        setNotice(`Duplicated as "${copy.title}".`);
+        await selectChat(copy.id);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats, selectChat],
+  );
+
+  const exportChatJson = useCallback(async (chatId: string) => {
+    try {
+      const path = await api.exportChatJson(chatId);
+      const name = path.split(/[\\/]/).pop() ?? path;
+      setNotice(`Wrote ${name} into this conversation's folder.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  // Importing is additive — a half-typed file cannot cost a chat — and the copy
+  // is the transcript only, because the attachments live as files in the folder
+  // the file came from. Say so rather than let the gaps look like a bug.
+  const importChatJson = useCallback(async () => {
+    try {
+      const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
+      const selected = await openDialog({
+        multiple: false,
+        filters: [{ name: "DeskSeek conversation", extensions: ["json"] }],
+        title: "Choose a conversation to import",
+      });
+      if (typeof selected !== "string") return;
+      const chat = await api.importChatJson(selected);
+      if (chat.kind !== kindRef.current) setKind(chat.kind);
+      await refreshChats(kindRef.current);
+      setNotice(`Imported "${chat.title}" — the transcript only, without its files.`);
+      await selectChat(chat.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [refreshChats, selectChat]);
+
+  /**
    * Save a hand-typed title. A `null` title is the sidebar saying the edit was
    * abandoned (Escape), which is a cancel and not a blank name.
    */
@@ -1255,6 +1305,15 @@ export default function App() {
           return;
         case "export-pdf":
           if (activeIdRef.current) void exportChat(activeIdRef.current, true);
+          return;
+        case "export-json":
+          if (activeIdRef.current) void exportChatJson(activeIdRef.current);
+          return;
+        case "import-chat":
+          void importChatJson();
+          return;
+        case "duplicate":
+          if (activeIdRef.current) void duplicateChat(activeIdRef.current);
           return;
         case "rewind":
           if (activeIdRef.current) void rewind(activeIdRef.current);
@@ -1648,6 +1707,7 @@ export default function App() {
                 { label: "Open", onSelect: () => void selectChat(menu.id) },
                 { label: "Open in split view", onSelect: () => openInSplit(menu.id) },
                 { label: "Rename", onSelect: () => setRenamingId(menu.id) },
+                { label: "Duplicate", onSelect: () => void duplicateChat(menu.id) },
                 {
                   label: row?.archived ? "Take out of the archive" : "Archive",
                   onSelect: () => void setArchived(menu.id, !row?.archived),

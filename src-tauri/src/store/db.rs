@@ -434,6 +434,60 @@ pub fn create_chat(
     })
 }
 
+/// Copies a conversation: a row of its own, the same settings, and its own copies
+/// of the messages. `None` when there is no such chat.
+///
+/// Two things are deliberately *not* copied:
+///
+/// - `cost_usd`. Nothing was paid for the copy — the money went on the original —
+///   and a second chat claiming the same dollars would double-count in the spend
+///   view, which is the one thing that view must not do. The same reasoning keeps
+///   the per-turn usage history out of it.
+/// - `folder`. The copy owns its own files; whoever duplicates a conversation
+///   then copies the folder into it.
+///
+/// The per-chat switches (skills and design systems) *are* copied, because they
+/// are how this conversation was set up rather than something it spent.
+pub fn duplicate_chat(conn: &Connection, id: &str) -> rusqlite::Result<Option<ChatRow>> {
+    let Ok(source) = get_chat(conn, id) else {
+        return Ok(None);
+    };
+    // `insert_message` numbers each message as it goes, so replaying the source
+    // in order reproduces the order exactly with fresh ids — no bespoke INSERT,
+    // and no second place that decides what a message's seq means.
+    let copy = create_chat(
+        conn,
+        &source.kind,
+        source.workspace.as_deref(),
+        &source.model,
+        source.thinking,
+        &source.effort,
+        &source.permission_mode,
+    )?;
+    rename_chat(conn, &copy.id, &format!("{} (copy)", source.title))?;
+    conn.execute(
+        "UPDATE chats SET agent_mode = ?2, project_id = ?3 WHERE id = ?1",
+        params![copy.id, source.agent_mode, source.project_id],
+    )?;
+    let skills = get_chat_skills(conn, id)?;
+    if !skills.is_empty() {
+        set_chat_skills(conn, &copy.id, &skills)?;
+    }
+    for m in list_messages(conn, id)? {
+        insert_message(
+            conn,
+            &copy.id,
+            &m.role,
+            m.content.as_deref(),
+            m.reasoning_content.as_deref(),
+            m.tool_calls_json.as_deref(),
+            m.tool_call_id.as_deref(),
+            m.attachments_json.as_deref(),
+        )?;
+    }
+    get_chat(conn, &copy.id).map(Some)
+}
+
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
         "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder
@@ -2325,6 +2379,53 @@ mod tests {
             .find(|m| m.role == "assistant")
             .and_then(|m| m.content)
             .unwrap_or_default()
+    }
+
+    #[test]
+    fn a_duplicate_is_its_own_conversation() {
+        let conn = mem();
+        let chat =
+            create_chat(&conn, "chat", None, "deepseek-flash", true, "high", "manual").unwrap();
+        rename_chat(&conn, &chat.id, "Invoice").unwrap();
+        add_chat_cost(&conn, &chat.id, 1.5).unwrap();
+        set_chat_skills(&conn, &chat.id, &["concise".to_string()]).unwrap();
+        let calls =
+            r#"[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]"#;
+        insert_message(&conn, &chat.id, "user", Some("a question"), None, None, None, None).unwrap();
+        insert_message(&conn, &chat.id, "assistant", None, None, Some(calls), None, None).unwrap();
+        insert_message(&conn, &chat.id, "tool", Some("its text"), None, None, Some("c1"), None)
+            .unwrap();
+
+        let copy = duplicate_chat(&conn, &chat.id).unwrap().unwrap();
+        assert_ne!(copy.id, chat.id);
+        assert_eq!(copy.title, "Invoice (copy)");
+        assert_eq!(copy.model, "deepseek-flash");
+        // Nothing was paid for the copy, and the original still holds its own.
+        assert_eq!(copy.cost_usd, 0.0);
+        assert_eq!(get_chat(&conn, &chat.id).unwrap().cost_usd, 1.5);
+        // Its own folder, decided the first time it is needed.
+        assert!(copy.folder.is_none());
+        // The switches travel with the conversation; the spend does not.
+        assert_eq!(get_chat_skills(&conn, &copy.id).unwrap(), vec!["concise".to_string()]);
+
+        // The transcript came across, in order, with its own row ids and its
+        // tool-call pairing intact.
+        let copied = list_messages(&conn, &copy.id).unwrap();
+        let original = list_messages(&conn, &chat.id).unwrap();
+        assert_eq!(copied.len(), 3, "{copied:?}");
+        assert_eq!(copied[0].content.as_deref(), Some("a question"));
+        assert!(copied[1].tool_calls_json.is_some());
+        assert_eq!(copied[2].tool_call_id.as_deref(), Some("c1"));
+        assert_ne!(copied[0].id, original[0].id, "the rows are its own");
+
+        // Editing the copy leaves the original alone.
+        set_message_content(&conn, &copied[0].id, "changed").unwrap();
+        assert_eq!(
+            list_messages(&conn, &chat.id).unwrap()[0].content.as_deref(),
+            Some("a question")
+        );
+
+        assert!(duplicate_chat(&conn, "no-such-chat").unwrap().is_none());
     }
 
     #[test]

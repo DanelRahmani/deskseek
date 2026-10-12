@@ -108,6 +108,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] A prompt edited in a text editor shows its new text in the menu after the hub is reopened
 - [ ] A prompt never appears in the model's catalogue (the Context panel lists no prompts)
 
+- [ ] Right-click → *Duplicate* makes a copy that opens with the same transcript and its own
+      folder; the original is unchanged, and the copy's sidebar spend reads $0
+- [ ] *Export this chat as JSON* writes a `name.chat.json` in the chat's folder; *Import a
+      conversation from JSON…* brings it back as a new chat with the transcript intact
+- [ ] Importing a file that is not a bundle, or one from a newer format, is refused with a
+      message rather than half-importing
+- [ ] An imported conversation says the attachments did not come with it
+
 ## Search, here and elsewhere
 
 - [ ] In a coding chat in folder A, asking "what did we decide about X" makes the assistant call

@@ -83,6 +83,12 @@ export const api = {
     invoke<void>("restore_discarded_tail", { chatId, afterSeq }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
+  /** A copy of the conversation, and of its folder when it owns one. */
+  duplicateChat: (chatId: string) => invoke<ChatRow>("duplicate_chat", { chatId }),
+  /** The transcript as a portable JSON file; returns the path written. */
+  exportChatJson: (chatId: string) => invoke<string>("export_chat_json", { chatId }),
+  /** Reads one back as a new conversation. Additive: nothing is overwritten. */
+  importChatJson: (path: string) => invoke<ChatRow>("import_chat_json", { path }),
   /** Moves a chat to the sidebar's archive, or back out of it. */
   setChatArchived: (chatId: string, archived: boolean) =>
     invoke<void>("set_chat_archived", { chatId, archived }),
