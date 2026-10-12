@@ -1538,6 +1538,33 @@ pub fn spend_report(
     db::spend_report(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
 }
 
+// --------------------------------------------------------------- maintenance
+
+/// What a sweep did, and how big the database is now.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Maintenance {
+    /// Rows nothing can reach any more, across both tables.
+    pub pruned: usize,
+    pub bytes: u64,
+}
+
+/// Sweep the tables that grow for ever, and report the size.
+///
+/// Cheap in the common case: a launch-day prune is a handful of rows, and the
+/// `VACUUM` that actually rewrites the file only runs when the prune was large
+/// enough to be worth it (`db::vacuum_if_worth_it`).
+#[tauri::command]
+pub fn maintain_db(state: State<'_, AppState>) -> Result<Maintenance, String> {
+    let conn = state.db.lock().unwrap();
+    let report = db::prune(&conn).map_err(|e| e.to_string())?;
+    db::vacuum_if_worth_it(&conn, report.total());
+    Ok(Maintenance {
+        pruned: report.total(),
+        bytes: db::size_bytes(&conn),
+    })
+}
+
 // --------------------------------------------------------------- messaging
 
 /// Runs one turn, keeping the live registry and the durable marker in step.

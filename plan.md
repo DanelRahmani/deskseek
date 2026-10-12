@@ -533,7 +533,7 @@ Ordered by how often the author would actually reach for it.
     replace-rather-than-overlay test, and a hostile `../` entry that must stay
     inside the destination.
 
-### 3.4 [S] Maintenance the database needs
+### 3.4 [S] Maintenance the database needs ✅
 - **Why**: `file_checkpoints` grows for ever and artifact versions are never
   pruned.
 - **Do**: a retention rule (checkpoints older than N runs, unattached artifact
@@ -542,6 +542,33 @@ Ordered by how often the author would actually reach for it.
 - **Test**: the prune keeps the newest pre-image per run (the `UNIQUE(run_id,
   path)` guarantee).
 - **Stop**: size is stable across a week of normal use.
+- **Done (2026-10-12).** `db::prune` in `db.rs` — the SQL belongs where the rest
+  of the SQL is, so no new module for four statements.
+  - **Pruned by reachability, not age**, which is the honest rule: a rewind can
+    only ever walk back *one* run per chat (`rewind_last_run` says so), so the
+    older runs' pre-images are unreachable by construction. Keep the newest
+    `CHECKPOINT_RUNS_KEPT` (10) runs per chat. Newest is decided by
+    `max(created_at) DESC, max(rowid) DESC` **and has to be**: a run's rows all
+    land in the same second, so the clock cannot order them and insertion order
+    must. The test fires 14 runs in one second on purpose.
+  - Artifact versions: newest `ARTIFACT_VERSIONS_KEPT` (20) per artifact, keyed
+    per artifact because a version number only means anything beside its own
+    siblings. `current_version` is the maximum by construction, so it can never
+    be the row pruned.
+  - `vacuum_if_worth_it` only rewrites the file past `VACUUM_AFTER_ROWS` (500):
+    `VACUUM` costs the whole database, so running it for ten rows would make the
+    cure dearer than the disease.
+  - `db::size_bytes` reads `PRAGMA page_count * page_size` rather than the file
+    on disk — in WAL mode there is a side file too, and pages are what the tables
+    occupy.
+  - Surfaces: pruned at startup (silently, with a line to stderr when it did
+    something), and on demand via `maintain_db` from the palette, which reports
+    the size whether or not it pruned anything. `App`'s notice is the honest
+    place for the number.
+  - **Tests**: 14 runs pruned to 10 with the newest still intact, 30 versions of
+    an artifact pruned to 20 with a *second* artifact left alone (proving the
+    rule is per artifact, not global), and a prune of nothing being a no-op that
+    does not vacuum.
 
 ### 3.5 [S] Guard and approval audit trail
 - **Why**: "what have I allowed" exists (`db::all_allowed_tools`) but individual

@@ -2019,6 +2019,111 @@ pub fn interrupted_runs(conn: &Connection) -> rusqlite::Result<Vec<InterruptedRu
     rows.collect()
 }
 
+// --------------------------------------------------------------- maintenance
+
+/// How many runs' worth of file checkpoints to keep per chat.
+///
+/// A rewind only ever reaches the *newest* run — the pre-images of an older one
+/// are only correct once the runs after it have been undone, which is why
+/// `rewind_last_run` refuses to jump back. Keeping ten runs is therefore already
+/// generous; keeping every run the app has ever done is pure growth.
+const CHECKPOINT_RUNS_KEPT: i64 = 10;
+
+/// How many versions of one artifact to keep, newest first.
+///
+/// The panel offers every stored version as a reading surface, so this is a real
+/// (small) loss rather than dead weight: the body of a document twenty revisions
+/// ago is not something anyone opens.
+const ARTIFACT_VERSIONS_KEPT: i64 = 20;
+
+/// A prune only pays for a `VACUUM` past this many rows. `VACUUM` rewrites the
+/// whole file, so doing it for a handful of rows would make the cure cost more
+/// than the disease.
+const VACUUM_AFTER_ROWS: usize = 500;
+
+/// What a prune threw away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PruneReport {
+    pub checkpoints: usize,
+    pub versions: usize,
+}
+
+impl PruneReport {
+    pub fn total(&self) -> usize {
+        self.checkpoints + self.versions
+    }
+}
+
+/// Drops the file checkpoints and artifact versions nothing can reach any more.
+///
+/// Two tables grow for ever and neither is a log: `file_checkpoints` keeps a
+/// pre-image per (run, path) and a rewind can only walk back one run, and
+/// `artifact_versions` keeps every revision of every artifact. Both are pruned to
+/// a fixed depth rather than by age, because what matters is what is still
+/// reachable, not how old it is.
+pub fn prune(conn: &Connection) -> rusqlite::Result<PruneReport> {
+    let chats: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT DISTINCT chat_id FROM file_checkpoints")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut checkpoints = 0usize;
+    for chat_id in chats {
+        checkpoints += conn.execute(
+            "DELETE FROM file_checkpoints
+              WHERE chat_id = ?1
+                AND run_id NOT IN (
+                    SELECT run_id FROM file_checkpoints
+                     WHERE chat_id = ?1
+                     GROUP BY run_id
+                     ORDER BY max(created_at) DESC, max(rowid) DESC
+                     LIMIT ?2
+                )",
+            params![chat_id, CHECKPOINT_RUNS_KEPT],
+        )?;
+    }
+    // Per artifact, because a version number only means anything next to its own
+    // siblings: the newest twenty of each, and never `current_version`, which is
+    // the maximum by construction.
+    let versions = conn.execute(
+        "DELETE FROM artifact_versions
+          WHERE version <= (
+              SELECT max(v.version) - ?1 FROM artifact_versions v
+               WHERE v.artifact_id = artifact_versions.artifact_id
+          )",
+        params![ARTIFACT_VERSIONS_KEPT],
+    )?;
+    Ok(PruneReport {
+        checkpoints,
+        versions,
+    })
+}
+
+/// Reclaims the space a prune freed, when there is enough of it to be worth the
+/// rewrite. Returns whether it ran.
+pub fn vacuum_if_worth_it(conn: &Connection, removed: usize) -> bool {
+    if removed < VACUUM_AFTER_ROWS {
+        return false;
+    }
+    // Cannot run inside a transaction, and does not need one: it either finishes
+    // or leaves the file as it was.
+    conn.execute_batch("VACUUM;").is_ok()
+}
+
+/// The database's own size, from its page count rather than the file on disk: in
+/// WAL mode there is a side file as well, and the pages are what the tables
+/// actually occupy.
+pub fn size_bytes(conn: &Connection) -> u64 {
+    let pages: i64 = conn
+        .query_row("PRAGMA page_count", [], |r| r.get(0))
+        .unwrap_or(0);
+    let size: i64 = conn
+        .query_row("PRAGMA page_size", [], |r| r.get(0))
+        .unwrap_or(1);
+    (pages.max(0) as u64).saturating_mul(size.max(0) as u64)
+}
+
 // ------------------------------------------------------------ usage history
 
 /// One API round's usage, as the agent loop hands it over.
@@ -2620,6 +2725,100 @@ mod tests {
         let found = interrupted_runs(&conn).unwrap();
         assert_eq!(found.len(), 1, "one row per chat, like the live registry");
         assert_eq!(found[0].run_id, "run-2");
+    }
+
+    /// The run ids still holding checkpoints, oldest first by insertion.
+    fn checkpoint_runs(conn: &Connection, chat_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT run_id FROM file_checkpoints WHERE chat_id = ?1
+                 GROUP BY run_id ORDER BY max(rowid) ASC",
+            )
+            .unwrap();
+        let rows = stmt.query_map([chat_id], |r| r.get(0)).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    }
+
+    #[test]
+    fn a_prune_keeps_the_runs_a_rewind_can_still_reach() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
+            .unwrap();
+        // More runs than the depth, each writing its own path. Every one lands in
+        // the same second, which is the point: "newest" cannot be read off the
+        // clock, so insertion order has to decide it.
+        for i in 0..14 {
+            record_checkpoint(
+                &conn,
+                &chat.id,
+                &format!("run-{i:02}"),
+                &format!("C:/proj/f{i}.rs"),
+                Some("before"),
+            )
+            .unwrap();
+        }
+
+        let report = prune(&conn).unwrap();
+        assert_eq!(report.checkpoints, 4, "14 runs pruned down to 10");
+        assert_eq!(report.versions, 0);
+
+        let kept = checkpoint_runs(&conn, &chat.id);
+        assert_eq!(kept.len(), 10);
+        assert!(!kept.contains(&"run-00".to_string()), "the oldest went");
+        assert_eq!(kept.last().unwrap(), "run-13", "the newest stayed");
+
+        // And the newest run's own pre-image is untouched, which is what makes it
+        // still rewindable — the one thing the prune must not have broken.
+        let newest_pre_images: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM file_checkpoints WHERE run_id = 'run-13'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(newest_pre_images, 1);
+    }
+
+    #[test]
+    fn a_prune_keeps_the_newest_versions_of_each_artifact() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let artifact =
+            create_artifact(&conn, &chat.id, None, "markdown", "Notes", "v1", "assistant").unwrap();
+        for n in 2..=30 {
+            add_artifact_version(&conn, &artifact.id, &format!("v{n}"), "assistant").unwrap();
+        }
+        // A second artifact must be pruned on its own terms, not against the
+        // first one's numbering.
+        let other =
+            create_artifact(&conn, &chat.id, None, "markdown", "Other", "only", "assistant").unwrap();
+
+        let report = prune(&conn).unwrap();
+        assert_eq!(report.versions, 10, "30 versions pruned down to 20");
+
+        let live = get_artifact_detail(&conn, &artifact.id, None).unwrap();
+        assert_eq!(live.artifact.current_version, 30);
+        assert_eq!(live.content, "v30", "the current version is still readable");
+        assert_eq!(live.versions.len(), 20, "and it is the newest twenty listed");
+        // Twenty kept out of thirty: versions 1..=10 went, so 11 is the oldest
+        // that is still there — and the boundary is worth pinning, because an
+        // off-by-one here is silent.
+        assert_eq!(
+            get_artifact_detail(&conn, &artifact.id, Some(11)).unwrap().content,
+            "v11",
+            "the oldest kept version"
+        );
+        assert!(get_artifact_detail(&conn, &artifact.id, Some(10)).is_err());
+        // Untouched: one version is below the depth.
+        assert!(get_artifact_detail(&conn, &other.id, None).is_ok());
+    }
+
+    #[test]
+    fn pruning_nothing_is_not_an_error() {
+        let conn = mem();
+        let report = prune(&conn).unwrap();
+        assert_eq!(report.total(), 0);
+        assert!(!vacuum_if_worth_it(&conn, report.total()), "nothing to reclaim");
     }
 
     #[test]

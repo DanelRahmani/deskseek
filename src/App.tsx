@@ -107,6 +107,12 @@ const IDLE: SessionRuntime = {
 const HELP =
   "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /prompts · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
 
+/** Bytes as something a person reads: whole KB below a megabyte, one decimal above. */
+function fileSize(bytes: number): string {
+  const kb = bytes / 1024;
+  return kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`;
+}
+
 export default function App() {
   // A crash on demand, so the error boundary can be eyeballed without editing
   // code: `localStorage.setItem("deskseek.crash", "1")` then reload. It clears
@@ -1279,6 +1285,22 @@ export default function App() {
     }
   }, []);
 
+  // Sweeps what nothing can reach any more, and reports the size either way: the
+  // number is the point as much as the pruning is, and it costs one read.
+  const maintainDb = useCallback(async () => {
+    try {
+      const { pruned, bytes } = await api.maintainDb();
+      const size = fileSize(bytes);
+      setNotice(
+        pruned === 0
+          ? `The database is ${size}; there was nothing to prune.`
+          : `Pruned ${pruned} unreachable row${pruned === 1 ? "" : "s"} — the database is now ${size}.`,
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
   // results.
@@ -1367,6 +1389,9 @@ export default function App() {
         case "restore":
           void restoreProfile();
           return;
+        case "maintain":
+          void maintainDb();
+          return;
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
           return;
@@ -1397,6 +1422,7 @@ export default function App() {
       backupProfile,
       chatsById,
       exportChat,
+      maintainDb,
       newChat,
       openCustomise,
       restoreProfile,

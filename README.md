@@ -663,6 +663,18 @@ archive is unpacked into a scratch folder first, so a file that is not a backup 
 as it was rather than half-replaced. A coding chat's attachments live in *your* workspace, not in
 the profile, so they are not in the archive.
 
+**Keeping the database small**
+
+Two tables grow for ever if nothing sweeps them, and neither is a log. `file_checkpoints` keeps a
+pre-image per changed file per run, and a rewind can only ever walk back **one** run — so the older
+runs' pre-images are unreachable by construction. Artifact versions keep every revision a document
+ever had, and nobody opens the twentieth-from-last. Both are pruned to a fixed depth (**10 runs**,
+**20 versions each**) every time the app starts, and *Maintain the database* in the palette
+(`Ctrl+K`) does it on demand and tells you the size. The prune is by reachability rather than age,
+so a run from a year ago that is still the newest in its chat is still there. A `VACUUM` — which
+rewrites the whole file — only runs when a prune freed a few hundred rows, so an ordinary launch
+does not pay for it.
+
 ## First run
 
 On first launch DeskSeek shows a short setup screen — reopen it any time with `/setup`. It

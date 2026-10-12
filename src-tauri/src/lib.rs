@@ -134,6 +134,16 @@ pub fn run() {
                     eprintln!("{lost} scheduled run(s) were left waiting by the last session");
                 }
             }
+            // Sweep what nothing can reach any more: a rewind only walks back one
+            // run, and an artifact keeps every revision, so both tables otherwise
+            // grow for ever. The rewrite that a `VACUUM` costs only happens when a
+            // prune was actually large, so an ordinary launch pays almost nothing.
+            if let Ok(pruned) = store::db::prune(&conn) {
+                if pruned.total() > 0 {
+                    store::db::vacuum_if_worth_it(&conn, pruned.total());
+                    eprintln!("pruned {} unreachable database row(s)", pruned.total());
+                }
+            }
             let settings = store::settings::load(&paths.settings_file());
             let http = api::client::build_http();
 
@@ -298,6 +308,7 @@ pub fn run() {
             commands::revoke_tool_permission,
             commands::tool_grants,
             commands::spend_report,
+            commands::maintain_db,
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,

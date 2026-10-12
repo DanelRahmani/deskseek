@@ -20,6 +20,7 @@ import type {
   GuardEvent,
   Instruction,
   InterruptedRun,
+  Maintenance,
   MemoryCategoryView,
   MemoryEntryView,
   MemoryProposal,
@@ -57,6 +58,8 @@ export const api = {
   backupProfile: () => invoke<string>("backup_profile"),
   /** Unpacks a profile over this one. Reload the window afterwards. */
   restoreProfile: (path: string) => invoke<void>("restore_profile", { path }),
+  /** Sweeps the tables that grow for ever; returns what went and the size now. */
+  maintainDb: () => invoke<Maintenance>("maintain_db"),
 
   hasApiKey: () => invoke<boolean>("has_api_key"),
   maskedApiKey: () => invoke<string | null>("masked_api_key"),

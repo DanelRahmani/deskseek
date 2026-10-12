@@ -263,6 +263,13 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Restoring a `.json` file (or any file that is not a profile zip) reports the reason and leaves
       the profile as it was
 
+## Database maintenance
+
+- [ ] `Ctrl+K` → *Maintain the database* reports the size, whether or not it pruned anything
+- [ ] On a chat with more than ten runs of file edits, the same action reports pruning; the newest
+      run still rewinds (`/rewind`) afterwards
+- [ ] The app starts normally a second time (the startup prune is not an error)
+
 ## Maths
 
 - [ ] An answer containing `$E = mc^2$` renders it as maths, not as dollar signs

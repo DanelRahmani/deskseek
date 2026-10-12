@@ -467,6 +467,15 @@ export type ParkedRequest =
   | (ParkedBase & { kind: "question"; payload: QuestionEvent });
 
 /**
+ * What a database sweep did, and how big the database is now.
+ */
+export interface Maintenance {
+  /** Rows nothing can reach any more, across both pruned tables. */
+  pruned: number;
+  bytes: number;
+}
+
+/**
  * A turn the previous session left in flight. Read once at startup: the marker
  * exists for exactly as long as a run does, so anything found here belongs to a
  * process that died mid-turn and never got to clear it.
