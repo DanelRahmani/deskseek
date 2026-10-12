@@ -56,6 +56,7 @@ export const KIND_LABELS: Record<string, string> = {
   html: "Page",
   svg: "SVG",
   mermaid: "Diagram",
+  chart: "Chart",
   markdown: "Note",
   code: "Code",
 };

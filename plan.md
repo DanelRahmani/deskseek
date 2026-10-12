@@ -1,7 +1,7 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.5
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.6
 are done, the rest of 2 is the plan. Items 3–6 have not been started.
 
 Each item is independently shippable and the order is the author's own priority,
@@ -265,15 +265,58 @@ Ordered by how often the author would actually reach for it.
   the export came from — a bundle that swallowed them would be a container, and a
   half-copy that pretends otherwise is worse than saying so.
 
-### 2.6 [L] Let the agent analyse data, not just describe it
-- **Why**: the sandbox (Docker/WSL rungs) and `sheet_create` exist, but there is
-  no route from "a spreadsheet in this chat" to "a chart".
-- **Do**: a chart artifact kind (reuse `ArtifactPanel`), plus a documented recipe
-  that runs the arithmetic in the sandbox rather than in the model's head. No
-  plotting dependency on the Rust side — render in the artifact frame.
-- **Test**: an artifact check for the chart contract; a fixture spreadsheet with a
-  known total.
+### 2.6 [L] Let the agent analyse data, not just describe it ✅ done
+- **Why**: the sandbox (Docker/WSL rungs) and `sheet_create` existed, but there was
+  no route from "a spreadsheet in this chat" to "a chart". The model could *say*
+  what a column summed to and had no way to show it.
+- **Now**: a sixth artifact kind, `chart`, whose content is **data, not markup** —
+  `{"type":"bar"|"line","title":…,"labels":[…],"series":[{"name":…,"values":[…]}]}` —
+  which `src/lib/chart.ts` turns into the SVG: bars or a line, grouped series, up
+  to 8 series and 200 points, ticks on 1/2/5×10ⁿ so the axis is readable, and the
+  data always inside the frame. The panel draws it through the **existing** `svg`
+  path, so the sandbox, the kind label and the white background are reused rather
+  than re-implemented. `chartSvg` never throws: a bad spec comes back as an
+  `{error}` message naming what was sent — the convention `parse_artifact` already
+  uses in Rust, because the text is fed back to the model — and the panel shows
+  that reason *and* the JSON. Mermaid's failure block was folded into the same
+  `CouldNotDraw`, so there is one copy of "say why, then show the source".
+- **Why data and not SVG**: a model asked to hand-write a plot produces a picture
+  that is subtly wrong and impossible to check; and the check that matters — does
+  a bar's height match its value — cannot be written against a library's output
+  either. A spec is arithmetic, so `chart.check.ts` *can* pin the mapping, the
+  escaping and the failure messages. No charting dependency was added, on either
+  side: the plan's "no plotting dependency on the Rust side" holds trivially, and
+  the frontend did not want one either.
+- **Maths, the other half of the request**: LaTeX between `$…$` and `$$…$$` now
+  renders in the chat and in a `markdown` artifact — `katex` + `remark-math` +
+  `rehype-katex`, loaded the first time an answer contains a `$` (the same lazy
+  pattern `rehype-highlight` already used for a fenced block) with
+  `throwOnError: false`, so one malformed formula is drawn in red instead of
+  taking the answer down. There is still no error boundary (3.1), which is why
+  that mattered. **KaTeX is pinned to `^0.16` on purpose**: `rehype-katex`
+  depends on `katex@^0.16`, so letting 0.19 in would have meant two copies and
+  markup drawn by one against the CSS of the other.
+- **Telling the model, which is the actual feature**: `chart` is in
+  `ARTIFACT_KINDS` and in the tool's own description, and the
+  `# Writing something to keep` prompt section now names it with the spec, says
+  the panel draws maths, and carries the recipe the plan asked for — *total the
+  numbers in a command, and chart what you computed.* A capability the model is
+  never told about does not exist.
+- **Test**: `chart.check.ts` — bar heights ordered by value, one polyline point
+  per label, both series of a grouped chart, nothing drawn outside the frame, no
+  `NaN` from an all-zero series or from negatives (which must land below the zero
+  line), a label containing markup arriving escaped, and every wrong shape — bad
+  JSON, a bare value, a missing `type`, a short `values`, a non-number, an empty
+  chart, 201 points — producing the message that names it.
+  **The plan's "fixture spreadsheet with a known total" is on the E2E checklist,
+  not in the gate**: it needs a real sandbox, a real file and a real model, which
+  is the class of thing that list exists for.
 - **Stop**: "sum this column and chart it" produces both a number and a picture.
+- **Honest limits, stated in the README**: the chart is drawn by `chart.ts` rather
+  than a chart library, so it is bars and lines on a linear axis — no pie, no
+  stacked or log scales, no smoothing. The legend spaces its entries by an
+  estimated character width, so a very long series name can overrun the next
+  swatch.
 
 ### 2.7 [M] Projects grow up
 - **Why**: a project is a name + folder + membership. It has no instructions and

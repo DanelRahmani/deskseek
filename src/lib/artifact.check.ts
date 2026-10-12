@@ -43,7 +43,7 @@ for (const kind of ["svg", "mermaid"] as const) {
 }
 
 // Every kind the model may send has a label, so the header never shows a raw id.
-for (const kind of ["html", "svg", "mermaid", "markdown", "code"]) {
+for (const kind of ["html", "svg", "mermaid", "chart", "markdown", "code"]) {
   ok(!!KIND_LABELS[kind], `${kind} needs a label`);
 }
 console.log("artifact.check.ts: all checks passed");

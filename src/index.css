@@ -255,6 +255,13 @@ body {
   border-top: 1px solid var(--n-800);
   margin: 1em 0;
 }
+/* KaTeX centres a displayed equation and gives it nothing to scroll, so a wide
+   one would be clipped by the panel instead of reachable. */
+.md .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
 
 /* Syntax highlighting.
 

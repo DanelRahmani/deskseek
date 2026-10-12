@@ -129,7 +129,7 @@ pub const MAX_TASKS: usize = 20;
 
 /// What the artifact panel knows how to render. A closed set: an unknown kind
 /// would render as a blank panel and the model would never learn why.
-pub const ARTIFACT_KINDS: [&str; 5] = ["html", "svg", "mermaid", "markdown", "code"];
+pub const ARTIFACT_KINDS: [&str; 6] = ["html", "svg", "mermaid", "chart", "markdown", "code"];
 
 /// Artifacts live in the database, so this cap is about keeping one runaway
 /// generation from bloating it — well past what the panel can usefully show.
@@ -689,12 +689,12 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "artifact_create",
-                "Put a document in the side panel that the user can read, edit and come back to. Use it whenever the answer is something to keep rather than a chat reply — a report, a page, a chart, a diagram, a note, a snippet — and never paste a long block into the chat when an artifact would do. Calling it again publishes a new version of the same document.",
+                "Put a document in the side panel that the user can read, edit and come back to. Use it whenever the answer is something to keep rather than a chat reply — a report, a page, a chart, a diagram, a note, a snippet — and never paste a long block into the chat when an artifact would do. For a chart, send the numbers and the app draws them; do not plot by hand. Calling it again publishes a new version of the same document.",
                 params(
                     json!({
                         "title": {"type": "string", "description": "Short name shown on the panel, e.g. \"Q3 revenue chart\""},
-                        "kind": {"type": "string", "enum": ARTIFACT_KINDS, "description": "html: a complete self-contained page (styles inline, no network). svg: the <svg> markup. mermaid: Mermaid diagram source. markdown: a Markdown note. code: source code, shown read-only."},
-                        "content": {"type": "string", "description": "The whole document. For html, include its styles in a <style> tag; there is no network access, so no CDN links."}
+                        "kind": {"type": "string", "enum": ARTIFACT_KINDS, "description": "html: a complete self-contained page (styles inline, no network). svg: hand-written <svg> markup. mermaid: Mermaid diagram source. chart: the data for a bar or line chart, as JSON — {\"type\":\"bar\" or \"line\",\"title\":\"...\",\"labels\":[\"Jan\",...],\"series\":[{\"name\":\"...\",\"values\":[1,2]}]} — with one value per label. Prefer this to hand-written svg for a plot. markdown: a Markdown note, where math between $...$ or $$...$$ renders. code: source code, shown read-only."},
+                        "content": {"type": "string", "description": "The whole document. For html, include its styles in a <style> tag; there is no network access, so no CDN links. For chart, the JSON spec described in kind."}
                     }),
                     &["title", "kind", "content"],
                 ),

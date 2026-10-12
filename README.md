@@ -465,6 +465,7 @@ forgotten:
 | --- | --- |
 | `html` | A sandboxed frame, rendered live |
 | `svg` / `mermaid` | The diagram, drawn and centred on white |
+| `chart` | A bar or line chart, drawn from the numbers you send |
 | `markdown` | The normal Markdown renderer |
 | `code` | Monospace, read-only |
 
@@ -473,6 +474,20 @@ new version rather than a second document; a version menu goes back to any earli
 *Restore* makes an old version current again — by saving it as a new version, so nothing is ever
 overwritten. *Edit* opens the document as text; saving it adds a version attributed to you. The
 tool card in the chat names what was published, and the live panel is where the substance lives.
+
+A `chart` artifact takes **data, not markup**: the content is a small JSON spec —
+`{"type":"bar","labels":["Jan","Feb"],"series":[{"name":"Sales","values":[10,40]}]}` — and the
+app draws the bars or the line. That is deliberate. A model asked to hand-write SVG for a plot
+produces a picture that is subtly wrong and impossible to check by looking; a spec either has one
+value per label or it says it does not. `type` is `bar` or `line`, up to eight series, and the
+tool result names what to fix when a shape is wrong. A chart that still cannot be drawn shows the
+reason and the JSON in the panel rather than an empty frame.
+
+**Maths** renders as LaTeX wherever Markdown does — in the chat and in a `markdown` artifact.
+Write `$…$` for inline and `$$…$$` for a displayed equation. It is the model's own LaTeX, drawn by
+KaTeX from fonts bundled with the app, so nothing is fetched at read time. The renderer is a lazy
+chunk that loads the first time an answer contains a `$`, and a formula it cannot parse is drawn
+in red rather than taken as a reason to fail the whole answer.
 
 Two things worth saying plainly:
 
@@ -653,7 +668,9 @@ cd src-tauri && cargo test
 `npm run check` is the frontend's own checks (plain Node, no test framework). It pins the tab and
 pane rules in `src/lib/shell.ts`; the task-list reader in `src/lib/tasks.ts`, which parses
 arguments the model wrote and must therefore survive every malformed shape it can produce; the
-artifact and document readers; and the shortcut map in `src/lib/shortcuts.ts`, so a chord cannot
+artifact and document readers; the chart contract in `src/lib/chart.ts`, so a bar's height cannot
+silently stop matching its value and a label cannot become markup; and the shortcut map in
+`src/lib/shortcuts.ts`, so a chord cannot
 silently fire for the wrong key or stop firing for the right one.
 
 Before a release, `npm run tauri build` produces the installers (Windows NSIS + MSI, macOS

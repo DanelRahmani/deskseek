@@ -1,11 +1,20 @@
 import { useEffect, useState } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyText } from "../lib/clipboard";
 import { IconButton } from "./Icon";
 
 /** The rehype plugin's type, without importing it for real (type queries erase). */
 type Highlighter = typeof import("rehype-highlight").default;
+
+/** react-markdown's own plugin-list type, so a lazily imported plugin still fits. */
+type Plugins = NonNullable<Options["remarkPlugins"]>;
+
+/** KaTeX's two halves, held together so one state update loads both. */
+interface MathPlugins {
+  remark: Plugins;
+  rehype: Plugins;
+}
 
 /**
  * The text inside a rendered node, whatever react-markdown nested it in.
@@ -50,7 +59,14 @@ export function Markdown({ children }: { children: string }) {
   // fenced block, so a window of prose never pays for it. The cost is one frame
   // of unhighlighted code on that first block, which is worth the load.
   const [highlight, setHighlight] = useState<Highlighter | null>(null);
+  // Maths is the same trade as highlighting, one size smaller: nothing is paid
+  // until an answer actually contains a formula.
+  const [math, setMath] = useState<MathPlugins | null>(null);
   const wantsCode = children.includes("```") || children.includes("~~~");
+  // ponytail: a `$` in prose — a price, a shell prompt — is not proof of maths,
+  // and this loads KaTeX's chunk for it. A false positive costs one chunk per
+  // window; a false negative would show raw `\frac{}{}` instead of a fraction.
+  const wantsMath = children.includes("$");
   useEffect(() => {
     if (!wantsCode || highlight) return;
     let alive = true;
@@ -63,12 +79,33 @@ export function Markdown({ children }: { children: string }) {
       alive = false;
     };
   }, [wantsCode, highlight]);
+  useEffect(() => {
+    if (!wantsMath || math) return;
+    let alive = true;
+    // KaTeX's stylesheet comes with its renderer: without it the markup it
+    // produces renders as unformatted text, which reads as a bug in the answer.
+    void Promise.all([import("remark-math"), import("rehype-katex"), import("katex/dist/katex.min.css")]).then(
+      ([remark, rehype]) => {
+        if (!alive) return;
+        // `throwOnError: false` draws a malformed formula in red instead of
+        // throwing: one bad `\frac{` must not take the whole answer down.
+        const rehypePlugins: Plugins = [[rehype.default, { throwOnError: false }]];
+        setMath({ remark: [remark.default], rehype: rehypePlugins });
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [wantsMath, math]);
+
+  const remarkPlugins: Plugins = math ? [remarkGfm, ...math.remark] : [remarkGfm];
+  const rehypePlugins: Plugins = [...(highlight ? [highlight] : []), ...(math ? math.rehype : [])];
 
   return (
     <div className="md">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={highlight ? [highlight] : []}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         components={{
           // Every fenced block gets its own copy button: taking a snippet out of
           // an answer is the most common thing anyone does with one. It sits on

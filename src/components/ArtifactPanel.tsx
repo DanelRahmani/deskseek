@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
 import { frameDoc, KIND_LABELS, SANDBOX } from "../lib/artifact";
+import { chartSvg } from "../lib/chart";
 import type { ArtifactDetail } from "../types";
 import { Markdown } from "./Markdown";
 
@@ -210,14 +211,37 @@ function View({ kind, content, title }: { kind: string; content: string; title: 
     );
   }
   if (kind === "mermaid") return <Mermaid source={content} />;
+
+  // A chart is a spec, not markup: `chartSvg` builds the picture. Everything
+  // else reaches the frame as the document the model wrote.
+  let doc = frameDoc(kind === "svg" ? "svg" : "html", content);
+  if (kind === "chart") {
+    const drawn = chartSvg(content);
+    if ("error" in drawn) return <CouldNotDraw what="chart" error={drawn.error} source={content} />;
+    doc = frameDoc("svg", drawn.svg);
+  }
   return (
     <iframe
       // The frame is the sandbox: unique origin, no network, its own scripts.
       sandbox={SANDBOX}
-      srcDoc={frameDoc(kind === "svg" ? "svg" : "html", content)}
+      srcDoc={doc}
       className="h-full w-full border-0 bg-white"
       title={title}
     />
+  );
+}
+
+/**
+ * Something the panel was asked to draw and could not. The reason comes first
+ * and the source underneath, because the source is the part the user — or the
+ * model, on the next turn — can actually fix.
+ */
+function CouldNotDraw({ what, error, source }: { what: string; error: string; source: string }) {
+  return (
+    <div className="h-full overflow-auto p-3">
+      <p className="mb-2 text-[11px] text-amber-400">That {what} could not be drawn: {error}</p>
+      <pre className="whitespace-pre font-mono text-xs text-neutral-300">{source}</pre>
+    </div>
   );
 }
 
@@ -244,14 +268,7 @@ function Mermaid({ source }: { source: string }) {
   }, [source]);
 
   if (error) {
-    // Show the source rather than an empty panel: the diagram syntax is the
-    // thing the user can actually fix.
-    return (
-      <div className="h-full overflow-auto p-3">
-        <p className="mb-2 text-[11px] text-amber-400">That diagram could not be drawn: {error}</p>
-        <pre className="whitespace-pre font-mono text-xs text-neutral-300">{source}</pre>
-      </div>
-    );
+    return <CouldNotDraw what="diagram" error={error} source={source} />;
   }
   if (!svg) return <p className="p-4 text-xs text-neutral-500">Drawing the diagram…</p>;
   return (

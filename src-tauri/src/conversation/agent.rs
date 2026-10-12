@@ -310,9 +310,19 @@ When the answer is a document rather than a reply — a report, a page, a chart,
 or a snippet worth keeping — call `artifact_create` instead of pasting it into the chat. It opens \
 in the side panel, where the user can read it, edit it, and go back to an earlier version. Pick \
 the kind that fits: `html` for a self-contained page (styles inline — there is no network access, \
-so no CDN links), `svg` or `mermaid` for a diagram, `markdown` for prose, `code` for source. \
+so no CDN links), `svg` or `mermaid` for a diagram, `chart` for data, `markdown` for prose, \
+`code` for source. \
 Calling it again with the same title publishes a new version of that document, so revising is \
 cheap and nothing is lost. Keep the chat reply short and put the substance in the artifact.\n\n\
+Two things the panel draws for you, so do not fake them by hand:\n\
+- **A chart.** `kind: \"chart\"` takes the data and the app draws the bars or the line — do not \
+plot one by hand in `svg`. The content is JSON: \
+`{\"type\":\"bar\"|\"line\",\"title\":\"...\",\"labels\":[\"Jan\",\"Feb\"],\"series\":[{\"name\":\"Sales\",\"values\":[10,40]}]}` \
+— one value per label, up to 8 series. If the shape is wrong the tool result says what to fix.\n\
+- **Maths.** In `markdown`, LaTeX between `$...$` (inline) or `$$...$$` (displayed) renders — in \
+the chat as well as in an artifact. Write the formula instead of spelling it out in words.\n\
+Do the arithmetic in a command, never in your head: when the numbers come from a file, total them \
+with `run_command` (or a `=SUM(...)` cell in `sheet_create`) and chart the number you computed.\n\n\
 When the user wants a *file* — something to send, print or open in Excel — write one instead:\n\
 - `doc_create` — Markdown, Word (.docx) or PDF, from Markdown content.\n\
 - `sheet_create` — a spreadsheet, from rows. Headers in the first row; a cell starting with `=` is \

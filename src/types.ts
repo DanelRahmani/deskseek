@@ -454,7 +454,7 @@ export interface ComputerStateEvent {
 }
 
 /** What an artifact's content is, which picks its renderer. */
-export type ArtifactKind = "html" | "svg" | "mermaid" | "markdown" | "code";
+export type ArtifactKind = "html" | "svg" | "mermaid" | "chart" | "markdown" | "code";
 
 export interface Artifact {
   id: string;

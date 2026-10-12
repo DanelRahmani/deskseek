@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / docs / shortcuts / commands / theme)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / theme)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 
@@ -204,6 +204,19 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Editing saves a version attributed to you
 - [ ] *Restore* on an older version makes it current without deleting the newer one
 - [ ] *Copy* puts the version on screen on the clipboard
+- [ ] `artifact_create` with `chart` draws a bar chart, and the bar heights match the values sent
+- [ ] A `line` chart of the same data draws a line with a point per label
+- [ ] A chart whose spec is wrong (a missing `type`, or one value short) shows the reason and the
+      JSON in the panel, and the tool result names what was wrong
+- [ ] A label containing markup (`<b>x</b>`) is shown as text, not drawn as markup
+
+## Maths
+
+- [ ] An answer containing `$E = mc^2$` renders it as maths, not as dollar signs
+- [ ] A displayed `$$\int_0^1 x^2\,dx$$` sits on its own line and is centred
+- [ ] A deliberately broken formula (`$\frac{$`) shows in red and does not blank the answer
+- [ ] A `markdown` artifact with maths in it renders the same way
+- [ ] An answer with no `$` in it still renders normally (the maths chunk never loads)
 
 ## Documents
 
