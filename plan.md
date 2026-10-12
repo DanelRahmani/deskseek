@@ -179,6 +179,9 @@ Ordered by how often the author would actually reach for it.
   `the_spend_payload_is_camel_case_on_the_wire` now asserts the *wire* keys, which
   is the check a type can never give. That blank screen is also why 3.1's
   boundary was pulled forward into this batch.
+- **Follow-up, asked for 2026-10-12 and deliberately deferred**: the panel shows
+  *what* everything cost, not *where the tokens went* — a pie of input against
+  output, split by coding and chatting. See **2.9**.
 
 ### 2.2 [M] Search past conversations from the chat ✅ done
 - **Why**: `messages_fts` already indexed everything and the sidebar showed
@@ -344,6 +347,32 @@ Ordered by how often the author would actually reach for it.
 - **Test**: a run that hits a parked approval leaves a durable "needs you" row.
 - **Stop**: nothing parks invisibly *and* everything parked can be answered from
   one place.
+
+### 2.9 [S] Spend, split: where the tokens went
+- **Why**: the spend view answers *how much*, and only in money. The tokens are the
+  half that is not a bill: a coding chat that reads a lot of files burns **input**,
+  and a chat-mode conversation burns **output** — same total, different problem,
+  and only one of them is fixed by a cheaper prompt. Asked for on 2026-10-12.
+- **Do**: a pie of prompt against completion tokens, split by section (`coding` vs
+  `chat`). The data is a join away: `turn_usage.chat_id` → `chats.kind`, and
+  `spend_report` already joins `chats` for the titles, so this is one more grouped
+  query and one more field on `SpendReport` — no new table, and no arithmetic done
+  in the panel.
+- **Drawing it**: `chart.ts` has `bar` and `line` only. Two honest options, and
+  the choice is for whoever builds it: add a **`pie` type to the chart module**
+  (pure, and therefore assertable — the module exists for exactly this), or a
+  `conic-gradient` div like the per-day bar in `SpendPanel` (three lines, nothing
+  to check). Prefer the first: the slices have to be *right*, and a gradient has no
+  way to be wrong out loud.
+- **Test**: a Rust test with hand-built rows across both kinds, asserting the
+  sections sum to the report's own totals; if `pie` is added, a chart check that
+  the angles complete the circle and that an empty or single-slice breakdown does
+  not produce `NaN` — the same class of bug the flat-series axis produced in 2.6.
+- **Stop**: an input/output split is visible per section, and the slices sum to the
+  totals above them.
+- **Honest limit to keep**: cached input costs a fraction of fresh input. If the
+  split ever claims to explain the *bill*, it has to show cached tokens too; as a
+  picture of where the tokens went, two slices is what was asked for.
 
 ---
 
