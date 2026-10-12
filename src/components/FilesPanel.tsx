@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, onFsChanged } from "../api";
 import { Icon } from "./Icon";
@@ -12,6 +12,11 @@ interface Props {
 /// The project explorer. It watches the chat's folder, so files the agent
 /// creates or edits appear here without a refresh, and an open file re-reads
 /// itself when it is written to.
+///
+/// The box at the top searches the folder on disk by **name**, so a file three
+/// levels down is reachable without opening the folders above it. It used to
+/// filter only the levels that had been expanded, which looked like a search and
+/// was not one.
 export function FilesPanel({ chatId, onClose }: Props) {
   const [root, setRoot] = useState("");
   const [children, setChildren] = useState<Record<string, TreeEntry[]>>({});
@@ -19,31 +24,43 @@ export function FilesPanel({ chatId, onClose }: Props) {
   const [file, setFile] = useState<FilePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
+  // `null` means "not searching": the tree is drawn. An array means results are.
+  const [hits, setHits] = useState<TreeEntry[] | null>(null);
+  const [searching, setSearching] = useState(false);
 
-  // Which loaded paths survive the filter. A folder is kept when it is itself a
-  // hit or when a loaded descendant is, so a match never floats without the
-  // folders above it. Only levels that have been opened are searched: the tree is
-  // lazy, and pretending otherwise would mean reading the whole disk.
-  const keep = useMemo(() => {
-    if (!needle) return null;
-    const kept = new Set<string>();
-    for (const list of Object.values(children)) {
-      for (const entry of list) {
-        if (!entry.name.toLowerCase().includes(needle)) continue;
-        kept.add(entry.path);
-        // A folder that matches shows what is in it: filtering it down to nothing
-        // would read as broken.
-        if (entry.isDir) for (const child of children[entry.path] ?? []) kept.add(child.path);
-        let parent = entry.path;
-        while (parent.includes("/")) {
-          parent = parent.slice(0, parent.lastIndexOf("/"));
-          kept.add(parent);
-        }
-      }
+  // The search reads the folder from disk, so it is debounced and skipped for a
+  // single letter — a keystroke must not walk a large tree.
+  useEffect(() => {
+    const needle = filter.trim();
+    if (!chatId || needle.length < 2) {
+      setHits(null);
+      setSearching(false);
+      return;
     }
-    return kept;
-  }, [children, needle]);
+    setSearching(true);
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      api
+        .findInTree(chatId, needle)
+        .then((found) => {
+          if (!alive) return;
+          setHits(found);
+          setSearching(false);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setError(String(e));
+          // Back to the tree rather than an empty result list: a failed search
+          // must not look like a search that found nothing.
+          setHits(null);
+          setSearching(false);
+        });
+    }, 200);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [chatId, filter]);
 
   // Read by the fs-changed handler, which must not re-subscribe on every toggle.
   const openRef = useRef<string[]>([]);
@@ -126,11 +143,8 @@ export function FilesPanel({ chatId, onClose }: Props) {
   };
 
   const level = (dir: string, depth: number): ReactNode =>
-    (children[dir] ?? [])
-      .filter((entry) => !keep || keep.has(entry.path))
-      .map((entry) => {
-        // While filtering, a kept folder is shown open: the hit may be inside it.
-        const expanded = open.includes(entry.path) || (keep !== null && entry.isDir);
+    (children[dir] ?? []).map((entry) => {
+        const expanded = open.includes(entry.path);
       return (
         <div key={entry.path}>
           <button
@@ -185,19 +199,41 @@ export function FilesPanel({ chatId, onClose }: Props) {
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          placeholder="Filter what is open…"
+          placeholder="Find a file by name…"
           className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
-          title="Filters the folders you have opened. Nothing is read from disk to search."
+          title="Searches every folder under this one by file name. The same noise folders are skipped, so it never hangs. To search inside files, ask the model to grep."
         />
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto py-1">
-        {chatId ? (
-          keep && keep.size === 0 ? (
+        {hits ? (
+          hits.length === 0 ? (
             <p className="px-3 py-2 text-[11px] text-neutral-600">
-              Nothing open matches “{filter.trim()}”. Open the folder you want searched.
+              {searching
+                ? "Searching…"
+                : `No file name contains “${filter.trim()}”. To search inside files, ask the model to grep.`}
             </p>
-          ) : (children[""] ?? []).length > 0 ? (
+          ) : (
+            hits.map((entry) => (
+              <button
+                key={entry.path}
+                onClick={() => select(entry.path)}
+                className={`flex w-full flex-col items-start gap-0.5 px-3 py-[3px] text-left transition hover:bg-neutral-900 ${
+                  file?.path === entry.path ? "text-sky-300" : "text-neutral-400"
+                }`}
+                title={entry.path}
+              >
+                <span className="w-full truncate text-xs">{entry.name}</span>
+                <span className="w-full truncate text-[10px] text-neutral-600">
+                  {entry.path.includes("/")
+                    ? entry.path.slice(0, entry.path.lastIndexOf("/"))
+                    : "."}
+                </span>
+              </button>
+            ))
+          )
+        ) : chatId ? (
+          (children[""] ?? []).length > 0 ? (
             level("", 0)
           ) : (
             <p className="px-3 py-2 text-[11px] text-neutral-600">This folder is empty.</p>

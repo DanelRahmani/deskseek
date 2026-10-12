@@ -258,8 +258,12 @@ Both sections are functional:
 - A **live file tree** (`/files`, or the *Files* button) — the folder is watched, so files
   the agent creates or edits appear as it works. Click any file to read it without
   interrupting the run; if the agent writes to the file you are reading, it re-reads itself.
-  A box above the tree filters it to what you have already opened — nothing is read from disk
-  to search, and the folder you want looked in has to be open
+  The box above the tree **searches the whole folder by file name** — it reads the folder rather
+  than filtering what you have already opened, so a file three levels down is found without
+  opening its parents. It skips the same noise directories the agent's own tools skip
+  (`node_modules`, `target`, `.git`…), needs two characters before it looks, and caps what it
+  returns, so a large tree cannot hang the window. Contents are not searched: that is `grep`,
+  and it is the model's tool
 - Project context from `AGENTS.md`, else `.deskseek/context.md` — and, in any chat that belongs
   to a project, the project's own rules, which apply to every chat in it (see *Projects*)
 - A **task list** the model keeps up to date as it works — see the chat section above

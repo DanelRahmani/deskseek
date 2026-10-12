@@ -2459,6 +2459,40 @@ pub fn list_tree(
     })
 }
 
+/// Find files anywhere under the chat's folder by **name**.
+///
+/// The tree is lazy, so a box that only filtered what had been opened could not
+/// find a file nobody had expanded — it looked like a search and was not one.
+/// This reads the folder instead, skipping the same noise directories the walker
+/// skips and capped the same way, so a name is found three levels down without
+/// opening anything. Contents are still `grep`'s job, and the model's.
+#[tauri::command]
+pub fn find_in_tree(
+    state: State<'_, AppState>,
+    chat_id: String,
+    query: String,
+) -> Result<Vec<TreeEntry>, String> {
+    const MAX_HITS: usize = 200;
+    let needle = query.trim().to_lowercase();
+    // One letter would match most of a large tree and is never what was meant.
+    if needle.chars().count() < 2 {
+        return Ok(Vec::new());
+    }
+    let root = chat_root(&state, &chat_id)?;
+    Ok(walk::find_named(&root, &needle, MAX_HITS)
+        .into_iter()
+        .filter_map(|path| {
+            let meta = std::fs::metadata(&path).ok()?;
+            Some(TreeEntry {
+                name: path.file_name()?.to_string_lossy().to_string(),
+                path: sandbox::display(&root, &path),
+                is_dir: false,
+                size: meta.len(),
+            })
+        })
+        .collect())
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilePreview {
@@ -2468,7 +2502,6 @@ pub struct FilePreview {
     /// Why there is no text: binary, or over the preview cap.
     pub note: Option<String>,
 }
-
 /// A read-only peek at a file, so the user can watch the agent's work without
 /// interrupting it.
 #[tauri::command]

@@ -53,6 +53,46 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Files under `root` whose **name** contains `needle`, case-insensitively.
+///
+/// The walk is the one above, so the same directories are skipped and the same
+/// ceiling applies: a search can never be the thing that hangs the window. The
+/// name without its extension matching outright beats a name that starts with
+/// the needle, which beats one that merely contains it, and a shorter path beats
+/// a longer one inside each rank — so looking for `mod` offers `mod.rs` before
+/// `module_helper.rs`, and the shallow one before the same name ten folders
+/// down.
+pub fn find_named(root: &Path, needle: &str, cap: usize) -> Vec<PathBuf> {
+    let needle = needle.to_lowercase();
+    let mut hits: Vec<PathBuf> = walk_files(root)
+        .into_iter()
+        .filter(|path| {
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_lowercase().contains(&needle))
+                .unwrap_or(false)
+        })
+        .collect();
+    hits.sort_by_key(|path| {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        // `mod` should find `mod.rs`, not rank it beside `module_helper.rs`:
+        // the name a person types is the stem, and the extension is noise.
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name);
+        let rank = if stem == needle {
+            0
+        } else if name.starts_with(&needle) {
+            1
+        } else {
+            2
+        };
+        (rank, path.to_string_lossy().len())
+    });
+    hits.truncate(cap);
+    hits
+}
+
 /// Glob match supporting `*` (no `/`), `?` (no `/`) and `**` (anything).
 /// A leading `**/` also matches zero directories.
 pub fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -138,6 +178,52 @@ mod tests {
         let files = walk_files(&dir);
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("a.rs"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The whole point of the search is reaching a file nobody expanded, so the
+    /// depth is what is asserted — not that some names came back.
+    #[test]
+    fn find_named_reaches_a_file_three_folders_down() {
+        let dir = std::env::temp_dir().join(format!("deskseek-find-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("a").join("b").join("c")).unwrap();
+        std::fs::create_dir_all(dir.join("node_modules").join("x")).unwrap();
+        std::fs::write(dir.join("a").join("b").join("c").join("buried.rs"), "x").unwrap();
+        std::fs::write(dir.join("node_modules").join("x").join("buried.rs"), "x").unwrap();
+
+        let hits = find_named(&dir, "buried", 50);
+        assert_eq!(hits.len(), 1, "the skipped directory must stay skipped");
+        assert!(hits[0].ends_with("c\\buried.rs") || hits[0].ends_with("c/buried.rs"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A needle that merely appears in a longer name must not outrank the file
+    /// actually named after it, and the cap must trim the tail rather than the
+    /// head of that ranking.
+    #[test]
+    fn find_named_ranks_an_exact_name_first_and_trims_the_tail() {
+        let dir = std::env::temp_dir().join(format!("deskseek-rank-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join("deep").join("down").join("here")).unwrap();
+        std::fs::write(dir.join("mod.rs"), "x").unwrap();
+        std::fs::write(dir.join("module_helper.rs"), "x").unwrap();
+        std::fs::write(dir.join("deep").join("down").join("here").join("mod.rs"), "x").unwrap();
+        let hits = find_named(&dir, "mod", 10);
+        assert_eq!(hits.len(), 3, "every match is offered");
+        assert_eq!(hits[0], dir.join("mod.rs"), "an exact name wins, and the shallow one first");
+        assert_eq!(
+            hits[1],
+            dir.join("deep").join("down").join("here").join("mod.rs"),
+            "then the exact name that is buried"
+        );
+        assert_eq!(hits[2], dir.join("module_helper.rs"), "a contains-match is last");
+
+        let capped = find_named(&dir, "mod", 1);
+        assert_eq!(capped.len(), 1, "the cap is applied");
+        assert_eq!(
+            capped[0],
+            dir.join("mod.rs"),
+            "the cap keeps the best hit, not the first one walked"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

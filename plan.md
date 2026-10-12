@@ -705,13 +705,42 @@ Ordered by how often the author would actually reach for it.
     a reveal is monotonic and adds *above* the previous first item, and revealing
     everything leaves nothing hidden.
 
-### 4.2 [M] Real search in the file tree
+### 4.2 [M] Real search in the file tree ✅
 - **Why**: the box filters what has been loaded, which is not what it looks like
   it does (1.6 made the wording honest; this makes the feature real).
 - **Do**: a bounded recursive **name** search on the backend (`list_tree` already
   owns skipping), with the existing `MAX_ENTRIES` discipline. Content search stays
   `grep`.
 - **Stop**: a file three levels down is findable without opening its parents.
+- **Done (2026-10-12).**
+  - `walk.rs` gained `find_named(root, needle, cap)`: it runs the existing
+    `walk_files` (so `SKIP_DIRS` and `MAX_FILES` are inherited, not re-stated — a
+    second copy of "which directories are noise" would be the bug this codebase
+    keeps finding), filters on the **name** case-insensitively, ranks, and caps.
+  - `commands.rs` gained `find_in_tree`, returning the same `TreeEntry` shape
+    `list_tree` does, with paths made relative by the same `sandbox::display`.
+    Below two characters it returns nothing rather than walking: one letter
+    matches most of a large tree and is never what was meant.
+  - The panel's box **is** the search now, so the old behaviour is gone: the
+    `keep` set that filtered only the levels already expanded, and the "open the
+    folder you want searched" copy, are deleted rather than kept beside it. Two
+    behaviours behind one box would be a worse answer than either.
+  - **The ranking was wrong, and the test caught it.** `mod.rs` ranked level with
+    `module_helper.rs`, because `starts_with` cannot tell an exact name from a
+    longer one that begins the same way. Rank now compares the name **without its
+    extension** — the stem a person actually types — before falling back to
+    prefix and then contains, and orders by path length inside a rank so a
+    shallow hit beats the same name ten folders down. That was a real weakness,
+    not a test artefact: it is the first thing anyone would type.
+  - Frontend: debounced 200 ms, and it abandons a stale response rather than
+    letting a slow earlier search overwrite a newer one. A failed search returns
+    to the tree rather than showing an empty list — a broken search must not look
+    like a search that found nothing.
+  - **Tests**: `find_named_reaches_a_file_three_folders_down` (asserts the *depth*,
+    and that a match inside `node_modules` stays skipped) and
+    `find_named_ranks_an_exact_name_first_and_trims_the_tail` (all three ranks,
+    by asserting the exact `PathBuf`s rather than `ends_with`, plus that the cap
+    keeps the best hit rather than the first one walked).
 
 ### 4.3 [S] Startup time
 - **Why**: MCP discovery, DB open and the file watcher all start on launch.

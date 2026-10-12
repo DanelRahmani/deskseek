@@ -232,8 +232,15 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] The file tree loads a folder lazily and reflects a file the agent creates
 - [ ] Clicking a file previews it; a binary file reads as "binary", not garbage
 - [ ] A file written while it is open re-reads itself
-- [ ] The box above the tree filters **what is open** and says so: a name in a folder you have not
-      expanded reports that nothing open matches rather than looking like the file is missing
+- [ ] Typing a name in the box above the tree finds a file **three folders down without opening
+      anything** — the result shows the name and the folder it lives in, and clicking it previews it
+- [ ] The search skips `node_modules`: a name that exists only in there is not offered
+- [ ] One character does nothing (the tree stays); two characters search; clearing the box brings
+      the tree back
+- [ ] Typing quickly does not queue a search per keystroke — results settle once, a moment after
+      you stop
+- [ ] A name that matches nothing says so and points at `grep` for searching **inside** files,
+      rather than reading like the file is missing
 
 ## Artifacts
 

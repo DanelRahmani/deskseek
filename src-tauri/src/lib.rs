@@ -324,6 +324,7 @@ pub fn run() {
             commands::computer_state,
             commands::set_computer_paused,
             commands::list_tree,
+            commands::find_in_tree,
             commands::read_preview,
             commands::watch_workspace,
             commands::unwatch_workspace,

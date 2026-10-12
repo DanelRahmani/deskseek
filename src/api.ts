@@ -49,6 +49,7 @@ import type {
   ToolGrant,
   ToolEvent,
   ToolLog,
+  TreeEntry,
   TreeListing,
 } from "./types";
 
@@ -208,6 +209,9 @@ export const api = {
 
   listTree: (chatId: string, path: string | null = null) =>
     invoke<TreeListing>("list_tree", { chatId, path }),
+  /** Files anywhere under the chat's folder whose name contains `query`. */
+  findInTree: (chatId: string, query: string) =>
+    invoke<TreeEntry[]>("find_in_tree", { chatId, query }),
   readPreview: (chatId: string, path: string) =>
     invoke<FilePreview>("read_preview", { chatId, path }),
   watchWorkspace: (chatId: string) => invoke<string>("watch_workspace", { chatId }),
