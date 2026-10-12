@@ -1427,7 +1427,12 @@ pub fn respond_approval(
     request_id: String,
     decision: String,
 ) -> Result<bool, String> {
-    Ok(state.approvals.respond(&request_id, Decision::parse(&decision)))
+    let answered = state.approvals.respond(&request_id, Decision::parse(&decision));
+    // Answering it here is still answering it: the Scheduled panel's listing must
+    // not outlive the park, wherever the click came from.
+    let conn = state.db.lock().unwrap();
+    let _ = db::forget_parked(&conn, &request_id);
+    Ok(answered)
 }
 
 /// Resolve a question the model asked mid-run, which resumes the parked run.
@@ -1437,7 +1442,29 @@ pub fn respond_question(
     request_id: String,
     answer: Answer,
 ) -> Result<bool, String> {
-    Ok(state.questions.respond(&request_id, answer))
+    let answered = state.questions.respond(&request_id, answer);
+    let conn = state.db.lock().unwrap();
+    let _ = db::forget_parked(&conn, &request_id);
+    Ok(answered)
+}
+
+/// Everything a scheduled run is parked on, so it can be answered from the
+/// Scheduled panel rather than in a chat nobody has open.
+#[tauri::command]
+pub fn list_parked(state: State<'_, AppState>) -> Result<Vec<db::ParkedRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_parked(&conn).map_err(|e| e.to_string())
+}
+
+/// Clears a park a crash left behind.
+///
+/// Such a row is marked `lost` on the next launch because the run it belonged to
+/// died with the process — there is nothing left to resume — so this only takes
+/// the notice off the list.
+#[tauri::command]
+pub fn dismiss_parked(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::forget_parked(&conn, &id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

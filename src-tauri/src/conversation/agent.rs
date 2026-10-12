@@ -781,24 +781,30 @@ async fn approve(
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let rx = state.approvals.register(&request_id);
-    let _ = app.emit(
-        EVENT_APPROVAL,
-        serde_json::json!({
-            "requestId": request_id,
-            "chatId": chat_id,
-            "tool": tool,
-            "class": class,
-            "args": args,
-            "workspace": ws_key,
-        }),
-    );
+    let payload = serde_json::json!({
+        "requestId": request_id,
+        "chatId": chat_id,
+        "tool": tool,
+        "class": class,
+        "args": args,
+        "workspace": ws_key,
+    });
+    let _ = app.emit(EVENT_APPROVAL, &payload);
 
     // Nobody pressed send, so nobody is watching the prompt appear. Without a
     // word, a scheduled run parks here until the user happens to open that chat.
-    // The prompt stays — answering it resumes the run — but now it announces
-    // itself, and the chat gets the same unread dot every other notification
-    // raises.
+    // The prompt stays — answering it resumes the run — but it also announces
+    // itself, and it is written down where it can be answered from anywhere:
+    // the Scheduled panel draws the same prompt from this row. The stored
+    // payload *is* the event, so the two cannot describe the request differently.
+    //
+    // Only for an unattended run: a prompt the user is already looking at needs
+    // no second copy in a panel.
     if unattended {
+        {
+            let conn = state.db.lock().unwrap();
+            let _ = db::park_request(&conn, &request_id, chat_id, "approval", &payload);
+        }
         notify::ping(
             app,
             state,
@@ -813,7 +819,7 @@ async fn approve(
         _ = cancel.cancelled() => Decision::Deny,
         decision = rx => decision.unwrap_or(Decision::Deny),
     };
-    match decision {
+    let allowed = match decision {
         Decision::Session => {
             state.approvals.grant_session(&ws_key, tool);
             true
@@ -824,7 +830,14 @@ async fn approve(
             true
         }
         other => other.allows(),
+    };
+    // The park is over either way — answered from the chat or the panel, or
+    // abandoned by a cancel. Forgetting is idempotent, so both ends may do it.
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::forget_parked(&conn, &request_id);
     }
+    allowed
 }
 
 /// The internet tools read the public web rather than a workspace, and the
@@ -996,17 +1009,21 @@ async fn run_tool(
         let questions = tools::parse_questions(args)?;
         let request_id = uuid::Uuid::new_v4().to_string();
         let rx = state.questions.register(&request_id);
-        let _ = app.emit(
-            EVENT_QUESTION,
-            serde_json::json!({
-                "chatId": chat_id,
-                "requestId": request_id,
-                "questions": &questions,
-            }),
-        );
+        let payload = serde_json::json!({
+            "chatId": chat_id,
+            "requestId": request_id,
+            "questions": &questions,
+        });
+        let _ = app.emit(EVENT_QUESTION, &payload);
         // Nobody is watching an unattended run, so the question announces itself
-        // rather than waiting to be stumbled upon.
+        // rather than waiting to be stumbled upon — and it is written down where
+        // it can be answered from the Scheduled panel, for the same reason an
+        // unattended approval is.
         if unattended {
+            {
+                let conn = state.db.lock().unwrap();
+                let _ = db::park_request(&conn, &request_id, chat_id, "question", &payload);
+            }
             notify::ping(
                 app,
                 state,
@@ -1021,6 +1038,12 @@ async fn run_tool(
             _ = cancel.cancelled() => crate::questions::Answer { answers: Vec::new(), cancelled: true },
             answer = rx => answer.unwrap_or_default(),
         };
+        // Answered here, cancelled, or answered from the Scheduled panel —
+        // either way the park is done, so the listing must not outlive it.
+        {
+            let conn = state.db.lock().unwrap();
+            let _ = db::forget_parked(&conn, &request_id);
+        }
         if answer.cancelled {
             return Ok("The user dismissed the question without answering. Do not ask it again — \
                        carry on with the smallest sensible assumption, say which you took, and \

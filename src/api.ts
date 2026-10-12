@@ -29,6 +29,7 @@ import type {
   MessageRow,
   ModelInfo,
   NotifyEvent,
+  ParkedRequest,
   PermissionMode,
   ProjectRow,
   ProjectSpend,
@@ -214,6 +215,9 @@ export const api = {
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
   setChatProject: (chatId: string, projectId: string | null) =>
     invoke<void>("set_chat_project", { chatId, projectId }),
+  /** Scheduled runs parked on an approval or a question, answerable from here. */
+  listParked: () => invoke<ParkedRequest[]>("list_parked"),
+  dismissParked: (id: string) => invoke<void>("dismiss_parked", { id }),
   setProjectInstructions: (id: string, instructions: Instruction[]) =>
     invoke<void>("set_project_instructions", { id, instructions }),
   projectSpend: () => invoke<ProjectSpend[]>("project_spend"),

@@ -1,5 +1,18 @@
 import { useState } from "react";
-import type { QuestionEvent } from "../types";
+import type { QuestionAnswer, QuestionEvent } from "../types";
+
+/**
+ * The wire shape an answer travels in, built from the two arrays this prompt
+ * collects. One definition, because the composer and the Scheduled panel both
+ * submit an answer and both must build it the same way.
+ */
+export function answerFrom(selected: string[][], free: string[]): QuestionAnswer[] {
+  return selected.map((picked, index) => ({
+    index,
+    selected: picked,
+    freeform: free[index] ?? "",
+  }));
+}
 
 /**
  * The assistant asked a question mid-run, and the run is parked until this is

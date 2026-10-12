@@ -1,7 +1,7 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.7
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.8
 are done, the rest of 2 is the plan. Items 3–6 have not been started.
 
 Each item is independently shippable and the order is the author's own priority,
@@ -363,15 +363,35 @@ Ordered by how often the author would actually reach for it.
   chat — and a chat moved out stops seeing them, which is the point of holding
   them on the project.
 
-### 2.8 [M] Scheduled tasks that can reach a decision
-- **Why**: 1.6 made the wait visible; it is still a wait. The user has to open the
-  chat to answer.
-- **Do**: a queue — the run pauses, records what it wanted, notifies, and resumes
-  when answered from the *Scheduled* panel rather than in a chat nobody is looking
-  at.
-- **Test**: a run that hits a parked approval leaves a durable "needs you" row.
-- **Stop**: nothing parks invisibly *and* everything parked can be answered from
-  one place.
+### 2.8 [M] Scheduled tasks that can reach a decision ✅
+- **Was**: 1.6 made the wait *visible* — a notification and an unread dot — but it
+  was still a wait in a chat, and finding that chat was the user's problem.
+- **The queue is a table, and the prompt is reused rather than restated**: parking
+  writes a `parked_requests` row whose `payload` is *the same JSON that went out as
+  the event*. The Scheduled panel renders `ApprovalPrompt` / `QuestionPrompt` from
+  it — the components the composer already uses — so the two places cannot describe
+  the request differently. `park_request` / `forget_parked` are called by the agent
+  at both ends of the park **and** by `respond_approval` / `respond_question`, so
+  answering in the chat and answering in the panel are the same act and whichever
+  happens second is a quiet no-op.
+- **Only unattended runs are written down.** A prompt the user is looking at needs
+  no second copy in a panel — so the row is written where `unattended` is already
+  true, which is also where the notification is raised.
+- **A park does not outlive the process, and says so.** It is an in-memory oneshot,
+  so after a restart there is nothing left to resume; startup marks anything still
+  `pending` as `lost` and the panel shows it with the reason and a *Dismiss* rather
+  than a button that would do nothing. One `UPDATE`, and the alternative — a row
+  that silently vanishes, or a button that lies — is worse than either.
+- **Test**: `a_parked_request_lists_with_its_chat_and_is_forgettable` (the join that
+  supplies the title, and that forgetting twice is quiet),
+  `a_park_left_by_a_crash_is_marked_lost_rather_than_deleted`, and
+  `deleting_a_chat_takes_its_parked_request_with_it` — which turns on
+  `PRAGMA foreign_keys` itself, because `mem()` never does, and the cascade clause
+  is otherwise untested. **What the gate cannot reach**: the agent's own park and
+  forget call sites need a real `AppState`, so they live on
+  `docs/E2E-CHECKLIST.md` rather than in `cargo test`.
+- **Stop**: nothing parks invisibly — the notification, the chat's own prompt and the
+  panel's list all say so — and everything parked is answerable from one place.
 
 ### 2.9 [S] Spend, split: where the tokens went
 - **Why**: the spend view answers *how much*, and only in money. The tokens are the

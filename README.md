@@ -139,13 +139,17 @@ Both sections are functional:
   not become one conversation that grows forever, and the chat appears in the sidebar under the
   task's title. *Run now* fires it without moving when it next runs on its own; *Pause* leaves it
   in the list and stops the clock
-  - Three things are deliberate rather than missing. A run never waits for an approval — nobody is
-    watching at 09:00 — so a scheduled chat is always in auto; the catastrophic guard still
-    applies, and a tool that is never auto-approved (driving a browser, pressing keys) waits for
-    you instead of being clicked unattended. That wait is no longer silent: the moment it parks it
-    raises a notification and marks the chat, so an unattended run cannot sit in a chat nobody has
-    opened — and a question it asks does the same. And a window missed while the app was closed
-    fires **once** on the next launch rather than catching up on every missed occurrence
+  - Three things are deliberate rather than missing. A run starts in **auto** — nobody is watching
+    at 09:00 — so it never waits for an ordinary approval; the catastrophic guard still applies,
+    and a few tools are never auto-approved at all. One of *those*, or a question the model asks,
+    stops the run and puts it in the panel's **Needs you** list, showing the same prompt the chat
+    does: answer it there and the run carries on, so a decision never has to be hunted for in a
+    chat nobody has open. It also raises a notification the moment it parks, so nothing waits in
+    silence. **Honest limit:** a park only means something while the app is running — one left
+    behind by a close or a crash is listed as *lost* with the reason, because the run it belonged
+    to is gone, and re-running the task is the way to pick it up. And a window missed while the
+    app was closed fires **once** on the next launch rather than catching up on every missed
+    occurrence
 - **It tells you when it is done** — a conversation that finishes while you are reading another one
   gets a green dot on its sidebar row, cleared the moment you open it; a scheduled task starting,
   or the assistant calling `notify_user` at the end of a long job, raises an **OS notification** as

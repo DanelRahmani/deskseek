@@ -442,6 +442,30 @@ export interface QuestionAnswer {
   freeform: string;
 }
 
+/** How a parked request stands. `lost` is a park the last session left behind. */
+export type ParkedStatus = "pending" | "lost";
+
+interface ParkedBase {
+  id: string;
+  chatId: string;
+  /** The chat's title, joined rather than copied. */
+  chatTitle: string;
+  status: ParkedStatus;
+  createdAt: number;
+}
+
+/**
+ * A scheduled run parked on a decision, as the Scheduled panel lists it.
+ *
+ * `payload` is the event the chat itself received, so the panel draws the same
+ * prompt the composer would — one description of the request rather than two
+ * that could disagree. A `lost` row belongs to a run that died with the process:
+ * it can be read and dismissed, but there is nothing left to answer.
+ */
+export type ParkedRequest =
+  | (ParkedBase & { kind: "approval"; payload: ApprovalEvent })
+  | (ParkedBase & { kind: "question"; payload: QuestionEvent });
+
 /** One row of the project tree. */
 export interface TreeEntry {
   name: string;

@@ -149,6 +149,13 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] "The first Wednesday of the month" spells out as a sentence, not a cron string
 - [ ] *Run now* runs the task and leaves *Next:* where it was
 - [ ] *Pause* stops the clock and leaves the task in the list
+- [ ] A scheduled run that hits a never-auto-approved tool appears in the panel's **Needs you**
+      list with the same prompt the chat shows; answering there resumes the run and clears the row
+- [ ] A scheduled run that asks a question does the same, and *Skip* there cancels it
+- [ ] Answering the prompt in the **chat** also clears the panel's row (one park, two places)
+- [ ] The row's chat title opens that conversation
+- [ ] Closing the app with a run parked and reopening shows it as *lost* with the reason, and
+      *Dismiss* clears it; running the task again is the way to pick it up
 - [ ] With the window in the background, a run finishing raises an OS notification
 - [ ] `notify_user` raises a notification; with the window focused, only the notice
 - [ ] Turning *Tell me when something is done* off silences the toast, not the dot

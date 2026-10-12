@@ -43,6 +43,7 @@ import type { SettingsSection } from "./components/SettingsDialog";
 import { CustomiseDialog } from "./components/CustomiseDialog";
 import type { CustomiseSection } from "./components/CustomiseDialog";
 import { ProjectsPanel } from "./components/ProjectsPanel";
+import { answerFrom } from "./components/QuestionPrompt";
 import { ArtifactsGallery } from "./components/ArtifactsGallery";
 import { ScheduledPanel } from "./components/ScheduledPanel";
 import { SpendPanel } from "./components/SpendPanel";
@@ -969,11 +970,7 @@ export default function App() {
       clearQuestion(requestId);
       try {
         await api.respondQuestion(requestId, {
-          answers: selected.map((sel, index) => ({
-            index,
-            selected: sel,
-            freeform: free[index] ?? "",
-          })),
+          answers: answerFrom(selected, free),
           cancelled: false,
         });
       } catch (e) {
@@ -1598,6 +1595,10 @@ export default function App() {
         <ScheduledPanel
           onClose={() => setPanel("none")}
           onChanged={() => void refreshChats(kindRef.current)}
+          onOpenChat={(id) => {
+            setPanel("none");
+            void selectChat(id);
+          }}
         />
       )}
       {panel === "spend" && (

@@ -123,6 +123,16 @@ pub fn run() {
             // Older builds used a lowercase memory.md — keep those facts.
             paths.migrate_legacy();
             let conn = store::db::open(&paths.db_file())?;
+            // A park only means something while the run that made it is in
+            // memory. Anything still marked pending is from a process that is
+            // gone, so it becomes a notice rather than a button that would do
+            // nothing — a scheduled run that was interrupted still gets to say
+            // what it wanted.
+            if let Ok(lost) = store::db::lose_parked_in_flight(&conn) {
+                if lost > 0 {
+                    eprintln!("{lost} scheduled run(s) were left waiting by the last session");
+                }
+            }
             let settings = store::settings::load(&paths.settings_file());
             let http = api::client::build_http();
 
@@ -256,6 +266,8 @@ pub fn run() {
             commands::set_project_instructions,
             commands::project_spend,
             commands::project_memory,
+            commands::list_parked,
+            commands::dismiss_parked,
             commands::list_all_artifacts,
             commands::list_design_systems,
             commands::save_design_system,

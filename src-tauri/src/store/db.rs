@@ -308,6 +308,26 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_tasks(next_run_at);
+
+-- A request a run parked on — an approval or a question — recorded so it can be
+-- answered from the Scheduled panel instead of in a chat nobody is looking at.
+--
+-- `payload` is the exact event the chat was sent, so the panel draws the same
+-- prompt the composer would have rather than a second description of it that
+-- could drift. A row lives exactly as long as the park: answered, denied or
+-- cancelled it is deleted, and one a crash left behind is marked `lost` on the
+-- next launch — the run it belonged to is gone, so there is nothing left to
+-- resume, but the user still gets to see what it wanted.
+CREATE TABLE IF NOT EXISTS parked_requests (
+    id         TEXT PRIMARY KEY,
+    chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    -- `approval` | `question`
+    kind       TEXT NOT NULL,
+    payload    TEXT NOT NULL DEFAULT '{}',
+    -- `pending` | `lost`
+    status     TEXT NOT NULL DEFAULT 'pending',
+    created_at INTEGER NOT NULL
+);
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
@@ -1353,6 +1373,91 @@ pub fn project_spend(conn: &Connection) -> rusqlite::Result<Vec<ProjectSpend>> {
         })
     })?;
     rows.collect()
+}
+
+// ---------------------------------------------------------- parked requests
+
+/// A park the Scheduled panel lists: an approval or a question a run is waiting
+/// on, with enough of the chat to name it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkedRow {
+    pub id: String,
+    pub chat_id: String,
+    /// Joined from `chats` rather than copied, so renaming a chat renames it
+    /// here too.
+    pub chat_title: String,
+    pub kind: String,
+    /// The event payload the chat received, kept verbatim.
+    pub payload: serde_json::Value,
+    pub status: String,
+    pub created_at: i64,
+}
+
+/// Records that a run is parked on a request.
+///
+/// `payload` is the same value that went out as the event, which is what lets
+/// the panel reuse the chat's own prompt rather than inventing one.
+pub fn park_request(
+    conn: &Connection,
+    id: &str,
+    chat_id: &str,
+    kind: &str,
+    payload: &serde_json::Value,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO parked_requests
+             (id, chat_id, kind, payload, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'pending', ?5)",
+        params![id, chat_id, kind, payload.to_string(), now_ts()],
+    )?;
+    Ok(())
+}
+
+/// Every park, newest first — the pending ones and the ones a crash left
+/// behind. Deliberately unwindowed: it is a handful of rows, and a "needs you"
+/// list that hides items is worse than no list.
+pub fn list_parked(conn: &Connection) -> rusqlite::Result<Vec<ParkedRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.id, p.chat_id, c.title, p.kind, p.payload, p.status, p.created_at
+         FROM parked_requests p JOIN chats c ON c.id = p.chat_id
+         ORDER BY p.created_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let payload: String = r.get(4)?;
+        Ok(ParkedRow {
+            id: r.get(0)?,
+            chat_id: r.get(1)?,
+            chat_title: r.get(2)?,
+            kind: r.get(3)?,
+            payload: serde_json::from_str(&payload).unwrap_or(serde_json::Value::Null),
+            status: r.get(5)?,
+            created_at: r.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Removes one park. Idempotent on purpose: both the run that wakes up and
+/// whoever answered it call this, and whichever is second is not an error.
+pub fn forget_parked(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM parked_requests WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Marks everything a previous process was parked on as `lost`, and returns how
+/// many rows that was.
+///
+/// A park only means something while the run that made it is in memory, so after
+/// a restart there is nothing to resume. Showing the row as lost is the honest
+/// outcome: the user still learns what a run wanted, and the panel offers to
+/// open the chat or dismiss the notice rather than a button that would do
+/// nothing.
+pub fn lose_parked_in_flight(conn: &Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE parked_requests SET status = 'lost' WHERE status = 'pending'",
+        [],
+    )
 }
 
 // ---------------------------------------------------------- scheduled tasks
@@ -2740,6 +2845,58 @@ mod tests {
         assert_eq!(spend[0].project_id, project.id);
         assert_eq!(spend[0].turns, 2);
         assert!((spend[0].cost_usd - 1.0).abs() < 1e-9, "got {}", spend[0].cost_usd);
+    }
+
+    #[test]
+    fn a_parked_request_lists_with_its_chat_and_is_forgettable() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        rename_chat(&conn, &chat.id, "Nightly build").unwrap();
+
+        let payload = serde_json::json!({ "requestId": "r1", "tool": "run_command" });
+        park_request(&conn, "r1", &chat.id, "approval", &payload).unwrap();
+
+        let listed = list_parked(&conn).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].chat_title, "Nightly build", "the title is joined, not copied");
+        assert_eq!(listed[0].status, "pending");
+        assert_eq!(listed[0].payload["tool"], "run_command");
+
+        // Forgetting twice is not an error: the run that wakes up and whoever
+        // answered both come through here.
+        forget_parked(&conn, "r1").unwrap();
+        forget_parked(&conn, "r1").unwrap();
+        assert!(list_parked(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_park_left_by_a_crash_is_marked_lost_rather_than_deleted() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        park_request(&conn, "r1", &chat.id, "question", &serde_json::json!({})).unwrap();
+
+        assert_eq!(lose_parked_in_flight(&conn).unwrap(), 1);
+        let listed = list_parked(&conn).unwrap();
+        assert_eq!(listed.len(), 1, "a lost park is still shown, not swept away");
+        assert_eq!(listed[0].status, "lost");
+        // Running it again finds nothing pending, so a second launch is quiet.
+        assert_eq!(lose_parked_in_flight(&conn).unwrap(), 0);
+    }
+
+    #[test]
+    fn deleting_a_chat_takes_its_parked_request_with_it() {
+        let conn = mem();
+        // `mem()` never turns foreign keys on; `open()` does, and the cascade is
+        // the clause under test, so it is turned on here rather than assumed.
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        park_request(&conn, "r1", &chat.id, "approval", &serde_json::json!({})).unwrap();
+        assert_eq!(list_parked(&conn).unwrap().len(), 1);
+
+        // A park names a chat it cannot outlive: deleting the conversation must
+        // not leave a "needs you" row pointing at nothing.
+        conn.execute("DELETE FROM chats WHERE id = ?1", [&chat.id]).unwrap();
+        assert!(list_parked(&conn).unwrap().is_empty());
     }
 
     #[test]
