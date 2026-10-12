@@ -57,6 +57,15 @@ impl AppPaths {
         self.root.join("design")
     }
 
+    /// One markdown file per saved prompt, named after its id.
+    ///
+    /// Its own folder for the same reason the design systems have one: these are
+    /// a different kind of thing, and a prompt is never read by the model as a
+    /// rule — it only ever lands in the box the user is typing in.
+    pub fn prompts_dir(&self) -> PathBuf {
+        self.root.join("prompts")
+    }
+
     /// Which MCP servers to run. Hand-editable, so it lives beside the settings
     /// rather than inside them.
     pub fn mcp_file(&self) -> PathBuf {
@@ -105,6 +114,7 @@ mod tests {
         // prefix telling them apart.
         assert_eq!(p.skills_dir().file_name().unwrap(), "skills");
         assert_eq!(p.design_dir().file_name().unwrap(), "design");
+        assert_eq!(p.prompts_dir().file_name().unwrap(), "prompts");
         assert_ne!(p.skills_dir(), p.design_dir());
     }
 

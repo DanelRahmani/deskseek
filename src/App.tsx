@@ -29,6 +29,7 @@ import type {
   ModelInfo,
   PermissionMode,
   ProjectRow,
+  PromptView,
   QuestionEvent,
   SectionKind,
   Settings,
@@ -102,7 +103,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
+  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /prompts · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -134,15 +135,21 @@ export default function App() {
     section: "skills",
   });
   const [palette, setPalette] = useState(false);
-  // A right-clicked conversation's menu, at the cursor. `fixed` at the root so
-  // the scrolling sidebar cannot clip it.
   // The shortcut list, on top of everything: `?` is the one chord nothing else
   // in the UI advertises.
   const [sheet, setSheet] = useState(false);
+  // A right-clicked conversation's menu, at the cursor. `fixed` at the root so
+  // the scrolling sidebar cannot clip it.
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   // The row whose title is being edited in the sidebar. Owned here because the
   // menu that starts it lives at the root, above the list.
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Saved prompts, so the composer's menu and the palette can offer them without
+  // a round trip each time one is opened.
+  const [prompts, setPrompts] = useState<PromptView[]>([]);
+  // Text the palette asked to be put in the composer. The counter is what makes
+  // picking the same prompt twice land twice.
+  const [insert, setInsert] = useState<{ text: string; seq: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Full-text results for the sidebar's search box. The query itself lives in
@@ -346,6 +353,19 @@ export default function App() {
   const openCustomise = useCallback((section: CustomiseSection = "skills") => {
     setCustomise({ open: true, section });
   }, []);
+
+  /** The saved prompts the composer's menu and the palette both draw on. */
+  const refreshPrompts = useCallback(async () => {
+    try {
+      setPrompts(await api.listPrompts());
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshPrompts();
+  }, [refreshPrompts]);
 
   /** Re-read one section's chats and fold them into the maps the UI reads. */
   const refreshChats = useCallback(async (which: SectionKind) => {
@@ -627,6 +647,9 @@ export default function App() {
             return;
           case "/mcp":
             openCustomise("connectors");
+            return;
+          case "/prompts":
+            openCustomise("prompts");
             return;
           case "/projects":
             setPanel((current) => (current === "projects" ? "none" : "projects"));
@@ -1144,11 +1167,27 @@ export default function App() {
   // already names the section, and picking one switches to it below.
   const paletteItems = useMemo(() => {
     const all = Object.values(chatsById).sort((a, b) => b.updated_at - a.updated_at);
-    return buildPalette(all, !!activeId, activeId ? !!chatsById[activeId]?.archived : false);
-  }, [chatsById, activeId]);
+    const items = buildPalette(all, !!activeId, activeId ? !!chatsById[activeId]?.archived : false);
+    // Appended rather than folded into `buildPalette`: that function is the
+    // built-in list, and a user's own prompts must not change what it answers.
+    return [
+      ...items,
+      ...prompts.map((prompt) => ({
+        id: `prompt:${prompt.id}`,
+        label: prompt.name,
+        hint: "Prompt — puts it in the composer",
+      })),
+    ];
+  }, [chatsById, activeId, prompts]);
   const runPalette = useCallback(
     (id: string) => {
       setPalette(false);
+      if (id.startsWith("prompt:")) {
+        // Into the box, not sent: a saved prompt is text to edit first.
+        const prompt = prompts.find((p) => p.id === id.slice("prompt:".length));
+        if (prompt) setInsert((current) => ({ text: prompt.body, seq: (current?.seq ?? 0) + 1 }));
+        return;
+      }
       if (id.startsWith("chat:")) {
         const chatId = id.slice("chat:".length);
         const target = chatsById[chatId];
@@ -1452,6 +1491,8 @@ export default function App() {
                     onDecideApproval={decideApproval}
                     onAnswerQuestion={answerQuestion}
                     onSkipQuestion={skipQuestion}
+                    prompts={prompts}
+                    insert={pane === focus ? insert : null}
                   />
                 </div>
               </Fragment>
@@ -1540,7 +1581,12 @@ export default function App() {
             }
           }}
           onSaved={setSettings}
-          onClose={() => setCustomise((c) => ({ ...c, open: false }))}
+          onClose={() => {
+            // The hub is where prompts are added, so what it may have changed is
+            // re-read on the way out rather than left until a restart.
+            void refreshPrompts();
+            setCustomise((c) => ({ ...c, open: false }));
+          }}
         />
       )}
 

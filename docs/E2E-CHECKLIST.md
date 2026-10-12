@@ -91,6 +91,18 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Deleting a project keeps its chats and only unassigns them
 - [ ] The Artifacts list shows an artifact from another chat, and opens it
 
+## Prompts
+
+- [ ] *Customise → Prompts* saves one; a markdown file appears in the `prompts` folder, named
+      after the slug of its title, with the title as its first heading
+- [ ] Typing `/p:` in the composer lists the saved prompts; picking one puts its **text in the
+      box** — it is not sent, and the caret is in the box ready to edit
+- [ ] `Ctrl+K` → the prompt does the same, into the focused pane's composer
+- [ ] Editing one in the hub and saving under the same name revises the file rather than adding
+      a second
+- [ ] A prompt edited in a text editor shows its new text in the menu after the hub is reopened
+- [ ] A prompt never appears in the model's catalogue (the Context panel lists no prompts)
+
 ## Search, here and elsewhere
 
 - [ ] In a coding chat in folder A, asking "what did we decide about X" makes the assistant call

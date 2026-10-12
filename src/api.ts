@@ -29,6 +29,7 @@ import type {
   NotifyEvent,
   PermissionMode,
   ProjectRow,
+  PromptView,
   QuestionAnswer,
   QuestionEvent,
   ScheduledFiredEvent,
@@ -226,6 +227,12 @@ export const api = {
 
   /** What the last `days` of turns cost, grouped by day, model and chat. */
   spendReport: (days: number) => invoke<SpendReport>("spend_report", { days }),
+
+  /** Saved prompts: one markdown file each, in a folder of their own. */
+  listPrompts: () => invoke<PromptView[]>("list_prompts"),
+  savePrompt: (name: string, body: string) => invoke<string>("save_prompt", { name, body }),
+  deletePrompt: (id: string) => invoke<void>("delete_prompt", { id }),
+  promptsDir: () => invoke<string>("prompts_dir"),
 };
 
 /**

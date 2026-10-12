@@ -551,6 +551,18 @@ export interface SpendReport {
   chats: ChatSpend[];
 }
 
+/**
+ * A saved prompt: a request kept as a markdown file, for the composer rather
+ * than for the model.
+ */
+export interface PromptView {
+  /** The file's stem, a bare slug — `/p:<id>` is how it is reached. */
+  id: string;
+  name: string;
+  /** The whole prompt, because the composer's job is to put it in the box. */
+  body: string;
+}
+
 /** A tool call the UI is rendering. */
 export interface ToolRun {
   id: string;

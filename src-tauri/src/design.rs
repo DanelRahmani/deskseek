@@ -14,23 +14,24 @@
 //! The `design-` prefix stays on the id, because the per-chat switch reuses the
 //! `chat_skills` table and the prefix is what keeps an id unambiguous in that
 //! shared column.
+//!
+//! The store itself — the file format, the id from the name, and the guard that
+//! stops an id walking out of the folder — is `store::files`, shared with the
+//! saved-prompt folder. What is left here is what makes a design system a design
+//! system: the prefix, and the draft read out of a project.
 
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+/// One markdown file per system, in a folder of their own.
+const PREFIX: &str = "design-";
 
-/// The id prefix — for the shared `chat_skills` column, not for telling the two
-/// stores apart. The folder does that now.
-pub const PREFIX: &str = "design-";
+/// The store: the shared file rules, told what these are called and what their
+/// ids look like.
+pub const STORE: crate::store::files::Store =
+    crate::store::files::Store::new(PREFIX, "design system", "system");
 
 /// A stored style reference: what the model applies when it builds UI.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DesignSystem {
-    /// The file's stem, `design-<slug>`.
-    pub id: String,
-    pub name: String,
-    pub body: String,
-}
+pub use crate::store::files::Doc as DesignSystem;
 
 /// How much a draft reads. A design-system draft is a starting point, not a copy
 /// of the repository.
@@ -39,95 +40,21 @@ const MAX_FILES: usize = 400;
 const MAX_DEPS: usize = 60;
 
 pub fn is_design(id: &str) -> bool {
-    id.starts_with(PREFIX)
+    STORE.is_id(id)
 }
 
-/// The skill id a new design system is written under.
+/// The id a new design system is written under.
 pub fn id_for(name: &str) -> String {
-    format!("{PREFIX}{}", crate::tools::docs::slug_with(name, "system"))
-}
-
-/// The file an id names, or `None` when the id is not one a design system can
-/// have.
-///
-/// The guard lives here rather than in each command, so no caller can forget it
-/// — and a separator or `..` can never reach a path.
-fn file_for(dir: &Path, id: &str) -> Option<PathBuf> {
-    if !is_design(id) || id.contains(['/', '\\']) || id.contains("..") {
-        return None;
-    }
-    Some(dir.join(format!("{id}.md")))
-}
-
-/// The file as the app writes one: a title, then the system.
-///
-/// A `# Name` heading rather than frontmatter, because the file is a markdown
-/// document about a design and a person opening it should see a title. No
-/// `default:` field either: a design system is opted into a chat deliberately,
-/// so there is no standing choice to record.
-pub fn compose(name: &str, body: &str) -> String {
-    let name = name.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("# {name}\n\n{}\n", body.trim())
-}
-
-/// The name and body of a stored system.
-///
-/// The first `# ` heading is the name, because that is what a markdown reader
-/// calls the title. Only the *first* one counts, so a system whose body has
-/// headings of its own keeps them; a file with no heading falls back to its id.
-pub fn parse(id: &str, raw: &str) -> DesignSystem {
-    let text = raw.trim_start_matches('\u{feff}').trim_start();
-    if let Some(rest) = text.strip_prefix("# ") {
-        let (heading, remainder) = match rest.find('\n') {
-            Some(end) => (&rest[..end], &rest[end + 1..]),
-            None => (rest, ""),
-        };
-        let name = heading.trim();
-        if !name.is_empty() {
-            return DesignSystem {
-                id: id.to_string(),
-                name: name.to_string(),
-                body: remainder.trim().to_string(),
-            };
-        }
-    }
-    DesignSystem {
-        id: id.to_string(),
-        name: id.to_string(),
-        body: text.trim().to_string(),
-    }
+    STORE.id_for(name)
 }
 
 /// Every stored system, by name.
-///
-/// The folder is flat — one file per system — so this is a single `read_dir`:
-/// no recursion, and no second place a system could hide.
 pub fn list(dir: &Path) -> Vec<DesignSystem> {
-    let mut out = Vec::new();
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
-            continue;
-        }
-        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        out.push(parse(id, &raw));
-    }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
-    out
+    STORE.list(dir)
 }
 
 pub fn read(dir: &Path, id: &str) -> Option<DesignSystem> {
-    let path = file_for(dir, id)?;
-    let raw = std::fs::read_to_string(path).ok()?;
-    Some(parse(id, &raw))
+    STORE.read(dir, id)
 }
 
 /// Writes a system, overwriting one of the same name.
@@ -136,19 +63,11 @@ pub fn read(dir: &Path, id: &str) -> Option<DesignSystem> {
 /// so Save has to be able to save twice. The id is derived from the name, so
 /// saving cannot land on some other system's file.
 pub fn write(dir: &Path, name: &str, body: &str) -> Result<String, String> {
-    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    let id = id_for(name);
-    let path = file_for(dir, &id).ok_or("That is not a design system id.")?;
-    std::fs::write(path, compose(name, body)).map_err(|e| e.to_string())?;
-    Ok(id)
+    STORE.write(dir, name, body)
 }
 
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
-    let path = file_for(dir, id).ok_or("That is not a design system id.")?;
-    if !path.is_file() {
-        return Err(format!("No design system called \"{id}\"."));
-    }
-    std::fs::remove_file(path).map_err(|e| e.to_string())
+    STORE.remove(dir, id)
 }
 
 fn skip(name: &str) -> bool {
@@ -352,30 +271,16 @@ mod tests {
 
     #[test]
     fn a_system_survives_a_round_trip() {
-        let raw = compose("Axiom House Style", "## Rules\n\n- One accent.\n");
-        // A newline in a name would let it smuggle in a second heading.
-        let collapsed = compose("Axiom\nHouse Style", "Body\n");
-        assert!(collapsed.starts_with("# Axiom House Style\n"));
-        let parsed = parse("design-axiom-house-style", &raw);
+        let root = std::env::temp_dir().join(format!("deskseek-design-{}", uuid::Uuid::new_v4()));
+        // A newline in a name would let it smuggle in a second heading, so the
+        // name is collapsed before it becomes one.
+        let id = write(&root, "Axiom\nHouse Style", "## Rules\n\n- One accent.\n").unwrap();
+        assert_eq!(id, "design-axiom-house-style");
+        let parsed = read(&root, &id).unwrap();
         assert_eq!(parsed.name, "Axiom House Style");
         assert_eq!(parsed.body, "## Rules\n\n- One accent.");
         assert_eq!(parsed.id, "design-axiom-house-style");
-    }
-
-    #[test]
-    fn only_the_first_heading_is_the_name() {
-        // The body's own headings are the system's structure, not its title.
-        let parsed = parse("design-x", "# House Style\n\n## Palette\n\ntoken | value\n");
-        assert_eq!(parsed.name, "House Style");
-        assert!(parsed.body.starts_with("## Palette"));
-        assert!(parsed.body.contains("token | value"));
-    }
-
-    #[test]
-    fn a_file_with_no_heading_falls_back_to_its_id() {
-        let parsed = parse("design-hand-written", "Just some text.\n");
-        assert_eq!(parsed.name, "design-hand-written");
-        assert_eq!(parsed.body, "Just some text.");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -412,12 +317,12 @@ mod tests {
     fn an_id_that_could_walk_out_of_the_folder_is_refused() {
         let dir = Path::new("/design");
         // The prefix alone is not enough — these are still paths.
-        for bad in ["../secret", "design-../secret", "design-a/b", "design-a\\b", "plain"] {
-            assert!(file_for(dir, bad).is_none(), "{bad} must not resolve");
+        for bad in ["../secret", "design-../secret", "design-a/b", "design-a\\b", "plain", ""] {
+            assert!(STORE.file_for(dir, bad).is_none(), "{bad} must not resolve");
             assert!(read(dir, bad).is_none(), "{bad} must not read");
             assert!(remove(dir, bad).is_err(), "{bad} must not delete");
         }
-        assert!(file_for(dir, "design-ok").is_some());
+        assert!(STORE.file_for(dir, "design-ok").is_some());
     }
 
     #[test]

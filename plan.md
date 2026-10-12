@@ -1,8 +1,8 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1
-and 2.2 are done and pushed, the rest of 2 is the plan. Items 3–6 have not been
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1,
+2.2 and 2.3 are done, the rest of 2 is the plan. Items 3–6 have not been
 started.
 
 Each item is independently shippable and the order is the author's own priority,
@@ -191,14 +191,34 @@ Ordered by how often the author would actually reach for it.
   (`*`, `-`, `:`, `""`, a bare `(a)`) through the scoped path too.
 - **Stop**: asking about a past decision returns the message and its chat. ✅
 
-### 2.3 [M] Prompt library (saved prompts)
-- **Why**: the same requests get retyped. Skills are for *rules*; a prompt is a
-  *one-shot text*.
-- **Do**: one markdown file per prompt (the skills precedent), surfaced in the
-  composer's slash menu as `/p:<name>`. No template language.
-- **Test**: a check script for the `name → slug` rule, reusing `docs::slug_with`.
+### 2.3 [M] Prompt library (saved prompts) ✅ done
+- **Why**: the same requests get retyped. A skill is a *rule* the model follows and
+  costs catalogue space; a prompt is a *one-shot text* the user wants in the box.
+  Sharing a folder would blur the only distinction that matters.
+- **Now**: `prompts/<slug>.md`, one markdown file each, with the first `# `
+  heading as the name. **`design.rs`'s store became the shared one**
+  (`store/files.rs`): a `Store` is a prefix + a noun + a slug fallback over the
+  same rules — the file format, the id from the name, and the guard that stops an
+  id walking out of its folder. `design.rs` keeps its public API and delegates;
+  `prompts.rs` is the same shape with an empty prefix. One copy of a path guard
+  rather than two is the point: a second copy is how guards rot.
+- **Use**: `/p:<id>` in the composer's slash menu — appended to the menu at the
+  call site, *not* into `COMMANDS`, which Settings displays — inserts the body
+  rather than sending it (a prompt is text you edit first). `Ctrl+K` does the
+  same through an `insert` prop on `ChatView` carrying a counter, so picking the
+  same prompt twice lands twice. `/prompts` opens the hub's new section.
+- **Test**: `prompts.rs` — the bare-slug id rule, a round trip through a file, a
+  stray `.txt` in the folder not counting, and the id guard with an *empty*
+  prefix (where the separator rule is the only guard left, which is exactly why
+  the prefix was never what protected us). `store/files.rs` — the name→id and
+  fallback rules, the newline-in-a-name collapse, first-heading-is-the-name,
+  no-heading-falls-back-to-the-id, and the empty-prefix guard.
+  **The plan asked for a check script for the name → slug rule; that was wrong** —
+  the rule lives in Rust, so a node script could only test a second copy of it,
+  which is the duplication this item exists to remove. A Rust test is the honest
+  version.
 - **Stop**: a saved prompt inserts into the composer and is reachable by `/p:` and
-  the palette.
+  the palette. ✅
 
 ### 2.4 [M] Message branching (edit without destroying)
 - **Why**: `resend_last_turn` deletes the tail — correct for "replace", wrong for

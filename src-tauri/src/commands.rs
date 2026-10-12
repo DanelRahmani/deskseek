@@ -1161,6 +1161,59 @@ pub fn design_dir(state: State<'_, AppState>) -> String {
     state.paths.design_dir().display().to_string()
 }
 
+// ---------------------------------------------------------------- prompts
+
+/// A saved prompt as the UI needs it: the id to insert by, and the text.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptView {
+    pub id: String,
+    pub name: String,
+    /// The whole prompt, because the composer's job is to put it in the box.
+    pub body: String,
+}
+
+/// Every saved prompt, by name.
+///
+/// The body comes along because there is no separate "open one" step: picking a
+/// prompt from the menu is the only thing that ever happens to it, and a second
+/// round trip to fill the box would be a round trip for nothing.
+#[tauri::command]
+pub fn list_prompts(state: State<'_, AppState>) -> Vec<PromptView> {
+    crate::prompts::list(&state.paths.prompts_dir())
+        .into_iter()
+        .map(|p| PromptView {
+            id: p.id,
+            name: p.name,
+            body: p.body,
+        })
+        .collect()
+}
+
+/// Writes a prompt from the hub's form, overwriting one of that name.
+#[tauri::command]
+pub fn save_prompt(state: State<'_, AppState>, name: String, body: String) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("A prompt needs a name.".to_string());
+    }
+    if body.trim().is_empty() {
+        return Err("There is nothing to save yet.".to_string());
+    }
+    crate::prompts::write(&state.paths.prompts_dir(), &name, &body)
+}
+
+/// Removes one prompt's file. The id guard is the store's, not repeated here.
+#[tauri::command]
+pub fn delete_prompt(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    crate::prompts::remove(&state.paths.prompts_dir(), &id)
+}
+
+/// Where saved prompts live, so the hub can show the real path.
+#[tauri::command]
+pub fn prompts_dir(state: State<'_, AppState>) -> String {
+    state.paths.prompts_dir().display().to_string()
+}
+
 // ------------------------------------------------------------ permissions
 
 #[tauri::command]

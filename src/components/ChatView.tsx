@@ -8,6 +8,7 @@ import type {
   MessageRow,
   ModelInfo,
   PermissionMode,
+  PromptView,
   QuestionEvent,
   ToolRun,
 } from "../types";
@@ -65,6 +66,13 @@ interface Props {
   /** Answer a question the model asked; `selected` and `free` are per question. */
   onAnswerQuestion: (requestId: string, selected: string[][], free: string[]) => void;
   onSkipQuestion: (requestId: string) => void;
+  /** Saved prompts, offered in the slash menu as `/p:<id>` — see runCommand. */
+  prompts: PromptView[];
+  /**
+   * Text to drop into the composer from outside it, with a counter so picking the
+   * same prompt twice lands twice. The palette is the caller.
+   */
+  insert: { text: string; seq: number } | null;
 }
 
 const EFFORTS = ["low", "high", "max"];
@@ -124,6 +132,7 @@ export const COMMANDS = [
   { name: "/skill", description: "List skills, or switch one on for this chat" },
   { name: "/skills", description: "Skills, connectors, instructions and design systems" },
   { name: "/mcp", description: "Manage MCP servers (connectors)" },
+  { name: "/prompts", description: "Saved prompts: the requests you retype" },
   { name: "/projects", description: "Projects: a folder and the chats in it" },
   { name: "/artifacts", description: "Every artifact, from every chat" },
   { name: "/scheduled", description: "Recurring prompts on a calendar" },
@@ -173,6 +182,8 @@ export function ChatView({
   onDecideApproval,
   onAnswerQuestion,
   onSkipQuestion,
+  prompts,
+  insert,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
@@ -219,17 +230,41 @@ export function ChatView({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const commandQuery = draft.startsWith("/") && !draft.includes(" ") ? draft : null;
+  // Saved prompts join the built-in commands in the one menu, and are told apart
+  // by the `/p:` prefix. `COMMANDS` itself is the built-in list — Settings shows
+  // it, so a user's own prompts must not end up in it.
+  const choices = [
+    ...COMMANDS,
+    ...prompts.map((prompt) => ({ name: `/p:${prompt.id}`, description: prompt.name })),
+  ];
   const filtered = commandQuery
-    ? COMMANDS.filter((command) => command.name.startsWith(commandQuery.toLowerCase()))
+    ? choices.filter((command) => command.name.startsWith(commandQuery.toLowerCase()))
     : [];
   const menuOpen = filtered.length > 0 && dismissedFor !== draft;
 
+  /**
+   * A chosen menu entry. A built-in command acts and is sent; a saved prompt only
+   * fills the box, because it is text the user is about to edit — sending it
+   * unread would make `/p:` a worse version of typing.
+   */
   const runCommand = (name: string) => {
-    setDraft("");
     setDismissedFor(null);
     setCmdIndex(0);
+    const prompt = name.startsWith("/p:") ? prompts.find((p) => `/p:${p.id}` === name) : undefined;
+    if (prompt) {
+      setDraft(prompt.body);
+      textareaRef.current?.focus();
+      return;
+    }
+    setDraft("");
     onSend(name);
   };
+
+  useEffect(() => {
+    if (!insert) return;
+    setDraft(insert.text);
+    textareaRef.current?.focus();
+  }, [insert]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });

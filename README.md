@@ -92,7 +92,7 @@ Both sections are functional:
     right setting for a standing preference, and the one to be deliberate about, because that text
     then goes with every request in those chats. Neither switch touches a chat that already exists
   - Skills live in **Customise** (the sidebar's *Customise* entry, or `/skills`), together with
-    connectors, instructions and design systems
+    connectors, instructions, design systems and prompts
 - **Design systems** — a stored style reference the assistant applies when it builds or writes UI:
   the type scale, the palette, the spacing, and the rules that hold them together. They live in
   **their own folder**, one markdown file per system (`design/<name>.md`), so they are never a
@@ -107,6 +107,12 @@ Both sections are functional:
     switched on for a chat, so a page or a document comes out looking like the rest
   - Two switches, on purpose: the checkbox is *this chat*; there is no "always on" for a design
     system, because applying one is a decision rather than a standing preference
+- **Prompts** — the requests you retype, kept as text. A prompt is a *one-shot* where a skill is
+  a *rule*: `/p:<name>` in the composer's slash menu drops its text into the box to edit before
+  you send it (it is never sent on your behalf, and the model is never told the list exists, so a
+  shelf of them costs nothing). Ctrl+K offers them too. One markdown file each in
+  `prompts/<name>.md` — **Customise → Prompts** is a convenience over that folder, not the only
+  way in, so a prompt can be added or fixed in any editor
 - **Projects** — a named container with a folder, and the conversations that belong to it. *New
   project…* picks the folder; a chat started inside it works there, and an existing chat can be
   moved in or out from the panel. Deleting a project keeps its chats — they are only unassigned,

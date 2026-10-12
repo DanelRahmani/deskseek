@@ -8,6 +8,7 @@ mod mcp;
 mod memory;
 mod memory_files;
 mod notify;
+mod prompts;
 mod questions;
 mod runs;
 mod schedule;
@@ -254,6 +255,10 @@ pub fn run() {
             commands::design_system_from_project,
             commands::delete_design_system,
             commands::design_dir,
+            commands::list_prompts,
+            commands::save_prompt,
+            commands::delete_prompt,
+            commands::prompts_dir,
             commands::get_summary,
             commands::list_skills,
             commands::set_chat_skills,

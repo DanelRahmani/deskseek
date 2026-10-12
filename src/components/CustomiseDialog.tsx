@@ -5,17 +5,19 @@ import { SkillsPanel } from "./SkillsPanel";
 import { McpPanel } from "./McpPanel";
 import { InstructionsSection } from "./InstructionsSection";
 import { DesignSystemsSection } from "./DesignSystemsSection";
+import { PromptsSection } from "./PromptsSection";
 import type { Instruction, Settings } from "../types";
 
-export type CustomiseSection = "skills" | "connectors" | "instructions" | "design";
+export type CustomiseSection = "skills" | "connectors" | "instructions" | "design" | "prompts";
 
 /**
  * What can be added to DeskSeek, in one place: skills, connectors (the MCP
- * servers), scoped instructions, and design systems.
+ * servers), scoped instructions, design systems, and saved prompts.
  *
- * One hub rather than four panels because they are the same kind of thing — the
- * standing configuration a chat draws on — and because the sidebar had grown a
- * footer of separate entries for each.
+ * One hub rather than five panels because they are the same kind of thing — the
+ * standing configuration a chat draws on, or in a prompt's case the standing
+ * text the user does — and because the sidebar had grown a footer of separate
+ * entries for each.
  */
 const SECTIONS: { id: CustomiseSection; label: string; keywords: string }[] = [
   { id: "skills", label: "Skills", keywords: "instruction reusable toggle create skill" },
@@ -29,6 +31,11 @@ const SECTIONS: { id: CustomiseSection; label: string; keywords: string }[] = [
     id: "design",
     label: "Design systems",
     keywords: "design tokens palette typography style house",
+  },
+  {
+    id: "prompts",
+    label: "Prompts",
+    keywords: "saved prompt snippet template retype slash insert",
   },
 ];
 
@@ -150,6 +157,7 @@ export function CustomiseDialog({ chatId, section, onAsk, onSaved, onClose }: Pr
                   <p className="text-xs text-neutral-500">{status ?? "Loading…"}</p>
                 ))}
               {tab === "design" && <DesignSystemsSection chatId={chatId} />}
+              {tab === "prompts" && <PromptsSection />}
               {status && <p className="text-[11px] text-neutral-600">{status}</p>}
             </div>
           )}
