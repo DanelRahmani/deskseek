@@ -168,7 +168,16 @@ export const api = {
   sendMessage: (chatId: string, text: string, attachments: Attachment[]) =>
     invoke<void>("send_message", { chatId, text, attachments }),
   /** Read a dropped file into an attachment: a native drop gives a path, not a File. */
-  attachPath: (path: string) => invoke<Attachment>("attach_path", { path }),
+  attachPath: (chatId: string | null, path: string) =>
+    invoke<Attachment>("attach_path", { chatId, path }),
+  /**
+   * The same for a file the webview holds as a `File` rather than a path: its
+   * bytes travel instead, and the Rust side puts it in the chat's folder.
+   */
+  attachBytes: (chatId: string | null, name: string, dataUrl: string) =>
+    invoke<Attachment>("attach_bytes", { chatId, name, dataUrl }),
+  /** Where this chat keeps its own files, worked out on demand. */
+  chatFolder: (chatId: string) => invoke<string>("chat_folder", { chatId }),
   stopChat: (chatId: string) => invoke<boolean>("stop_chat", { chatId }),
   runningChats: () => invoke<string[]>("running_chats"),
   computerState: () => invoke<boolean>("computer_state"),

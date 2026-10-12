@@ -51,6 +51,23 @@ fn read_file(args: &Value, ws: &Path) -> Result<String, String> {
     if meta.is_dir() {
         return Err(format!("'{path}' is a directory — use list_dir"));
     }
+    // A Word, Excel, PowerPoint or PDF file is a container of its own: its bytes
+    // are not text, so `read_to_string` refuses them and the model is left
+    // believing it cannot read the user's document at all. It is opened as a
+    // document instead and handed back as the words in it.
+    if crate::tools::extract::is_extractable(path) {
+        let limit = crate::tools::extract::MAX_DOC_BYTES;
+        if meta.len() > limit {
+            return Err(format!(
+                "'{path}' is {} MB, over the {} MB document limit",
+                meta.len() / (1024 * 1024),
+                limit / (1024 * 1024)
+            ));
+        }
+        let bytes = std::fs::read(&full).map_err(|e| format!("cannot read '{path}': {e}"))?;
+        let text = crate::tools::extract::text_of(path, &bytes)?;
+        return Ok(truncate(format!("[text extracted from {path}]\n\n{text}")));
+    }
     if meta.len() > MAX_READ_BYTES {
         return Err(format!(
             "'{path}' is {} bytes, over the {MAX_READ_BYTES} byte read limit",
@@ -137,6 +154,9 @@ fn grep(args: &Value, ws: &Path) -> Result<String, String> {
 
 fn write_file(args: &Value, ws: &Path) -> Result<String, String> {
     let path = require_str(args, "path")?;
+    if crate::tools::extract::is_extractable(path) {
+        return Err(document_guard(path));
+    }
     let content = require_str(args, "content")?;
     let full = sandbox::resolve(ws, path)?;
     if let Some(parent) = full.parent() {
@@ -151,8 +171,24 @@ fn write_file(args: &Value, ws: &Path) -> Result<String, String> {
     ))
 }
 
+/// A Word, Excel, PowerPoint or PDF file cannot be produced by writing text: the
+/// bytes would be a file that calls itself a `.docx` and is not one, and the
+/// model has no way to notice that from the tool result. The refusal names the
+/// tool that does it properly instead, so the correction is one turn rather than
+/// a dead end.
+fn document_guard(path: &str) -> String {
+    format!(
+        "'{path}' is a document, not a text file — writing text into it would produce a file \
+         that does not open. Use doc_create for md/docx/pdf, sheet_create for xlsx and \
+         slides_create for pptx; they are written into this chat's own folder."
+    )
+}
+
 fn edit_file(args: &Value, ws: &Path) -> Result<String, String> {
     let path = require_str(args, "path")?;
+    if crate::tools::extract::is_extractable(path) {
+        return Err(document_guard(path));
+    }
     let old = require_str(args, "old_string")?;
     let new = args
         .get("new_string")
@@ -565,5 +601,50 @@ mod tests {
         assert!(probe(ok, ok_args, 5).await);
         assert!(!probe(bad, bad_args, 5).await);
         assert!(!probe("deskseek-no-such-program-here", &[], 5).await);
+    }
+
+    #[test]
+    fn read_file_opens_a_word_document_rather_than_refusing_it() {
+        use docx_rs::{Docx, Paragraph, Run};
+
+        let ws = workspace();
+        let doc = Docx::new().add_paragraph(
+            Paragraph::new().add_run(Run::new().add_text("Invoice total: 42")),
+        );
+        let mut bytes = Vec::new();
+        doc.build().pack(std::io::Cursor::new(&mut bytes)).unwrap();
+        std::fs::write(ws.join("invoice.docx"), &bytes).unwrap();
+
+        // The bytes really are not text, so this is the case that used to fail
+        // with "stream did not contain valid UTF-8".
+        assert!(std::fs::read_to_string(ws.join("invoice.docx")).is_err());
+
+        let out = read_file(&json!({"path": "invoice.docx"}), &ws).unwrap();
+        assert!(out.contains("Invoice total: 42"), "{out}");
+        assert!(out.contains("extracted from"), "names the source: {out}");
+        let _ = std::fs::remove_dir_all(&ws);
+    }
+
+    #[test]
+    fn a_document_cannot_be_written_as_text() {
+        let ws = workspace();
+        // Writing text to a `.docx` would produce a file that does not open, so
+        // the refusal has to arrive instead of a file nobody can read back.
+        for path in ["report.docx", "sales.xlsx", "deck.pptx", "scan.pdf"] {
+            let err = write_file(&json!({"path": path, "content": "hello"}), &ws).unwrap_err();
+            assert!(err.contains("doc_create"), "{path}: {err}");
+            assert!(!ws.join(path).exists(), "{path} must not be created");
+        }
+        // edit_file says the same thing rather than failing on a UTF-8 error.
+        let err = edit_file(
+            &json!({"path": "report.docx", "old_string": "a", "new_string": "b"}),
+            &ws,
+        )
+        .unwrap_err();
+        assert!(err.contains("doc_create"), "{err}");
+
+        // An ordinary text file is untouched by the guard.
+        assert!(write_file(&json!({"path": "notes.md", "content": "hello"}), &ws).is_ok());
+        let _ = std::fs::remove_dir_all(&ws);
     }
 }

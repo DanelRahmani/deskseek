@@ -28,6 +28,15 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] *Edit* under your own last message changes it and asks again
 - [ ] Markdown, a table and a fenced code block all render
 - [ ] Dropping an image attaches it and the reply accounts for it
+- [ ] Dropping a `.docx` (or `.pdf`/`.xlsx`/`.pptx`) copies it into the chat's own folder — the
+      📁 in the header reveals the same folder — and asking about it gets an answer from its text
+- [ ] Picking the same kind of file with 📎 behaves the same way; dropping a second file with a
+      name already in the folder gives `name-2` rather than replacing it
+- [ ] Asking for a `.docx`/`.xlsx`/`.pptx` produces a real file **in that chat's folder**, and
+      *Open* on the result opens it in Word/Excel/PowerPoint
+- [ ] Two chats on the same subject have separate folders, and a chat renamed afterwards keeps
+      the folder it already had
+- [ ] A chat inside a project still works in the **project's** folder rather than a new per-chat one
 - [ ] `Stop` mid-stream keeps the partial reply and ends the turn
 - [ ] A tool-heavy turn folds into one *N steps* row; opening it shows each call
 - [ ] A failing tool step opens its group by itself

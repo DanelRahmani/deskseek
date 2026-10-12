@@ -132,26 +132,78 @@ fn read_project_context(ws: &Path) -> Option<(String, String)> {
 }
 
 /// Where a chat may touch the disk: the folder the user picked in coding mode,
-/// the documents folder otherwise. Shared with the file tree so both agree on
+/// the chat's own folder otherwise. Shared with the file tree so both agree on
 /// what "this chat's files" means.
 pub fn workspace_for(state: &AppState, chat: &db::ChatRow) -> Option<PathBuf> {
     if chat.kind == "coding" {
         return chat.workspace.as_deref().map(PathBuf::from);
     }
-    // Chat mode works in a documents folder so it can create and read files.
-    let dir = {
+    // Chat mode works in a folder of its own so it can create, read and change
+    // documents without every other conversation's files sitting in the way.
+    Some(chat_folder(state, chat))
+}
+
+/// The folder a chat-mode chat keeps its own documents in.
+///
+/// A chat is a piece of work — a report, a contract, a set of invoices — and its
+/// files belong with it rather than in one pile every chat shares. The name is
+/// decided once, from the title at the time, and remembered in `chats.folder`,
+/// so renaming the chat afterwards does not move a folder full of files; the
+/// short id on the end keeps two chats called "Invoice" apart.
+///
+/// An explicit folder wins: a project's chats share the project's folder, and a
+/// scheduled run is pointed at one before its first turn.
+///
+/// Takes the settings and db locks itself, so no caller may be holding either.
+pub(crate) fn chat_folder(state: &AppState, chat: &db::ChatRow) -> PathBuf {
+    let explicit = chat
+        .workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|given| !given.is_empty());
+    if let Some(given) = explicit {
+        return PathBuf::from(given);
+    }
+    if let Some(known) = chat
+        .folder
+        .as_deref()
+        .map(str::trim)
+        .filter(|known| !known.is_empty())
+    {
+        return PathBuf::from(known);
+    }
+
+    let base = {
         let settings = state.settings.lock().unwrap();
-        let configured = settings.documents_dir.trim();
+        let configured = settings.documents_dir.trim().to_string();
         if configured.is_empty() {
             state.paths.documents_dir()
         } else {
             PathBuf::from(configured)
         }
     };
+    let dir = base.join(folder_name(&chat.title, &chat.id));
     if let Err(err) = std::fs::create_dir_all(&dir) {
-        eprintln!("could not create the documents folder: {err}");
+        eprintln!("could not create the chat folder: {err}");
     }
-    Some(dir)
+    // Remembered so a later rename does not move it. Failing to remember is not
+    // fatal: the folder exists and this run uses it, and the next run would
+    // recompute a name from the title — the harmless direction to fail in.
+    if let Ok(conn) = state.db.lock() {
+        let _ = db::set_chat_folder(&conn, &chat.id, &dir.to_string_lossy());
+    }
+    dir
+}
+
+/// The folder name a chat gets: its title, slugged, plus the first eight
+/// characters of its id.
+///
+/// The suffix is not decoration — two chats called "Invoice" must not land in
+/// the same folder — and eight characters of a UUID is more than enough to
+/// separate the handful of chats a person has open.
+fn folder_name(title: &str, id: &str) -> String {
+    let short: String = id.chars().take(8).collect();
+    format!("{}-{short}", crate::tools::docs::slug_with(title, "chat"))
 }
 
 const DOCUMENT_RULES: &str = "\
@@ -161,6 +213,11 @@ You can read and write files in the folder above and nowhere else.
 - When the user asks for a document, save it to a file with write_file rather than
   only printing it in the chat, and tell them the file name you used.
 - Prefer edit_file over write_file when updating an existing document.
+- Word (.docx), Excel (.xlsx), PowerPoint (.pptx) and PDF files are read with
+  `read_file` like anything else: it hands you the text inside them, formatting
+  left out. Never write one with `write_file` — it would produce a file that does
+  not open. Use `doc_create`, `sheet_create` or `slides_create`, and revise by
+  reading the file and creating it again.
 - Every write is shown to the user for approval before it happens; say in one line
   what you are about to do, then call the tool.";
 
@@ -230,7 +287,9 @@ pub(crate) fn system_prompt(
             }
         } else {
             base.push_str(&format!(
-                "\n\n# Documents\n\nYour documents folder is:\n{}\n\n{DOCUMENT_RULES}",
+                "\n\n# Documents\n\nThis chat's own folder is:\n{}\n\n\
+                 Files the user adds and files you create both live here, and the user can see \
+                 them in the file panel beside this conversation.\n\n{DOCUMENT_RULES}",
                 ws.display()
             ));
         }
@@ -259,7 +318,8 @@ When the user wants a *file* — something to send, print or open in Excel — w
 - `sheet_create` — a spreadsheet, from rows. Headers in the first row; a cell starting with `=` is \
 a real formula Excel evaluates on open.\n\
 - `slides_create` — a PowerPoint deck of titles and bullets.\n\n\
-Each one returns the path it wrote. The files go to the user's documents folder. Every one is \
+Each one returns the path it wrote, into this chat's own folder — the folder named above, which \
+the user can see in the file panel. Every one is \
 approved before it runs, so say which file you are about to write first.",
     );
 
@@ -1031,15 +1091,11 @@ async fn run_tool(
     }
 
     if tools::docs::is_document_tool(name) {
-        // Documents land in the user's documents folder rather than the
-        // workspace: they are the deliverable, not part of the project.
-        let settings = state.settings.lock().unwrap().clone();
-        let dir = if settings.documents_dir.trim().is_empty() {
-            state.paths.documents_dir()
-        } else {
-            std::path::PathBuf::from(settings.documents_dir.trim())
-        };
-        return docs::execute(name, args, &dir, &settings.browser_path).await;
+        // Documents land in this chat's own folder, not a shared one: they are
+        // what this conversation is producing, and the file tree beside it shows
+        // the same folder because both ask `workspace_for`.
+        let browser = state.settings.lock().unwrap().browser_path.clone();
+        return docs::execute(name, args, ws, &browser).await;
     }
 
     // Before a run changes a file, its current content is recorded so the whole
@@ -1432,4 +1488,26 @@ pub async fn run(
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_chat_folder_is_named_after_the_chat_and_still_unique() {
+        assert_eq!(
+            folder_name("Q3 report", "3f2a1b0c-9999-4d4d-8e8e-000000000000"),
+            "q3-report-3f2a1b0c"
+        );
+        // Two chats called the same thing keep separate folders.
+        assert_ne!(
+            folder_name("Invoice", "aaaaaaaa-0000"),
+            folder_name("Invoice", "bbbbbbbb-0000")
+        );
+        // A title that slugs down to nothing falls back rather than producing a
+        // folder called "-3f2a1b0c", and a path in the title cannot escape.
+        assert_eq!(folder_name("///", "3f2a1b0c"), "chat-3f2a1b0c");
+        assert_eq!(folder_name("../..", "abcdefgh"), "chat-abcdefgh");
+    }
 }

@@ -15,6 +15,13 @@ pub struct ChatRow {
     pub title: String,
     pub kind: String,
     pub workspace: Option<String>,
+    /// The folder a chat-mode chat owns for its own files, decided once when it
+    /// is first needed and remembered here so it does not move when the chat is
+    /// renamed. Deliberately *not* `workspace`: that column means "the folder the
+    /// user chose" for coding chats and projects, and it is also what scopes
+    /// memory, so giving every chat one would fragment memory into a file per
+    /// chat.
+    pub folder: Option<String>,
     pub model: String,
     pub thinking: bool,
     pub effort: String,
@@ -55,6 +62,9 @@ CREATE TABLE IF NOT EXISTS chats (
     title        TEXT NOT NULL,
     kind         TEXT NOT NULL DEFAULT 'chat',
     workspace    TEXT,
+    -- The folder this chat owns for its own files. See `ChatRow::folder`. Added
+    -- by ALTER for databases written before chats had one.
+    folder       TEXT,
     model        TEXT NOT NULL,
     thinking     INTEGER NOT NULL DEFAULT 1,
     effort       TEXT NOT NULL DEFAULT 'high',
@@ -282,6 +292,10 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // Which project a chat belongs to, if any. NULL for every chat made before
     // projects existed, which is exactly right: it belongs to none.
     let _ = conn.execute("ALTER TABLE chats ADD COLUMN project_id TEXT", []);
+    // Where a chat-mode chat keeps its own files. NULL means "not worked out
+    // yet"; the first file operation decides it, so an existing chat keeps
+    // reading the shared documents folder until it next touches a file.
+    let _ = conn.execute("ALTER TABLE chats ADD COLUMN folder TEXT", []);
 
     conn.execute_batch(SCHEMA)?;
 
@@ -307,7 +321,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -326,6 +340,7 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             archived: r.get::<_, i64>(11)? != 0,
             agent_mode: r.get(12)?,
             project_id: r.get(13)?,
+            folder: r.get(14)?,
         })
     })?;
     rows.collect()
@@ -352,6 +367,7 @@ pub fn create_chat(
         title: "New chat".to_string(),
         kind: kind.to_string(),
         workspace: workspace.map(str::to_string),
+        folder: None,
         model: model.to_string(),
         thinking,
         effort: effort.to_string(),
@@ -367,7 +383,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -386,6 +402,7 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 archived: r.get::<_, i64>(11)? != 0,
                 agent_mode: r.get(12)?,
                 project_id: r.get(13)?,
+                folder: r.get(14)?,
             })
         },
     )
@@ -464,6 +481,19 @@ pub fn set_chat_workspace(
     conn.execute(
         "UPDATE chats SET workspace = ?2, updated_at = ?3 WHERE id = ?1",
         params![id, workspace, now_ts()],
+    )?;
+    Ok(())
+}
+
+/// Remembers the folder a chat owns, once, when it is first worked out.
+///
+/// `updated_at` is deliberately left alone — the same rule archiving follows.
+/// Deciding where a chat's files live is bookkeeping, and bumping the timestamp
+/// would reorder the sidebar as a side effect of opening a file panel.
+pub fn set_chat_folder(conn: &Connection, id: &str, folder: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET folder = ?2 WHERE id = ?1",
+        params![id, folder],
     )?;
     Ok(())
 }
@@ -1482,10 +1512,14 @@ mod tests {
         let conn = open(&path).expect("an older database must still open");
 
         // The column the index needs is there, and the old row kept its identity
-        // while gaining exactly nothing: it belongs to no project.
+        // while gaining exactly nothing: it belongs to no project, and its own
+        // folder is decided the first time it needs one rather than guessed here.
+        // (`get_chat` selects every column, so this row is also the guard that
+        // the `folder` ALTER really ran on an upgraded database.)
         let kept = get_chat(&conn, "old-1").unwrap();
         assert_eq!(kept.title, "A chat from before");
         assert!(kept.project_id.is_none());
+        assert!(kept.folder.is_none());
 
         // The index that actually failed must really exist now. "Did not crash"
         // would also be satisfied by the batch silently skipping it.

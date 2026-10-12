@@ -207,7 +207,7 @@ export default function App() {
     const added: Attachment[] = [];
     for (const path of paths) {
       try {
-        added.push(await pathToAttachment(await api.attachPath(path)));
+        added.push(await pathToAttachment(await api.attachPath(activeIdRef.current, path)));
       } catch (e) {
         setError(String(e));
       }
@@ -980,7 +980,7 @@ export default function App() {
     // exists, and send() picks them up from the same empty-string slot.
     const key = chatId ?? "";
     try {
-      const added = await filesToAttachments(files);
+      const added = await filesToAttachments(files, chatId);
       setAttachmentsByChat((prev) => ({
         ...prev,
         [key]: [...(prev[key] ?? []), ...added].slice(0, 8),
@@ -996,6 +996,17 @@ export default function App() {
       ...prev,
       [key]: (prev[key] ?? []).filter((_, i) => i !== index),
     }));
+  }, []);
+
+  // Show the user where this chat keeps its own files. The folder is worked out
+  // on the Rust side the first time it is asked for, so the header never has to
+  // guess a path.
+  const revealChatFolder = useCallback(async (chatId: string) => {
+    try {
+      await api.revealPath(await api.chatFolder(chatId));
+    } catch (e) {
+      setError(String(e));
+    }
   }, []);
 
   // Write the whole conversation to the documents folder. The file name comes
@@ -1389,6 +1400,7 @@ export default function App() {
                     onModeChange={(mode) => id && changeMode(id, mode)}
                     onAgentMode={(mode) => id && changeAgentMode(id, mode)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
+                    onRevealFolder={() => id && void revealChatFolder(id)}
                     onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}
                     onAttach={(files) => attach(id, files)}
                     onRemoveAttachment={(index) => removeAttachment(id, index)}

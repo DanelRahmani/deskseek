@@ -64,6 +64,18 @@ docx-rs = { version = "0.4.22", default-features = false }
 # path is never called from here.
 ppt-rs = "0.2.27"
 rust_xlsxwriter = "0.99.1"
+# Reading those same containers back (tools/extract.rs). Both are already in the
+# tree — `zip` 8 via docx-rs and rust_xlsxwriter, `quick-xml` 0.41 via docx-rs —
+# so declaring them adds no crate to the build, *provided the features match the
+# ones those two already asked for*. `zip`'s defaults pull in AES, bzip2, lzma,
+# zstd and ppmd, none of which an Office file needs: it is a ZIP of DEFLATE'd
+# XML, so `deflate` is the whole requirement. The version is pinned to the one
+# already resolved on purpose — a wider range would resolve to a second copy.
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+quick-xml = { version = "0.41", default-features = false, features = ["encoding"] }
+# A PDF is not a ZIP of XML we can walk, so this one is a real new dependency.
+# MIT, no build script, no network, no C.
+pdf-extract = "0.12"
 
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]

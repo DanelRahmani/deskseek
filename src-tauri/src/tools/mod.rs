@@ -6,6 +6,7 @@ pub mod browser;
 pub mod desktop;
 pub mod docs;
 pub mod exec;
+pub mod extract;
 pub mod guard;
 pub mod sandbox;
 pub mod sandbox_exec;
@@ -426,7 +427,7 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "read_file",
-                "Read a UTF-8 text file from the workspace.",
+                "Read a file from the workspace. A Word (.docx), Excel (.xlsx), PowerPoint (.pptx) or PDF file is opened as a document and handed back as the text in it — formatting, images and comments are left out. Everything else is read as UTF-8 text.",
                 params(json!({"path": {"type": "string", "description": "Workspace-relative path"}}), &["path"]),
             ),
             ToolClass::Read,
@@ -464,7 +465,7 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "write_file",
-                "Create a file, or replace it entirely if it exists.",
+                "Create a text file, or replace it entirely if it exists. A .docx, .xlsx, .pptx or .pdf cannot be written this way — use doc_create, sheet_create or slides_create for those.",
                 params(
                     json!({
                         "path": {"type": "string", "description": "Workspace-relative path"},

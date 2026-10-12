@@ -14,6 +14,12 @@ export interface ChatRow {
   title: string;
   kind: SectionKind;
   workspace: string | null;
+  /**
+   * The folder this chat owns for its own files. Decided when the chat first
+   * touches a document, so it is null until then — `chatFolder` in the API
+   * answers with the real path either way.
+   */
+  folder: string | null;
   model: string;
   thinking: boolean;
   effort: string;

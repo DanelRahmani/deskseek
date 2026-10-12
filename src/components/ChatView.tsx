@@ -57,6 +57,8 @@ interface Props {
   onAgentMode: (mode: string) => void;
   onModeChange: (mode: PermissionMode) => void;
   onPickWorkspace: () => void;
+  /** Show where this chat keeps its own files. */
+  onRevealFolder: () => void;
   onAttach: (files: FileList | File[]) => void;
   onRemoveAttachment: (index: number) => void;
   onDecideApproval: (requestId: string, decision: "once" | "session" | "always" | "deny") => void;
@@ -164,6 +166,7 @@ export function ChatView({
   onAgentMode,
   onModeChange,
   onPickWorkspace,
+  onRevealFolder,
   onAttach,
   onRemoveAttachment,
   onDecideApproval,
@@ -312,6 +315,18 @@ export function ChatView({
             {needsFolder
               ? "Choose folder…"
               : `📁 ${chat.workspace?.split(/[\\/]/).filter(Boolean).pop()}`}
+          </button>
+        )}
+
+        {/* A chat-mode chat keeps a folder of its own, made the first time it
+            needs one — so there is nothing to choose, only something to show. */}
+        {chat && chat.kind !== "coding" && (
+          <button
+            onClick={onRevealFolder}
+            className="rounded-md px-2 py-1 text-xs text-neutral-500 transition duration-150 hover:bg-neutral-800 hover:text-neutral-300"
+            title="This chat keeps its own files in a folder — click to show it"
+          >
+            📁
           </button>
         )}
 

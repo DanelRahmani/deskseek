@@ -1,6 +1,6 @@
 //! Tauri commands: the whole surface the frontend talks to.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::Engine as _;
 use chrono::Local;
@@ -556,7 +556,20 @@ fn documents_dir_path(state: &AppState) -> PathBuf {
     }
 }
 
-/// Write a chat to a Markdown file in the documents folder, so it can be read,
+/// The folder a chat's own files live in — the one the document tools write to
+/// and the file panel shows, so an export lands where the user is looking rather
+/// than in a shared pile.
+fn chat_dir(state: &AppState, chat_id: &str) -> Result<PathBuf, String> {
+    let chat = {
+        let conn = state.db.lock().unwrap();
+        db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?
+    };
+    let dir = agent::workspace_for(state, &chat).ok_or("This chat has no folder yet.")?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Write a chat to a Markdown file in the chat's own folder, so it can be read,
 /// printed or mailed. A second export of the same chat becomes `name-2` rather
 /// than overwriting the first. Returns the path written.
 #[tauri::command]
@@ -567,14 +580,13 @@ pub fn export_chat(state: State<'_, AppState>, chat_id: String) -> Result<String
         let messages = db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
         (chat, messages)
     };
-    let dir = documents_dir_path(&state);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let dir = chat_dir(&state, &chat_id)?;
     let path = crate::tools::docs::free_path(&dir, &crate::tools::docs::slug(&chat.title), "md");
     std::fs::write(&path, chat_markdown(&chat, &messages)).map_err(|e| e.to_string())?;
     Ok(path.display().to_string())
 }
 
-/// Write a chat to a PDF in the documents folder.
+/// Write a chat to a PDF in the chat's own folder.
 ///
 /// Deliberately routed through the same `doc_create` tool the model uses rather
 /// than printing from a second implementation: one Markdown reader, one HTML
@@ -592,8 +604,7 @@ pub async fn export_chat_pdf(
         let messages = db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
         (chat, messages)
     };
-    let dir = documents_dir_path(&state);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let dir = chat_dir(&state, &chat_id)?;
     let browser = state.settings.lock().unwrap().browser_path.clone();
     let args = serde_json::json!({
         "name": chat.title,
@@ -1625,28 +1636,159 @@ pub fn reveal_path(path: String) -> Result<(), String> {
 
 // ------------------------------------------------------------- attachments
 
-/// Read a dropped file into an attachment.
+/// How large a picture may be before the attachment is refused. It is sent
+/// inline, so a huge one would be a stored row nobody can use.
+const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
+/// Text beyond this is left in the file rather than copied into the message.
+const MAX_TEXT_BYTES: u64 = 200 * 1024;
+/// How much of a *document* is pasted into the message.
+///
+/// ponytail: an attachment rides in the chat's history, so a long document would
+/// be paid for on every later turn. Past this the file stays in the chat's own
+/// folder and the model is told to read it when it needs it. The ceiling is a
+/// document worth having up front that is too long to paste; the upgrade is to
+/// make the threshold a setting beside the other context controls.
+const MAX_INLINE_DOC_CHARS: usize = 20_000;
+
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file")
+        .to_string()
+}
+
+/// A path in `dir` that is not taken.
+///
+/// Deliberately not `docs::free_path`: that one always builds `stem.ext`, and a
+/// file the user drops may have no extension at all.
+fn free_path_for(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let path = Path::new(name);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+    let ext = path.extension().and_then(|e| e.to_str());
+    for n in 2..1000 {
+        let candidate = match ext {
+            Some(ext) => dir.join(format!("{stem}-{n}.{ext}")),
+            None => dir.join(format!("{stem}-{n}")),
+        };
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    // A thousand collisions is not a real situation; the timestamp is a floor.
+    dir.join(format!("{stem}-{}", db::now_ts()))
+}
+
+/// Take a file the user just added into the chat's own folder.
+///
+/// This is what makes a chat really own its documents: after a drop the file is
+/// in the folder the file panel shows, `read_file` can open it, and a later
+/// document is created beside it. A name that is already taken keeps both files
+/// — `report.docx` becomes `report-2.docx` — because quietly replacing one would
+/// be the only unrecoverable thing this could do.
+fn adopt_file(state: &AppState, chat_id: &str, source: &Path) -> Result<(PathBuf, String), String> {
+    let dir = chat_dir(state, chat_id)?;
+    // Already in the folder: leave it where it is rather than making a copy of it
+    // beside itself.
+    if let (Ok(from), Ok(here)) = (std::fs::canonicalize(source), std::fs::canonicalize(&dir)) {
+        if from.parent() == Some(here.as_path()) {
+            let name = file_name_of(&from);
+            return Ok((from, name));
+        }
+    }
+    let name = file_name_of(source);
+    let target = free_path_for(&dir, &name);
+    std::fs::copy(source, &target)
+        .map_err(|e| format!("could not copy {name} into this chat's folder: {e}"))?;
+    let stored = file_name_of(&target);
+    Ok((target, stored))
+}
+
+/// The same, for bytes: a file chosen with the picker or pasted into the composer
+/// is a `File`, not a path, and the webview cannot write to disk itself.
+fn save_bytes(
+    state: &AppState,
+    chat_id: &str,
+    name: &str,
+    bytes: &[u8],
+) -> Result<(PathBuf, String), String> {
+    let dir = chat_dir(state, chat_id)?;
+    // The name arrives from the webview, so it is reduced to a single component
+    // before it is used as one: `file_name()` of `../../x` is `x`, and the write
+    // cannot leave the chat's folder.
+    let name = Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let target = free_path_for(&dir, name);
+    std::fs::write(&target, bytes)
+        .map_err(|e| format!("could not save {name} in this chat's folder: {e}"))?;
+    let stored = file_name_of(&target);
+    Ok((target, stored))
+}
+
+/// The text of a document, when there is one and it is short enough to paste.
+///
+/// `None` means "do not paste anything": a scan with no text in it, a file that
+/// could not be read, or a document whose text is too long to ride along with
+/// every later turn in the chat.
+fn inlined_document(name: &str, path: &Path, size: u64) -> Option<String> {
+    if !crate::tools::extract::is_extractable(name) || size > crate::tools::extract::MAX_DOC_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let text = crate::tools::extract::text_of(name, &bytes).ok()?;
+    (text.chars().count() <= MAX_INLINE_DOC_CHARS).then_some(text)
+}
+
+/// What the model is given of a file that has just been added.
+///
+/// A document it can read is pasted in when it is short enough to be worth it,
+/// and otherwise named so it can be read on demand — the file is in the chat's
+/// folder either way, so nothing is lost by waiting until something needs it.
+fn attached_text(path: &Path, mime: &str, size: u64) -> String {
+    let name = file_name_of(path);
+    if crate::tools::extract::is_extractable(&name) {
+        if let Some(text) = inlined_document(&name, path, size) {
+            return text;
+        }
+        // One sentence that is true whether the text was too long or there was
+        // none to lift out, so nothing here has to guess which it was.
+        return format!(
+            "{name} is in this chat's folder; its text is not pasted in here. Call \
+             read_file(\"{name}\") when you need it — and if that comes back with nothing, the \
+             document's words are a picture rather than characters."
+        );
+    }
+    if is_text_mime(mime) && size <= MAX_TEXT_BYTES {
+        if let Ok(bytes) = std::fs::read(path) {
+            return String::from_utf8_lossy(&bytes).into_owned();
+        }
+    }
+    format!("{name} is in this chat's folder. read_file(\"{name}\") will open it.")
+}
+
+/// Add a dropped file to the chat.
 ///
 /// A native drop hands the webview a *path*, not a `File`, and the webview
-/// cannot read the disk itself — so the file is read here. What comes back
-/// depends on what the model can actually use: an image is returned as a
-/// `data:` URL (the frontend downscales it), a text file as its own text, and
-/// anything else as a name and a MIME type with no payload at all. The model is
-/// text-only, so the bytes of a PDF would be a row that is stored and never
-/// sent.
+/// cannot read the disk itself — so the file is handled here. A picture comes
+/// back as a `data:` URL for the model to look at (the frontend downscales it);
+/// everything else is copied into the chat's own folder, and what the model can
+/// read of it is returned with it.
 #[tauri::command]
-pub fn attach_path(path: String) -> Result<Attachment, String> {
-    const MAX_IMAGE_BYTES: u64 = 25 * 1024 * 1024;
-    const MAX_TEXT_BYTES: u64 = 200 * 1024;
-    let file = std::path::Path::new(&path);
+pub fn attach_path(
+    state: State<'_, AppState>,
+    chat_id: Option<String>,
+    path: String,
+) -> Result<Attachment, String> {
+    let file = Path::new(&path);
     if !file.is_file() {
         return Err(format!("{path} is not a file."));
     }
-    let name = file
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("file")
-        .to_string();
+    let name = file_name_of(file);
     let size = std::fs::metadata(file).map_err(|e| e.to_string())?.len();
     let mime = mime_for(&name);
 
@@ -1664,19 +1806,77 @@ pub fn attach_path(path: String) -> Result<Attachment, String> {
         });
     }
 
-    let text = if is_text_mime(&mime) && size <= MAX_TEXT_BYTES {
-        let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
-        String::from_utf8_lossy(&bytes).into_owned()
-    } else {
-        // Nothing the text-only model can read: keep the label, drop the bytes.
-        String::new()
+    // Dropped before the first conversation exists: there is no folder for it to
+    // join yet, so the text is still lifted out (that needs nothing but the file)
+    // and nothing claims it is filed anywhere. `send` creates the chat from the
+    // draft, and a file added after that is filed properly.
+    let Some(chat_id) = chat_id else {
+        let text = inlined_document(&name, file, size).unwrap_or_default();
+        return Ok(Attachment {
+            name,
+            mime,
+            data_url: String::new(),
+            text,
+        });
     };
+
+    let (stored_path, stored_name) = adopt_file(&state, &chat_id, file)?;
+    let text = attached_text(&stored_path, &mime, size);
     Ok(Attachment {
-        name,
+        name: stored_name,
         mime,
         data_url: String::new(),
         text,
     })
+}
+
+/// The picker's route to the same place a drop lands.
+///
+/// Its bytes are sent here because the webview has a `File` and no path, and it
+/// is written into the chat's folder exactly as a dropped one is — one rule,
+/// whichever way the file arrived.
+#[tauri::command]
+pub fn attach_bytes(
+    state: State<'_, AppState>,
+    chat_id: Option<String>,
+    name: String,
+    data_url: String,
+) -> Result<Attachment, String> {
+    let bytes = decode_data_url(&data_url).ok_or("That file could not be read.")?;
+    let mime = mime_for(&name);
+    // No chat yet: keep the rule the composer already had — a text file carries
+    // its own text, anything else travels as a name.
+    let Some(chat_id) = chat_id else {
+        let text = if is_text_mime(&mime) && bytes.len() as u64 <= MAX_TEXT_BYTES {
+            String::from_utf8_lossy(&bytes).into_owned()
+        } else {
+            String::new()
+        };
+        return Ok(Attachment {
+            name,
+            mime,
+            data_url: String::new(),
+            text,
+        });
+    };
+    let (stored_path, stored_name) = save_bytes(&state, &chat_id, &name, &bytes)?;
+    let text = attached_text(&stored_path, &mime, bytes.len() as u64);
+    Ok(Attachment {
+        name: stored_name,
+        mime,
+        data_url: String::new(),
+        text,
+    })
+}
+
+/// The bytes a `data:` URL carries.
+fn decode_data_url(data_url: &str) -> Option<Vec<u8>> {
+    let comma = data_url.find(',')?;
+    let (meta, payload) = data_url.split_at(comma + 1);
+    if !meta.contains(";base64") {
+        return None;
+    }
+    base64::engine::general_purpose::STANDARD.decode(payload).ok()
 }
 
 /// Whether a MIME type is plain text the model can be handed directly.
@@ -1726,6 +1926,13 @@ fn chat_root(state: &AppState, chat_id: &str) -> Result<PathBuf, String> {
     };
     let root = agent::workspace_for(state, &chat).ok_or("This chat has no folder yet.")?;
     Ok(std::fs::canonicalize(&root).unwrap_or(root))
+}
+
+/// Where this chat's own files live, so the header can show the user the folder
+/// instead of only promising that one exists.
+#[tauri::command]
+pub fn chat_folder(state: State<'_, AppState>, chat_id: String) -> Result<String, String> {
+    Ok(chat_dir(&state, &chat_id)?.display().to_string())
 }
 
 #[derive(Serialize)]
@@ -1826,6 +2033,36 @@ pub fn read_preview(
     }
 
     let size = meta.len();
+    // A Word, Excel, PowerPoint or PDF file is not text, and "binary file" is a
+    // useless thing to show someone who just clicked their own report. The panel
+    // shows what is in the document instead, through the same reader the model
+    // uses — so what the user sees and what the model sees cannot disagree.
+    if crate::tools::extract::is_extractable(&path) {
+        let limit = crate::tools::extract::MAX_DOC_BYTES;
+        if size > limit {
+            return Ok(FilePreview {
+                path,
+                size,
+                text: None,
+                note: Some(format!("{} MB — too large to read", size / (1024 * 1024))),
+            });
+        }
+        let bytes = std::fs::read(&full).map_err(|e| format!("cannot open '{path}': {e}"))?;
+        return Ok(match crate::tools::extract::text_of(&path, &bytes) {
+            Ok(text) => FilePreview {
+                path,
+                size,
+                text: Some(text),
+                note: Some("text lifted out of the document".to_string()),
+            },
+            Err(note) => FilePreview {
+                path,
+                size,
+                text: None,
+                note: Some(note),
+            },
+        });
+    }
     if size > MAX_PREVIEW_BYTES {
         return Ok(FilePreview {
             path,
@@ -1951,6 +2188,7 @@ mod tests {
             title: "Roadmap".to_string(),
             kind: "chat".to_string(),
             workspace: None,
+            folder: None,
             model: "deepseek-flash".to_string(),
             thinking: true,
             effort: "high".to_string(),

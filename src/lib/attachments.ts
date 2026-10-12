@@ -1,4 +1,5 @@
 import type { Attachment } from "../types";
+import { api } from "../api";
 
 /**
  * Vision models tile images at roughly this size, so anything larger is wasted
@@ -11,6 +12,12 @@ const RECOMPRESS_ABOVE_BYTES = 400_000;
 const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
 /** Text beyond this is dropped at the source rather than stored in full. */
 const MAX_TEXT_BYTES = 200 * 1024;
+/**
+ * The largest file worth handing to the backend. Matches the document read cap
+ * on the Rust side: past it nothing could be opened anyway, and reading it into
+ * a data URL first would cost the webview real memory for nothing.
+ */
+const MAX_SEND_BYTES = 32 * 1024 * 1024;
 
 /** The same rule the Rust side uses — text the text-only model can read. */
 function isTextMime(mime: string): boolean {
@@ -48,7 +55,15 @@ function loadImage(dataUrl: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function toAttachment(file: File): Promise<Attachment> {
+/**
+ * Turn a `File` the webview holds into an attachment. The chat id is needed for
+ * everything that is not an image or a text file: those are copied into that
+ * chat's own folder by the backend, so the chat really owns them.
+ */
+export async function toAttachment(
+  file: File,
+  chatId: string | null,
+): Promise<Attachment> {
   const mime = file.type || "application/octet-stream";
   if (mime.startsWith("image/")) {
     if (file.size > MAX_IMAGE_BYTES) throw new Error(`${file.name} is larger than 25 MB.`);
@@ -57,9 +72,16 @@ export async function toAttachment(file: File): Promise<Attachment> {
   if (isTextMime(mime) && file.size <= MAX_TEXT_BYTES) {
     return normalise(file.name, mime, await readAsDataUrl(file));
   }
-  // Not an image and not readable text: the model would never receive it, so
-  // the bytes are never loaded — a 2 GB video must not become a message row.
-  return { name: file.name, mime, data_url: "", text: "" };
+  // Too large to hand over at all: the model would never usefully receive it, so
+  // the bytes are never read — a 2 GB video must not become a message row.
+  if (file.size > MAX_SEND_BYTES) {
+    return { name: file.name, mime, data_url: "", text: "" };
+  }
+  // Anything that is not a picture or a small text file goes to the Rust side,
+  // which writes it into the chat's own folder and hands back whatever can be
+  // read of it. A `.docx` is a ZIP of XML and a `.pdf` is neither, so nothing
+  // here could open them — the backend can.
+  return api.attachBytes(chatId, file.name, await readAsDataUrl(file));
 }
 
 /**
@@ -111,7 +133,10 @@ export function pathToAttachment(raw: Attachment): Promise<Attachment> {
   return normalise(raw.name, raw.mime, raw.data_url, raw.text);
 }
 
-export async function filesToAttachments(files: FileList | File[]): Promise<Attachment[]> {
+export async function filesToAttachments(
+  files: FileList | File[],
+  chatId: string | null,
+): Promise<Attachment[]> {
   const list = Array.from(files);
-  return Promise.all(list.map(toAttachment));
+  return Promise.all(list.map((file) => toAttachment(file, chatId)));
 }

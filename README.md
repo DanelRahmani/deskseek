@@ -29,15 +29,19 @@ Both sections are functional:
   make, it calls `ask_user` and the run waits for your answer in the composer instead of guessing;
   every question offers a few options and always lets you type your own
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
-  one. An image is downscaled and sent to the model as a multimodal content part; a text file
-  is sent as its own text, so the model can actually read it; anything else is kept as a name
-  and a MIME type with no payload, because a text-only model cannot read it and storing the
-  bytes would be a row that is paid for and never sent
-- **Agentic by default** — the assistant can read, search, write and edit files in your
-  documents folder (default `…/documents`, configurable), so it can produce a document for you
-  and save it rather than only printing it. The **Tools** button in the header turns that off for
-  a chat: the next request carries no tools at all, so it becomes a plain conversation with no
-  file access, no browsing and no MCP. The choice is per chat and remembered
+  one. An image is downscaled and sent to the model as a multimodal content part. Everything
+  else is copied into **this chat's own folder** first, so the conversation really owns it: a text
+  file is sent as its own text, a Word, Excel, PowerPoint or PDF file has the words lifted out of
+  it, and a document too long to paste is left in the folder with the model told to read it when
+  it needs it. Nothing is captured twice — a file already in the folder is used where it is, and a
+  name that is taken becomes `name-2` rather than replacing the file already there
+- **Agentic by default** — the assistant can read, search, write and edit files in **its own
+  folder** — created for the chat the first time it needs one, under `…/documents`
+  (configurable), and the 📁 in the header shows you where — so it can produce a document for you
+  and save it rather than only printing it, and read one you drop in. The **Tools** button in the
+  header turns that off for a chat: the next request carries no tools at all, so it becomes a
+  plain conversation with no file access, no browsing and no MCP. The choice is per chat and
+  remembered
 - **Memory** — two kinds of file, because one file has to be either short or cheap and it cannot
   be both. Both are plain markdown you can read and edit by hand: the files *are* the store.
   - `MEMORY.md` is the **profile**: who the user is and how they want replies — name, language,
@@ -132,7 +136,7 @@ Both sections are functional:
   deleted: the arrow on its sidebar row files it under *Archived (n)* at the bottom, and `↑`
   brings it back. Nothing is removed — the messages, the spend and the folder stay — which is
   exactly why it needs no confirmation. Deleting is still the only thing that destroys anything
-- `/export` — write the whole conversation to a Markdown file in your documents folder; the
+- `/export` — write the whole conversation to a Markdown file in the chat's own folder; the
   palette also offers **Export this chat as a PDF**, printed by the browser on this machine
   through the same pipeline `doc_create` uses rather than a second implementation of its own
 - **Task list** — for multi-step work the model publishes its plan with the `update_tasks` tool
@@ -141,7 +145,14 @@ Both sections are functional:
 - **Artifacts** — a document the model publishes with `artifact_create` opens in a panel beside
   the chat, rendered live and versioned, instead of scrolling away as a giant code block
 - **Documents** — `doc_create`, `sheet_create` and `slides_create` write real `.md`/`.docx`/`.pdf`,
-  `.xlsx` and `.pptx` files to your documents folder, with an *Open* button on the result
+  `.xlsx` and `.pptx` files into the chat's own folder, with an *Open* button on the result. The
+  same formats are read back: `read_file` opens a `.docx`, `.xlsx`, `.pptx` or `.pdf` as the text
+  inside it rather than refusing it as binary, and `write_file` refuses to write one as text, so a
+  file that merely calls itself a `.docx` can never be produced
+  - Honest limits: what comes back is what a reader would see — formatting, images and comments
+    are left out, and a document whose words are a picture (a scan) says so rather than coming
+    back empty. Revising a document means reading it and creating it again, not editing the
+    original in place
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
   fix is next to the warning rather than a command you have to remember

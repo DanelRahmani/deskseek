@@ -263,6 +263,8 @@ pub fn run() {
             commands::install_examples,
             commands::delete_skill,
             commands::attach_path,
+            commands::attach_bytes,
+            commands::chat_folder,
             commands::respond_approval,
             commands::respond_question,
             commands::list_tool_permissions,
