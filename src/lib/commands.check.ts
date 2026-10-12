@@ -20,6 +20,20 @@ const items = buildPalette(chats, true);
 
 // Export needs a chat; the statics never do.
 assert(items.some((i) => i.id === "export"), "export is offered while a chat is open");
+
+// A leading marker scopes the list to one half of it: `>` the actions, `@` the
+// conversations. Either marker on its own still lists its whole scope.
+const actionsOnly = matchPalette(items, ">");
+assert(actionsOnly.length > 0, "> lists the actions");
+assert(!actionsOnly.some((i) => i.id.startsWith("chat:")), "> hides the conversations");
+const chatsOnly = matchPalette(items, "@");
+assert(chatsOnly.length === chats.length, "@ lists exactly the conversations");
+assert(chatsOnly.every((i) => i.id.startsWith("chat:")), "@ hides the actions");
+assert(matchPalette(items, "> new").some((i) => i.id === "new-chat"), "> still searches inside the scope");
+assert(matchPalette(items, "> Quarterly").length === 0, "an action scope excludes a chat title");
+assert(matchPalette(items, "@ Quarterly").length === 1, "@ finds the chat that matches");
+// A marker that is not one of ours is part of the query, not a scope.
+assert(matchPalette(items, "?x").length === 0, "an unknown marker is just text");
 assert(!buildPalette(chats, false).some((i) => i.id === "export"), "export is hidden with no chat");
 
 // Archiving is offered either way round, but never both at once, and never with

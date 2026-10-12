@@ -115,7 +115,7 @@ export function ContextPanel({ chatId, limit, onClose }: Props) {
   const percent = (chars: number) => ((chars / Math.max(1, totalChars)) * 100).toFixed(0);
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <span className="text-xs font-semibold text-neutral-200">Context</span>
         <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
@@ -127,7 +127,9 @@ export function ContextPanel({ chatId, limit, onClose }: Props) {
         {error && <p className="mb-3 text-[11px] text-red-300">{error}</p>}
 
         {slices.length === 0 && !error && (
-          <p className="text-[11px] text-neutral-600">Nothing to measure yet.</p>
+          <p className="text-[11px] text-neutral-600">
+            Nothing to measure yet. Ask something and this fills in as the conversation grows.
+          </p>
         )}
 
         {slices.length > 0 && (

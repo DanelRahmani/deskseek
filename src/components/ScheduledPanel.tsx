@@ -21,7 +21,7 @@ const NTHS = ["first", "second", "third", "fourth"];
 const quiet =
   "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 const field =
-  "w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-none transition duration-150 focus:border-neutral-600";
+  "w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-hidden transition duration-150 focus:border-neutral-600";
 
 /**
  * "Every Wednesday at 08:00", "The first Wednesday of the month at 08:00".
@@ -205,7 +205,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const needsNth = form.freq === "monthly";
 
   return (
-    <aside className="flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Scheduled</h2>
         <span className="ml-auto flex items-center gap-1">
@@ -280,7 +280,11 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
           </div>
         )}
 
-        {tasks.length === 0 && <p className="text-xs text-neutral-600">Nothing scheduled yet.</p>}
+        {tasks.length === 0 && (
+          <p className="text-xs text-neutral-600">
+            Nothing scheduled yet. Fill in New task below to add one.
+          </p>
+        )}
 
         {tasks.map((task) => (
           <div

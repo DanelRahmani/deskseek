@@ -45,7 +45,7 @@ export function ArtifactsGallery({ chatsById, onOpen, onClose }: Props) {
   }, []);
 
   return (
-    <aside className="flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Artifacts</h2>
         <span className="ml-auto flex items-center gap-1">

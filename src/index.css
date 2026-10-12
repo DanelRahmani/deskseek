@@ -360,12 +360,54 @@ body {
   }
 }
 
+/* A panel arriving, and a collapsed group opening.
+
+   These are the two places where something appears out of nothing, and there the
+   appearance *is* the information: a panel that slides in from the edge it lives
+   on says which side it came from, and a group unfolds where its chevron points.
+   Entry-only on purpose — React unmounts both outright, so there is nothing to
+   hold on screen for an exit, and the fade over an unmount would need a second
+   copy of the state just to keep the element alive.
+
+   Under reduced motion the blanket rule below collapses these to nothing, which
+   costs the movement and keeps the state change: the panel is there, the group
+   is open, and both are said in the markup as well. */
+.panel-in-left {
+  animation: panel-in-left 140ms ease-out;
+}
+.panel-in-right {
+  animation: panel-in-right 140ms ease-out;
+}
+.reveal {
+  animation: reveal 120ms ease-out;
+}
+
+@keyframes panel-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+}
+@keyframes panel-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
 /* Reduced motion.
 
    The OS preference is honoured whether or not the setting is on, and the
-   setting forces it for anyone whose OS preference is unset. One blanket rule
-   because every animation in this app is a Tailwind `transition` or an
-   `animate-pulse`, and there is no case for keeping some of them.
+   setting forces it for anyone whose OS preference is unset. One blanket rule,
+   because everything that moves here either restates a state the markup already
+   says (the caret, a running dot, a chevron, a panel arriving) or is a hover
+   transition — so there is no case for keeping some of them.
 
    The caret is the exception: stopped, it must still be visible, and the
    blanket rule would leave it parked on the blank half of its blink. */

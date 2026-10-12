@@ -63,7 +63,7 @@ export const ToolStepGroup = memo(function ToolStepGroup({ steps }: { steps: Too
         )}
       </button>
       {open && (
-        <div className="border-t border-neutral-800/60 px-2 pt-2 pb-1">
+        <div className="reveal border-t border-neutral-800/60 px-2 pt-2 pb-1">
           {steps.map((step) => (
             <ToolCallCard key={step.id} run={step} />
           ))}

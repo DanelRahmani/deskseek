@@ -91,7 +91,7 @@ export function QuestionPrompt({
                 setFree((prev) => prev.map((v, i) => (i === qi ? e.target.value : v)))
               }
               placeholder={q.options.length > 0 ? "Or type your own answer…" : "Your answer…"}
-              className="mt-1.5 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1 text-[12px] text-neutral-200 outline-none transition focus:border-neutral-600"
+              className="mt-1.5 w-full rounded-lg border border-neutral-800 bg-neutral-950 px-2 py-1 text-[12px] text-neutral-200 outline-hidden transition focus:border-neutral-600"
             />
           </div>
         ))}

@@ -110,7 +110,12 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4">
-      <div className="max-h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 p-5 shadow-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Set up DeskSeek"
+        className="max-h-full w-full max-w-xl overflow-y-auto rounded-2xl border border-neutral-800 bg-neutral-950 p-5 shadow-xl"
+      >
         <h1 className="text-base font-semibold text-neutral-100">Set up DeskSeek</h1>
         <p className="mt-1 text-xs text-neutral-500">
           Three things make this app work well. Only one of them is required.
@@ -160,7 +165,7 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="http://localhost:8888"
-                className="min-w-40 flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+                className="min-w-40 flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
               />
               <button onClick={saveSearch} disabled={busy} className={button}>
                 Test &amp; save
@@ -236,7 +241,7 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
                   onBlur={() => image !== settings.sandboxImage && save({ sandboxImage: image })}
                   placeholder="alpine:latest"
                   spellCheck={false}
-                  className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                  className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
                   title="The image commands run in — it must carry the workspace's toolchain"
                 />
               )}

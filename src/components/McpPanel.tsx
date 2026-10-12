@@ -10,7 +10,7 @@ interface Props {
 }
 
 const smallCls =
-  "w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none";
+  "w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700";
 
 /** `KEY=value` per line, which is how everyone copies tokens into these files. */
 function parsePairs(text: string): Record<string, string> {
@@ -162,6 +162,12 @@ export function McpPanel({ onClose, embedded = false }: Props) {
       }
     >
       <div
+        // Embedded in the customise hub it is a labelled section of that page;
+        // drawn over the app it is a dialog. Claiming a role it does not have
+        // is worse than having none — one of these two is always the truth.
+        role={embedded ? "region" : "dialog"}
+        aria-modal={embedded ? undefined : true}
+        aria-label="MCP servers"
         className={
           embedded
             ? "flex min-h-0 flex-1 flex-col overflow-hidden"
@@ -237,7 +243,7 @@ export function McpPanel({ onClose, embedded = false }: Props) {
             <select
               value={logServer}
               onChange={(e) => setLogServer(e.target.value)}
-              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
             >
               <option value="">All servers</option>
               {[...new Set(logs.map((line) => line.server))].map((name) => (
@@ -328,7 +334,7 @@ export function McpPanel({ onClose, embedded = false }: Props) {
                       live?.running
                         ? "Running"
                         : server.enabled
-                          ? "Failed to start"
+                          ? "Failed to start — the Logs tab has what it said"
                           : "Disabled"
                     }
                   />

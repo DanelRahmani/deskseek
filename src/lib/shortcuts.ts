@@ -9,6 +9,7 @@
 export type Shortcut =
   | "new-chat"
   | "close-tab"
+  | "rename-chat"
   | "toggle-files"
   | "open-memory"
   | "open-settings"
@@ -17,6 +18,7 @@ export type Shortcut =
   | "toggle-split"
   | "focus-pane-0"
   | "focus-pane-1"
+  | "jump-to-latest"
   | "dismiss";
 
 /**
@@ -30,6 +32,7 @@ export type Shortcut =
 export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: string }> = [
   { keys: "Ctrl+N", action: "new-chat", label: "New chat" },
   { keys: "Ctrl+W", action: "close-tab", label: "Close the tab" },
+  { keys: "F2", action: "rename-chat", label: "Rename the open chat" },
   { keys: "Ctrl+B", action: "toggle-files", label: "Show or hide the file tree" },
   { keys: "Ctrl+M", action: "open-memory", label: "Open the memory settings" },
   { keys: "Ctrl+,", action: "open-settings", label: "Open settings" },
@@ -38,6 +41,7 @@ export const SHORTCUTS: ReadonlyArray<{ keys: string; action: Shortcut; label: s
   { keys: "Ctrl+\\", action: "toggle-split", label: "Split the view" },
   { keys: "Ctrl+1", action: "focus-pane-0", label: "Focus the left pane" },
   { keys: "Ctrl+2", action: "focus-pane-1", label: "Focus the right pane" },
+  { keys: "Ctrl+G", action: "jump-to-latest", label: "Jump to the newest message" },
   { keys: "Esc", action: "dismiss", label: "Close the panel on top" },
 ];
 
@@ -66,6 +70,10 @@ export function resolveShortcut(e: KeyPress, typing = false): Shortcut | null {
     // `?` is Shift+/ on most layouts, so it arrives as the character itself
     // rather than as a shifted slash — the shift flag is not the thing to test.
     if (e.key === "?") return "cheatsheet";
+    // F2 is the conventional rename key and means nothing inside a text field,
+    // so it is safe as a bare key — and the `typing` guard above keeps it out of
+    // the rename box itself, which is exactly where it would be most annoying.
+    if (e.key === "F2") return "rename-chat";
     return null;
   }
   // AltGr arrives as Ctrl+Alt on some layouts; never treat it as our chord.
@@ -89,6 +97,12 @@ export function resolveShortcut(e: KeyPress, typing = false): Shortcut | null {
       return e.shiftKey ? null : "focus-pane-0";
     case "2":
       return e.shiftKey ? null : "focus-pane-1";
+    // Ctrl+G rather than Ctrl+End or Ctrl+Down, which are the conventional
+    // "go to the end" chords: a modifier chord fires while the composer has
+    // focus, and those two move its caret, so claiming them would take a
+    // keystroke the draft owns. Ctrl+G means nothing inside a textarea.
+    case "g":
+      return e.shiftKey ? null : "jump-to-latest";
     default:
       return null;
   }

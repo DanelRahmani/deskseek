@@ -9,9 +9,22 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme / motion / tree / a11y / changelog)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
+- [ ] `CHANGELOG.md` has a dated section for the version being tagged, and `node scripts/release-notes.mjs v<version>` prints exactly it
+
+## Smoke-out
+
+The shortest pass that says the build is alive, before the long sections below. Open
+devtools first and leave them open: this section is only about a surface that draws
+nothing, or throws.
+
+- [ ] Each sidebar panel opens and draws something: Files, Projects, Artifacts, Scheduled, Spend, Context
+- [ ] Opening an artifact opens the artifact panel; closing it goes back to the chat
+- [ ] Each dialog opens, and Escape closes it: Settings (`Ctrl+,`), Customise, the command palette (`Ctrl+K`), the shortcut sheet (`?`), `/setup`
+- [ ] A panel with nothing in it says what to do about it, rather than only that there is nothing
+- [ ] The console stayed clear through all of it
 
 ## First run
 
@@ -212,10 +225,37 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 - [ ] `Ctrl+N` starts a chat; `Ctrl+W` closes the focused tab
 - [ ] `Ctrl+B` toggles the file tree; `Ctrl+M` opens the memory settings
+- [ ] `F2` renames the open chat in the sidebar; Escape abandons the edit, Enter saves it
+- [ ] `Ctrl+G` scrolls the focused pane to its newest message
+- [ ] In the palette, `>` lists only the actions and `@` only the conversations
 - [ ] `Ctrl+,` opens settings; `Ctrl+\` toggles the split
 - [ ] `Ctrl+1` / `Ctrl+2` move focus between the panes
 - [ ] `Escape` closes the open panel or dialog; while typing in the composer it
       only dismisses the slash menu
+- [ ] `Escape` in Settings or Customise closes it and puts the caret back on the
+      button that opened it
+
+## Accessibility
+
+Everything here needs a real window. The structural half of it is checked by
+`src/lib/a11y.check.ts` and the tree's keys by `src/lib/tree.check.ts`; these are
+the parts only a person can see.
+
+- [ ] The file tree answers the mouse and the keyboard the same way: Tab reaches
+      it, Up/Down walk the rows, Right opens a folder then steps into it, Left
+      closes it or steps out to the parent, Home/End jump, Enter picks a row
+- [ ] Tab reaches every control in every panel and dialog, in an order that
+      follows what is on screen; no control is reachable only by pointer
+- [ ] The focus ring is visible on every control Tab lands on — and still visible
+      with Windows High Contrast Mode on (Settings → Accessibility → Contrast
+      themes), where `outline-hidden` keeps it and `outline-none` did not
+- [ ] With *Reduce motion* on (Settings → Appearance), opening and closing the
+      panels still works and nothing slides — and the caret is still visible while
+      an answer is arriving
+- [ ] With Narrator (or NVDA) running: opening Settings announces a dialog with a
+      name; asking a question announces the answer once it has finished rather
+      than reading every streamed frame; the file tree is announced as a tree
+      with its expanded folders
 
 ## Approvals, guard and permissions
 

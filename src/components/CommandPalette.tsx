@@ -99,7 +99,7 @@ export function CommandPalette({ items, onRun, onClose }: Props) {
           aria-autocomplete="list"
           aria-activedescendant={matches[active] ? optionId(active) : undefined}
           placeholder="Type a command or a chat…"
-          className="w-full border-b border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-200 outline-none"
+          className="w-full border-b border-neutral-800 bg-neutral-900 px-4 py-3 text-sm text-neutral-200 outline-hidden focus:border-neutral-600"
         />
         <div
           id={listId}
@@ -108,7 +108,10 @@ export function CommandPalette({ items, onRun, onClose }: Props) {
           className="max-h-80 overflow-y-auto p-1"
         >
           {matches.length === 0 && (
-            <p className="px-3 py-4 text-xs text-neutral-600">Nothing matches.</p>
+            <p className="px-3 py-4 text-xs text-neutral-600">
+              Nothing matches. Try fewer words — a leading “&gt;” lists the actions and “@” the
+              conversations.
+            </p>
           )}
           {matches.map((item, index) => (
             <button

@@ -165,7 +165,7 @@ export function ProjectsPanel({
   };
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Projects</h2>
         <span className="ml-auto flex items-center gap-1">
@@ -190,7 +190,9 @@ export function ProjectsPanel({
         </button>
 
         {projects.length === 0 && (
-          <p className="text-xs text-neutral-600">No projects yet.</p>
+          <p className="text-xs text-neutral-600">
+            No projects yet. Start one above, then add chats to it with + Chat.
+          </p>
         )}
 
         {projects.map((project) => (
@@ -206,7 +208,7 @@ export function ProjectsPanel({
                     if (e.key === "Escape") setRenaming(null);
                   }}
                   onBlur={() => void commitRename(project)}
-                  className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100 outline-none"
+                  className="min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-2 py-1 text-xs text-neutral-100 outline-hidden focus:border-neutral-500"
                 />
               ) : (
                 <button
@@ -309,7 +311,9 @@ export function ProjectsPanel({
 
             <div className="mt-2 space-y-0.5">
               {members(project.id).length === 0 && (
-                <p className="text-[11px] text-neutral-600">No chats in it yet.</p>
+                <p className="text-[11px] text-neutral-600">
+                  No chats in it yet. + Chat up top starts one inside this project.
+                </p>
               )}
               {members(project.id).map((chat) => (
                 <div key={chat.id} className="group flex items-center gap-1">
@@ -350,7 +354,7 @@ export function ProjectsPanel({
                   <select
                     value=""
                     onChange={(e) => void assign(chat.id, e.target.value)}
-                    className="w-32 shrink-0 rounded-md border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-300 outline-none"
+                    className="w-32 shrink-0 rounded-md border border-neutral-800 bg-neutral-900 px-1.5 py-0.5 text-[11px] text-neutral-300 outline-hidden focus:border-neutral-700"
                   >
                     <option value="">Move to…</option>
                     {projects.map((project) => (

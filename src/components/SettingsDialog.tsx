@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { THEMES, isHexColour } from "../lib/theme";
@@ -139,7 +139,7 @@ interface Props {
 
 const EFFORTS = ["low", "high", "max"];
 const inputCls =
-  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
+  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-hidden focus:border-neutral-700";
 
 export type SettingsSection =
   | "appearance"
@@ -336,6 +336,9 @@ function FontPicker({
           if (e.key === "Escape") {
             setDraft(null);
             setOpen(false);
+            // The suggestions are the innermost thing Escape can close; the
+            // dialog must not close with them.
+            e.stopPropagation();
           } else if (e.key === "Enter") {
             commit(draft ?? value);
           } else if (e.key === "ArrowDown" && !open) {
@@ -399,6 +402,17 @@ export function SettingsDialog({
   // Text fields commit on blur rather than on every keystroke: saving per letter
   // would rewrite the settings file dozens of times to say nothing new.
   const [accentDraft, setAccentDraft] = useState(settings.accent);
+
+  // Where focus goes when this closes, captured before anything inside takes it
+  // — so the caret comes back to the button that opened settings.
+  const restore = useRef<Element | null>(null);
+  if (restore.current === null) restore.current = document.activeElement;
+  useEffect(() => {
+    const back = restore.current;
+    return () => {
+      if (back instanceof HTMLElement && document.contains(back)) back.focus();
+    };
+  }, []);
 
   // The Tools and Browsing sections report what this machine actually has, so
   // the probe runs once when the dialog opens; Re-check asks again.
@@ -527,8 +541,20 @@ export function SettingsDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+      onKeyDown={(e) => {
+        // The font fields stop Escape themselves while their suggestions are
+        // open, so what reaches here is an Escape with nothing else to do.
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Settings"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950"
+      >
         <div className="flex shrink-0 items-center gap-3 border-b border-neutral-800 px-5 py-3">
           <h2 className="text-sm font-semibold">Settings</h2>
           <input
@@ -536,7 +562,7 @@ export function SettingsDialog({
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search settings…"
             spellCheck={false}
-            className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+            className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
           />
           <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
             <Icon name="close" size={15} />
@@ -559,7 +585,9 @@ export function SettingsDialog({
               </button>
             ))}
             {visible.length === 0 && (
-              <p className="px-3 py-2 text-[11px] text-neutral-600">Nothing matches.</p>
+              <p className="px-3 py-2 text-[11px] text-neutral-600">
+                Nothing matches. A plainer word usually finds it — clear the box for everything.
+              </p>
             )}
           </nav>
 
@@ -674,7 +702,7 @@ export function SettingsDialog({
                     }
                     placeholder="#0369a1"
                     spellCheck={false}
-                    className="w-24 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                    className="w-24 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
                   />
                 </div>
                 {accentDraft.trim() !== "" && !isHexColour(accentDraft) && (
@@ -705,7 +733,8 @@ export function SettingsDialog({
                     <select
                       value={String(form.fontSize)}
                       onChange={(e) => pickAppearance({ fontSize: Number(e.target.value) })}
-                      className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+                      aria-label="Text size"
+                      className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
                     >
                       <option value="0">Default</option>
                       {FONT_SIZES.map((size) => (
@@ -879,7 +908,8 @@ export function SettingsDialog({
                   Thinking mode by default
                 </label>
                 <select
-                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+                  aria-label="Thinking effort by default"
+                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
                   value={form.effort}
                   onChange={(e) => set("effort", e.target.value)}
                 >
@@ -1033,7 +1063,7 @@ export function SettingsDialog({
                       onBlur={() => saveTool({ sandboxImage: form.sandboxImage })}
                       placeholder="alpine:latest"
                       spellCheck={false}
-                      className="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+                      className="mt-1 w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 font-mono text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
                     />
                   </div>
                 )}

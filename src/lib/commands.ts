@@ -66,6 +66,16 @@ export function buildPalette(
 }
 
 /**
+ * A leading `>` or `@` scopes the search to one half of the list, and the halves
+ * are the ones the ids already name: anything that is not `chat:<id>` is an
+ * action, and every chat entry is one. Typing the marker on its own lists the
+ * whole scope, which is how a user finds out what is in there.
+ */
+function inScope(marker: string, item: PaletteItem): boolean {
+  return marker === ">" ? !item.id.startsWith("chat:") : item.id.startsWith("chat:");
+}
+
+/**
  * Filter and rank. Every whitespace-separated term must appear somewhere in the
  * item, so a second word narrows rather than widens. A label that *starts with*
  * the query outranks one that merely contains it, and a label match outranks one
@@ -73,11 +83,19 @@ export function buildPalette(
  * has to be stable.
  */
 export function matchPalette(items: readonly PaletteItem[], query: string): PaletteItem[] {
-  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return items.slice();
+  const trimmed = query.trim();
+  const marker = trimmed.slice(0, 1);
+  const scoped = marker === ">" || marker === "@";
+  const rest = scoped ? trimmed.slice(1) : trimmed;
+  const terms = rest.toLowerCase().split(/\s+/).filter(Boolean);
+  // A bare marker lists its whole scope; an empty query lists everything.
+  if (terms.length === 0) {
+    return scoped ? items.filter((item) => inScope(marker, item)) : items.slice();
+  }
 
   const scored: { item: PaletteItem; score: number }[] = [];
   for (const item of items) {
+    if (scoped && !inScope(marker, item)) continue;
     const label = item.label.toLowerCase();
     const haystack = `${label} ${item.hint.toLowerCase()}`;
     if (!terms.every((term) => haystack.includes(term))) continue;

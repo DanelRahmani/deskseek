@@ -4,7 +4,7 @@ import { Icon } from "./Icon";
 import type { DesignView } from "../types";
 
 const inputCls =
-  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
+  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-hidden focus:border-neutral-700";
 
 const TEMPLATE = `## Typography
 
@@ -136,7 +136,9 @@ export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
       </div>
 
       {systems.length === 0 && status === null && (
-        <p className="text-xs text-neutral-600">None yet.</p>
+        <p className="text-xs text-neutral-600">
+          None yet. Draft one from a folder, or write one in the box below.
+        </p>
       )}
       {systems.map((system) => (
         <div

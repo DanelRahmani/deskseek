@@ -4,7 +4,7 @@ import { Icon } from "./Icon";
 import type { PromptView } from "../types";
 
 const inputCls =
-  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
+  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-hidden focus:border-neutral-700";
 
 const quiet =
   "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
@@ -131,7 +131,9 @@ export function PromptsSection() {
           Saved ({prompts.length})
         </h3>
         {prompts.length === 0 && (
-          <p className="text-xs text-neutral-600">Nothing saved yet.</p>
+          <p className="text-xs text-neutral-600">
+            Nothing saved yet. Fill in the form above to keep one.
+          </p>
         )}
         {prompts.map((prompt) => (
           <div

@@ -176,7 +176,7 @@ export function Sidebar({
             onSearch(e.target.value);
           }}
           placeholder="Search…"
-          className="w-full rounded-lg border border-neutral-800/80 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-none transition duration-150 focus:border-neutral-600"
+          className="w-full rounded-lg border border-neutral-800/80 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-hidden transition duration-150 focus:border-neutral-600"
         />
       </div>
 
@@ -227,7 +227,9 @@ export function Sidebar({
           </div>
         )}
         {chats.length === 0 && (
-          <p className="px-1 py-4 text-[13px] text-neutral-500">No conversations yet.</p>
+          <p className="px-1 py-4 text-[13px] text-neutral-500">
+            No conversations yet. Ctrl+N starts one.
+          </p>
         )}
         {shown.length === 0 && hits.length === 0 && query.trim() && (
           <p className="px-1 py-4 text-[13px] text-neutral-500">
@@ -245,7 +247,7 @@ export function Sidebar({
           >
             {titleField(
               c,
-              "min-w-0 flex-1 rounded-md border border-neutral-600 bg-neutral-950 px-1.5 py-0.5 text-[13px] text-neutral-100 outline-none",
+              "min-w-0 flex-1 rounded-md border border-neutral-600 bg-neutral-950 px-1.5 py-0.5 text-[13px] text-neutral-100 outline-hidden",
             ) ?? (
               <button
                 onClick={() => onSelect(c.id)}
@@ -318,7 +320,7 @@ export function Sidebar({
                 >
                   {titleField(
                     c,
-                    "min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[13px] text-neutral-400 outline-none",
+                    "min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[13px] text-neutral-400 outline-hidden",
                   ) ?? (
                     <button
                       onClick={() => onSelect(c.id)}

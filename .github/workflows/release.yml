@@ -60,6 +60,14 @@ jobs:
 
       - run: npm ci
 
+      # The release body is this tag's CHANGELOG section, read out of the file
+      # rather than retyped at tag time. The script writes the step's output
+      # itself — a shell block would report its *last* command's exit status and
+      # let a missing section through as an empty body; this way the step fails.
+      - name: Read the release notes
+        id: notes
+        run: node scripts/release-notes.mjs "${{ inputs.tag || github.ref_name }}"
+
       - name: Build installers and draft a release
         uses: tauri-apps/tauri-action@v0
         env:
@@ -67,6 +75,6 @@ jobs:
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: "DeskSeek ${{ inputs.tag || github.ref_name }}"
-          releaseBody: "See the assets below for installers. Windows is the tested target."
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: true
           prerelease: false

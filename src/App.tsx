@@ -160,6 +160,9 @@ export default function App() {
   // The row whose title is being edited in the sidebar. Owned here because the
   // menu that starts it lives at the root, above the list.
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  // Bumped by the window chord, not read as a flag: the open chat scrolls to its
+  // newest message, and a second press has to mean something too.
+  const [jumpToLatest, setJumpToLatest] = useState(0);
   // Saved prompts, so the composer's menu and the palette can offer them without
   // a round trip each time one is opened.
   const [prompts, setPrompts] = useState<PromptView[]>([]);
@@ -838,7 +841,7 @@ export default function App() {
           }
           case "/compact": {
             if (!chatId) {
-              setError("Nothing to compact yet.");
+              setError("Nothing to compact yet — this conversation is still short.");
               return;
             }
             patch(chatId, (rt) => ({ ...rt, busy: true }));
@@ -1526,6 +1529,12 @@ export default function App() {
         case "close-tab":
           if (activeId) closeTab(activeId);
           return;
+        case "rename-chat":
+          // The editor is the sidebar's row, so this renames the open chat where
+          // that row is. A tab from the other section has no row on screen, which
+          // is the same limit the context menu's Rename already has.
+          if (activeId) setRenamingId(activeId);
+          return;
         case "toggle-files":
           setPanel((current) => (current === "files" ? "none" : "files"));
           return;
@@ -1550,6 +1559,9 @@ export default function App() {
           setShell((s) => (pane < s.panes.length ? { ...s, focus: pane } : s));
           return;
         }
+        case "jump-to-latest":
+          setJumpToLatest((n) => n + 1);
+          return;
         case "dismiss":
           // Topmost first: the sheet and the palette sit above a dialog, which
           // covers a panel.
@@ -1743,6 +1755,9 @@ export default function App() {
                     onSkipQuestion={skipQuestion}
                     prompts={prompts}
                     insert={pane === focus ? insert : null}
+                    // Only the focused pane answers the chord; zero is "never",
+                    // the same way the insert above is nulled for the other pane.
+                    jumpToLatest={pane === focus ? jumpToLatest : 0}
                   />
                 </div>
               </Fragment>

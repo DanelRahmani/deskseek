@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
 import { SkillsPanel } from "./SkillsPanel";
@@ -54,6 +54,18 @@ export function CustomiseDialog({ chatId, section, onAsk, onSaved, onClose }: Pr
   const [settings, setSettings] = useState<Settings | null>(null);
   const [status, setStatus] = useState<string | null>(null);
 
+  // Where focus goes when this closes. Captured during the first render, before
+  // anything inside has had a chance to take it, so Escape or Close hands the
+  // caret back to whatever opened the hub instead of dropping it on the body.
+  const restore = useRef<Element | null>(null);
+  if (restore.current === null) restore.current = document.activeElement;
+  useEffect(() => {
+    const back = restore.current;
+    return () => {
+      if (back instanceof HTMLElement && document.contains(back)) back.focus();
+    };
+  }, []);
+
   useEffect(() => setTab(section), [section]);
 
   useEffect(() => {
@@ -97,8 +109,20 @@ export function CustomiseDialog({ chatId, section, onAsk, onSaved, onClose }: Pr
   const fills = tab === "skills" || tab === "connectors";
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-      <div className="flex h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+      onKeyDown={(e) => {
+        // Nothing in here owns Escape — the search box has no state to lose —
+        // so it closes the hub, the way it closes every other dialog.
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Customise DeskSeek"
+        className="flex h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950"
+      >
         <div className="flex shrink-0 items-center gap-3 border-b border-neutral-800 px-5 py-3">
           <h2 className="text-sm font-semibold">Customise</h2>
           <input
@@ -106,7 +130,7 @@ export function CustomiseDialog({ chatId, section, onAsk, onSaved, onClose }: Pr
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search…"
             spellCheck={false}
-            className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none focus:border-neutral-700"
+            className="ml-auto w-52 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
           />
           <button
             onClick={onClose}
@@ -133,7 +157,9 @@ export function CustomiseDialog({ chatId, section, onAsk, onSaved, onClose }: Pr
               </button>
             ))}
             {visible.length === 0 && (
-              <p className="px-3 py-2 text-[11px] text-neutral-600">Nothing matches.</p>
+              <p className="px-3 py-2 text-[11px] text-neutral-600">
+                Nothing matches — clear the box to see every section.
+              </p>
             )}
           </nav>
 

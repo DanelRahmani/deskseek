@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { api, onFsChanged } from "../api";
+import { flatten, move } from "../lib/tree";
 import { Icon } from "./Icon";
 import type { FilePreview, TreeEntry } from "../types";
 
@@ -117,6 +118,12 @@ export function FilesPanel({ chatId, onClose }: Props) {
     };
   }, [chatId, refresh]);
 
+  const rows = useMemo(() => flatten(children, open), [children, open]);
+  // The row the keyboard is on. Clamped rather than corrected on the way in: a
+  // folder closing takes its children out from under the cursor.
+  const [cursor, setCursor] = useState(0);
+  const at = Math.min(cursor, Math.max(0, rows.length - 1));
+
   const toggle = async (dir: string) => {
     if (open.includes(dir)) {
       setOpen(open.filter((path) => path !== dir));
@@ -142,39 +149,37 @@ export function FilesPanel({ chatId, onClose }: Props) {
     }
   };
 
-  const level = (dir: string, depth: number): ReactNode =>
-    (children[dir] ?? []).map((entry) => {
-        const expanded = open.includes(entry.path);
-      return (
-        <div key={entry.path}>
-          <button
-            onClick={() => (entry.isDir ? toggle(entry.path) : select(entry.path))}
-            style={{ paddingLeft: `${depth * 12 + 6}px` }}
-            className={`flex w-full items-center gap-1.5 py-[3px] pr-2 text-left text-xs transition hover:bg-neutral-900 ${
-              file?.path === entry.path ? "text-sky-300" : "text-neutral-400"
-            }`}
-            title={entry.path}
-          >
-            <span className="grid w-3 shrink-0 place-items-center text-neutral-600">
-              {entry.isDir && (
-                <Icon
-                  name="chevron"
-                  size={11}
-                  className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
-                />
-              )}
-            </span>
-            <span className={`truncate ${entry.isDir ? "" : "text-neutral-500"}`}>
-              {entry.name}
-            </span>
-          </button>
-          {entry.isDir && expanded && level(entry.path, depth + 1)}
-        </div>
-      );
-    });
+  /**
+   * The tree's own keys. `move` owns where focus goes; what is left for this
+   * handler is the two keys it hands back on purpose — ArrowRight on a closed
+   * folder opens it, ArrowLeft on an open one shuts it.
+   *
+   * Enter and Space are deliberately *not* here: a row is a button, so the
+   * browser already turns them into the click that opens or selects it. Doing it
+   * by hand as well would fire it twice.
+   */
+  const onTreeKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const row = rows[at];
+    if (!row) return;
+    const stepped = move(rows, at, e.key);
+    if (stepped !== null) {
+      e.preventDefault();
+      setCursor(stepped);
+      return;
+    }
+    // What is left are the two keys the folders own.
+    if (!row.isDir) return;
+    if (e.key === "ArrowRight" && !row.expanded) {
+      e.preventDefault();
+      void toggle(row.path);
+    } else if (e.key === "ArrowLeft" && row.expanded) {
+      e.preventDefault();
+      void toggle(row.path);
+    }
+  };
 
   return (
-    <aside className="flex h-full w-72 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-left flex h-full w-72 shrink-0 flex-col border-r border-neutral-800 bg-neutral-950">
       <header className="flex shrink-0 flex-col gap-2 border-b border-neutral-800 px-3 py-2">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium text-neutral-300">Files</span>
@@ -185,6 +190,7 @@ export function FilesPanel({ chatId, onClose }: Props) {
             onClick={() => chatId && refresh(chatId)}
             className="ml-auto text-xs text-neutral-500 transition hover:text-neutral-200"
             title="Re-read the tree"
+            aria-label="Re-read the tree"
           >
             ⟳
           </button>
@@ -192,6 +198,7 @@ export function FilesPanel({ chatId, onClose }: Props) {
             onClick={onClose}
             className="text-sm text-neutral-500 transition hover:text-neutral-200"
             title="Hide the file tree"
+            aria-label="Hide the file tree"
           >
             <Icon name="close" size={15} />
           </button>
@@ -200,7 +207,8 @@ export function FilesPanel({ chatId, onClose }: Props) {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           placeholder="Find a file by name…"
-          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-none focus:border-neutral-700"
+          aria-label="Find a file by name"
+          className="w-full rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
           title="Searches every folder under this one by file name. The same noise folders are skipped, so it never hangs. To search inside files, ask the model to grep."
         />
       </header>
@@ -208,7 +216,7 @@ export function FilesPanel({ chatId, onClose }: Props) {
       <div className="min-h-0 flex-1 overflow-auto py-1">
         {hits ? (
           hits.length === 0 ? (
-            <p className="px-3 py-2 text-[11px] text-neutral-600">
+            <p role="status" className="px-3 py-2 text-[11px] text-neutral-600">
               {searching
                 ? "Searching…"
                 : `No file name contains “${filter.trim()}”. To search inside files, ask the model to grep.`}
@@ -233,10 +241,43 @@ export function FilesPanel({ chatId, onClose }: Props) {
             ))
           )
         ) : chatId ? (
-          (children[""] ?? []).length > 0 ? (
-            level("", 0)
+          rows.length > 0 ? (
+            <div role="tree" aria-label="Project files" onKeyDown={onTreeKey}>
+              {rows.map((row, index) => (
+                <button
+                  key={row.path}
+                  role="treeitem"
+                  aria-level={row.level}
+                  aria-expanded={row.isDir ? row.expanded : undefined}
+                  aria-selected={row.isDir ? undefined : file?.path === row.path}
+                  tabIndex={index === at ? 0 : -1}
+                  onFocus={() => setCursor(index)}
+                  onClick={() => (row.isDir ? toggle(row.path) : select(row.path))}
+                  style={{ paddingLeft: `${(row.level - 1) * 12 + 6}px` }}
+                  className={`flex w-full items-center gap-1.5 py-[3px] pr-2 text-left text-xs transition hover:bg-neutral-900 ${
+                    file?.path === row.path ? "text-sky-300" : "text-neutral-400"
+                  }`}
+                  title={row.path}
+                >
+                  <span className="grid w-3 shrink-0 place-items-center text-neutral-600">
+                    {row.isDir && (
+                      <Icon
+                        name="chevron"
+                        size={11}
+                        className={`transition-transform duration-150 ${row.expanded ? "rotate-90" : ""}`}
+                      />
+                    )}
+                  </span>
+                  <span className={`truncate ${row.isDir ? "" : "text-neutral-500"}`}>
+                    {row.name}
+                  </span>
+                </button>
+              ))}
+            </div>
           ) : (
-            <p className="px-3 py-2 text-[11px] text-neutral-600">This folder is empty.</p>
+            <p className="px-3 py-2 text-[11px] text-neutral-600">
+              This folder is empty. Ask for a file and it lands here.
+            </p>
           )
         ) : (
           <p className="px-3 py-2 text-[11px] text-neutral-600">Open a chat first.</p>

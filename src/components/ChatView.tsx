@@ -85,6 +85,8 @@ interface Props {
    * same prompt twice lands twice. The palette is the caller.
    */
   insert: { text: string; seq: number } | null;
+  /** Bumped by the window chord; each new value scrolls to the newest message. */
+  jumpToLatest: number;
 }
 
 const EFFORTS = ["low", "high", "max"];
@@ -201,6 +203,7 @@ export function ChatView({
   onSkipQuestion,
   prompts,
   insert,
+  jumpToLatest,
 }: Props) {
   // Seeded from sessionStorage, not "", so a render throw — which unmounts this
   // whole tree — does not take a half-typed message with it. See lib/draft.ts.
@@ -304,6 +307,14 @@ export function ChatView({
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [messages, stream?.content, stream?.reasoning, tools.length, approvals.length]);
 
+  // Ctrl+G. Separate from the effect above on purpose: that one follows the
+  // transcript, this one follows the counter, so it can pull the user back down
+  // without waiting for something new to arrive.
+  useEffect(() => {
+    if (!jumpToLatest) return;
+    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [jumpToLatest]);
+
   const submit = () => {
     const text = draft.trim();
     if ((!text && attachments.length === 0) || busy) return;
@@ -393,6 +404,7 @@ export function ChatView({
         {chat && chat.kind !== "coding" && (
           <button
             onClick={onRevealFolder}
+            aria-label="Show this chat's folder"
             className="rounded-md px-2 py-1 text-xs text-neutral-500 transition duration-150 hover:bg-neutral-800 hover:text-neutral-300"
             title="This chat keeps its own files in a folder — click to show it"
           >
@@ -436,6 +448,7 @@ export function ChatView({
 
           <button
             onClick={onContext}
+            aria-label={`Context: about ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used. Show the breakdown.`}
             className="flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:bg-neutral-800"
             title={`Approximately ${contextTokens.toLocaleString()} of ${contextMax.toLocaleString()} tokens used (characters ÷ 3.6). Click for the breakdown.`}
           >
@@ -461,7 +474,8 @@ export function ChatView({
               <select
                 value={chat.model}
                 onChange={(e) => onModelChange(e.target.value, chat.thinking, chat.effort)}
-                className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+                aria-label="Model"
+                className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
               >
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
@@ -484,7 +498,8 @@ export function ChatView({
                 <select
                   value={chat.effort}
                   onChange={(e) => onModelChange(chat.model, chat.thinking, e.target.value)}
-                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+                  aria-label="Thinking effort"
+                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
                 >
                   {EFFORTS.map((e) => (
                     <option key={e} value={e}>
@@ -512,7 +527,17 @@ export function ChatView({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4">
+      {/* A `log` is a live region whose additions are announced, which is what a
+          transcript is. `aria-busy` is the part that makes it usable: streaming
+          rewrites this subtree every frame, and a screen reader that read each
+          frame would be unusable. Busy holds the announcements back until the
+          turn settles, then says the answer once. */}
+      <div
+        role="log"
+        aria-label="Conversation"
+        aria-busy={busy}
+        className="min-h-0 flex-1 overflow-y-auto px-4"
+      >
         <div className="mx-auto flex max-w-3xl flex-col gap-6 py-6">
           {messages.length === 0 && !stream && (
             <div className="mt-24 text-center">
@@ -689,6 +714,8 @@ export function ChatView({
                   <span className="max-w-40 truncate">{file.name}</span>
                   <button
                     onClick={() => onRemoveAttachment(index)}
+                    aria-label={`Remove ${file.name}`}
+                    title={`Remove ${file.name}`}
                     className="text-neutral-500 hover:text-red-400"
                   >
                     ×
@@ -800,6 +827,7 @@ export function ChatView({
             />
             <button
               onClick={() => fileRef.current?.click()}
+              aria-label="Attach files or images"
               className="rounded-lg px-2 py-1.5 text-neutral-500 transition duration-150 hover:bg-neutral-800 hover:text-neutral-200"
               title="Attach files or images"
             >
@@ -813,7 +841,8 @@ export function ChatView({
               onPaste={onPaste}
               rows={1}
               placeholder="Send a message, or type / for commands…"
-              className="max-h-[200px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-neutral-100 outline-none"
+              aria-label="Message"
+              className="max-h-[200px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-neutral-100 outline-hidden"
             />
             <button
               onClick={submit}
@@ -884,7 +913,7 @@ const Bubble = memo(function Bubble({
               if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) onEdit(draft);
             }}
             rows={3}
-            className="w-[85%] resize-y rounded-2xl rounded-br-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap text-neutral-100 outline-none"
+            className="w-[85%] resize-y rounded-2xl rounded-br-lg border border-neutral-700 bg-neutral-800 px-4 py-2.5 text-sm whitespace-pre-wrap text-neutral-100 outline-hidden focus:border-neutral-500"
           />
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-neutral-600">Ctrl+Enter to resend</span>

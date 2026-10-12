@@ -28,7 +28,9 @@ export function TabStrip({
     <div className="flex h-10 shrink-0 items-center gap-1 border-b border-neutral-800/80 bg-neutral-950 px-2">
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
         {tabs.length === 0 && (
-          <span className="px-2 text-[13px] text-neutral-600">No open chats</span>
+          <span className="px-2 text-[13px] text-neutral-600">
+            No open chats — Ctrl+N starts one
+          </span>
         )}
         {tabs.map((chat) => {
           const pane = panes.indexOf(chat.id);

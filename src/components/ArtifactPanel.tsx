@@ -38,7 +38,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      setError("Couldn't reach the clipboard.");
+      setError("Couldn't reach the clipboard — select the text and copy it yourself.");
     }
   }
 
@@ -89,7 +89,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
   }
 
   return (
-    <aside className="flex h-full w-[480px] shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-[480px] shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex shrink-0 items-center gap-2 border-b border-neutral-800 px-3 py-2">
         <span className="truncate text-xs font-medium text-neutral-200" title={artifact.title}>
           {artifact.title}
@@ -182,7 +182,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           spellCheck={false}
-          className="min-h-0 flex-1 resize-none bg-neutral-950 p-3 font-mono text-xs leading-relaxed text-neutral-200 outline-none"
+          className="min-h-0 flex-1 resize-none bg-neutral-950 p-3 font-mono text-xs leading-relaxed text-neutral-200 outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-neutral-700"
         />
       ) : (
         <div className="min-h-0 flex-1 overflow-hidden">

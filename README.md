@@ -410,6 +410,7 @@ reaches the state change its button already makes:
 | --- | --- |
 | `Ctrl+N` | New conversation |
 | `Ctrl+W` | Close the focused tab |
+| `F2` | Rename the open conversation, in the sidebar |
 | `Ctrl+B` | Show or hide the file tree |
 | `Ctrl+M` | Memory settings |
 | `Ctrl+K` | Command palette |
@@ -417,12 +418,14 @@ reaches the state change its button already makes:
 | `Ctrl+,` | Settings |
 | `Ctrl+\` | Split into two panes, or back to one |
 | `Ctrl+1` / `Ctrl+2` | Move focus to the left / right pane |
+| `Ctrl+G` | Jump to the newest message |
 | `Escape` | Close the open panel or dialog |
 
 `Cmd` works in place of `Ctrl` on macOS. `Escape` belongs to whatever field has
 focus: in the composer it dismisses the slash-command menu and leaves the panel
-alone. The map is a pure function (`src/lib/shortcuts.ts`) with its own checks, so
-a chord can never fire for the wrong key.
+alone, and `F2` is the same — a bare key, so it acts when no field has focus. The
+map is a pure function (`src/lib/shortcuts.ts`) with its own checks, so a chord
+can never fire for the wrong key.
 
 **Internet access** (both sections)
 
@@ -784,13 +787,38 @@ arguments the model wrote and must therefore survive every malformed shape it ca
 artifact and document readers; the chart contract in `src/lib/chart.ts`, so a bar's height cannot
 silently stop matching its value, a pie's slice cannot stop matching its share, and a label cannot
 become markup; and the shortcut map in `src/lib/shortcuts.ts`, so a chord cannot
-silently fire for the wrong key or stop firing for the right one.
+silently fire for the wrong key or stop firing for the right one. Two more rules
+are the checks' own: the palette's scopes and ranking in `src/lib/commands.ts`,
+and the animation inventory in `src/lib/motion.check.ts` — nothing may move
+without naming the state it explains, and the reduced-motion rules have to keep
+neutralising the movement while holding the streaming caret visible.
+
+The last two are the accessibility pair. `src/lib/tree.check.ts` drives the pure
+module the file tree's keys go through — what is on screen, and where each arrow
+moves you, including the two keys the tree hands back to the panel so it can open
+and close folders. `src/lib/a11y.check.ts` reads the components for the structure
+a screen reader depends on: a full-screen overlay has to be a named dialog, the
+tree and the transcript have to say what they are, `outline-none` is banned in
+favour of `outline-hidden` (the Tailwind v4 spelling that survives Windows High
+Contrast Mode), and a button made of one icon has to have a name.
+
+One check is not about the code at all. `src/lib/changelog.check.ts` holds
+[`CHANGELOG.md`](CHANGELOG.md) to the shape the release workflow reads it by —
+newest first, one dated section per version, exactly one section marked unreleased
+at the top — and pins the reader that turns a tag into release notes, because a
+release that quietly ships with no notes is the failure that replaced retyping them
+at tag time.
 
 Before a release, `npm run tauri build` produces the installers (Windows NSIS + MSI, macOS
 `.app`/`.dmg`, Linux `.deb`/`.rpm`/AppImage). The behaviour that cannot be tested automatically
 is written down as a tick-list in [`docs/E2E-CHECKLIST.md`](docs/E2E-CHECKLIST.md) — run it once
-against the built app before publishing. Pushing a `v*` tag runs the same build in CI and drafts
-the release, so the tag is the publish button.
+against the built app before publishing.
+
+Every push to `main` runs the gate in CI — `typecheck`, `check`, `build` and `cargo test`, on the
+Node this project is developed on. A tag is the publish button: pushing a `v*` tag runs the same
+build and drafts the release, taking the release body from that version's section of
+[`CHANGELOG.md`](CHANGELOG.md), so the notes are written once, in the file, rather than retyped at
+tag time.
 
 **Windows: `cargo test` dies with `0xc0000139`?** That is a loader error, not a test failure: the
 test harness links `TaskDialogIndirect`, which only `comctl32` **v6** exports, but a test binary
@@ -799,6 +827,9 @@ gets no application manifest, so the loader binds the v5 DLL and kills the proce
 which is why only the tests are affected.
 
 ## Architecture
+
+A fuller map — the layers, where the events flow, and which file owns each rule — is in
+[`ARCHITECTURE.md`](ARCHITECTURE.md). This is the short version:
 
 ```
 src/                     React UI (App, Sidebar, ChatView, SettingsDialog, Markdown)

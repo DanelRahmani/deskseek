@@ -9,11 +9,12 @@
  * against what resolveTheme computes, because those are the same thirty values
  * written down twice, and that kind of pair drifts in silence.
  */
-// The only check script that touches the filesystem, and the app's tsconfig
-// carries no Node types — every other check is pure for exactly this reason.
-// Adding @types/node for one readFileSync would swap a two-line exception for a
-// devDependency, so the import is tolerated rather than typed. Keep everything
-// else in this file pure: it is the half the typechecker still verifies.
+// One of the two check scripts that touch the filesystem (`motion.check.ts` reads
+// the stylesheet and the class names for the same kind of reason), and the app's
+// tsconfig carries no Node types. Adding @types/node for one readFileSync would
+// swap a two-line exception for a devDependency, so the import is tolerated
+// rather than typed. Keep everything else in this file pure: it is the half the
+// typechecker still verifies.
 // @ts-ignore
 import { readFileSync } from "node:fs";
 import {

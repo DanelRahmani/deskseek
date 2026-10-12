@@ -3,7 +3,7 @@ import type { Instruction } from "../types";
 
 const SCOPES = ["chat", "coding", "both"];
 const inputCls =
-  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
+  "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-hidden focus:border-neutral-700";
 
 /**
  * Scoped instruction blocks.
@@ -52,12 +52,12 @@ export function InstructionsSection({
         >
           <div className="flex items-center gap-2">
             <input
-              className="flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none"
+              className="flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
               value={instruction.name}
               onChange={(e) => patch(instruction.id, { name: e.target.value })}
             />
             <select
-              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
+              className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
               value={instruction.scope}
               onChange={(e) => patch(instruction.id, { scope: e.target.value })}
             >

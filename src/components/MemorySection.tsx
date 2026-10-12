@@ -24,7 +24,7 @@ interface Props {
 const BTN =
   "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 const INPUT =
-  "rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-none focus:border-neutral-700";
+  "rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-hidden focus:border-neutral-700";
 const LINK = "text-[11px] text-sky-400 hover:text-sky-300 disabled:opacity-50";
 
 export function MemorySection({ chatId, onChanged }: Props) {
@@ -192,7 +192,10 @@ export function MemorySection({ chatId, onChanged }: Props) {
           grow without costing anything on the turns where none of it is relevant.
         </p>
         {filed.length === 0 ? (
-          <p className="text-xs text-neutral-600">Nothing filed yet.</p>
+          <p className="text-xs text-neutral-600">
+            Nothing filed yet. The assistant files a note here when it learns something worth
+            keeping, or when you ask it to remember one.
+          </p>
         ) : (
           <div className="space-y-3">
             {filed.map((c) => (
@@ -289,7 +292,7 @@ export function MemorySection({ chatId, onChanged }: Props) {
           value={body}
           onChange={(e) => setBody(e.target.value)}
           spellCheck={false}
-          className="h-52 w-full resize-y rounded-lg border border-neutral-800 bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300 outline-none focus:border-neutral-700"
+          className="h-52 w-full resize-y rounded-lg border border-neutral-800 bg-neutral-900 p-2 font-mono text-[11px] text-neutral-300 outline-hidden focus:border-neutral-700"
         />
         <p className="mt-1 break-all text-[10px] text-neutral-600">{path}</p>
         {profileHeavy && (

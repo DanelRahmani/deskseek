@@ -2,8 +2,11 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
-Phase 3 (3.1–3.6). **Phase 4 is done** (4.1–4.4). Phases 5–6 have not been
-started.
+Phase 3 (3.1–3.6). **Phase 4 is done** (4.1–4.4). **Phases 5 and 6 are done and
+on the working tree together** (5.1–5.4, 6.1–6.4), uncommitted: 5.2's file tree
+keys landed with 5.3, because the tree's roles and its keys are one edit to the
+same recursion. The next release is **0.4.0**, and `CHANGELOG.md`'s top section is
+what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -138,7 +141,8 @@ defects the owner reported. All of it is on the working tree, gated, uncommitted
 - The unreleased 0.4.0 features (document extraction, per-chat folders) **are**
   described in the README where a reader would look for them. There is no
   version-history section in the README to add to; inventing one here would
-  duplicate 6.1, which is the honest home for release notes.
+  duplicate 6.1, which is the honest home for release notes. *6.1 has since built
+  that home: `CHANGELOG.md`, with 0.4.0's section already at the top.*
 
 ### Found and fixed while gating Phase 1
 - `tools::desktop::tests::actions_are_spaced_so_a_loop_cannot_run_away` was flaky
@@ -824,67 +828,250 @@ Ordered by how often the author would actually reach for it.
 
 ## Phase 5 — Polish and craft
 
-### 5.1 [M] Motion pass
+### 5.1 [M] Motion pass ✅ done
 - **Why**: the app is careful about state and plain about motion; a few
   transitions would carry information (panel enter/exit, step group open, streaming
   caret).
-- **Do**: purposeful motion only, respecting `prefers-reduced-motion` — the caret
-  rule already shows the trap: a blanket `animation: none` parked it on the
-  invisible half of its blink.
-- **Stop**: every animation either explains a state change or is removed.
+- **Now**: the audit found nothing decorative to take out — the caret was the only
+  real animation, and every pulse and chevron already names a state. Two
+  *enter-only* transitions were added where something appears out of nothing:
+  `.panel-in-left` / `.panel-in-right` on the seven panels that mount and unmount
+  (the direction says which edge it came from) and `.reveal` on a step group's
+  contents. Enter-only because React unmounts both outright, so there is no exit to
+  animate and holding one on screen would need a second copy of the state. Hover
+  and chevron transitions were left exactly as they were.
+- **Test**: `motion.check.ts`, the **12th** check script, makes the Stop
+  mechanical: every distinct animation in the app must be named in `PURPOSEFUL`
+  beside the state it explains. It fails on an unjustified animation, on an
+  undeclared Tailwind `animate-*`, on an arbitrary `animate-[…]`, on a
+  `@keyframes` nothing plays, and on an `animation:` that points at no keyframe. It
+  also owns the reduced-motion contract from both ends: the blanket rule must still
+  neutralise animation *and* transition durations for the OS preference **and** the
+  in-app setting, and the caret must keep its exception in both. Proved by
+  falsification — adding `animate-spin` to a scratch component fails the check, and
+  removing it passes.
+- **Stop**: every animation either explains a state change or is removed. ✅
+- **Found while writing the check, in the check itself**: its first two drafts
+  searched a rule's *body* for `.caret {`, which a body never contains — so the
+  caret exception looked missing for the in-app setting, written as two sibling
+  rules rather than one nested block. `rulesFor` now returns the selector with the
+  body, and the comment says why. A check that cannot fail is worth nothing, and
+  this one earned its place by failing on itself twice.
 
-### 5.2 [M] Keyboard completeness
+### 5.2 [M] Keyboard completeness ✅ done
 - **Why**: the shortcut map is pure and tested, so gaps are cheap to close:
   rename (F2 — the menu item 1.5 added), jump-to-message, tree navigation, palette
   scopes.
-- **Do**: extend `shortcuts.ts` + `shortcuts.check.ts`; every new chord reaches a
-  state change a button already makes.
-- **Stop**: the shortcut sheet lists only chords that work, and all of them do.
+- **Now**: `F2` opens the sidebar's rename editor on the open chat — the same
+  state change the context menu's *Rename* makes. Like `?` and `Escape` it is a
+  bare key, so it does not fire while a field has focus, which is also what keeps
+  it out of the rename box it opens. `Ctrl+G` jumps to the newest
+  message, through a counter prop on `ChatView` so the focused pane scrolls without
+  waiting for the next delta; `Ctrl+G` rather than `Ctrl+End`/`Ctrl+Down` because a
+  modifier chord fires while the composer has focus and those two move its caret.
+  The palette gained **scopes**: a leading `>` is the actions, `@` the
+  conversations, either marker alone lists its whole scope, and any other marker
+  stays part of the query.
+- **Landed with 5.3**: the file tree's arrow keys. The tree's roles and its keys
+  are one edit to the same recursion in `FilesPanel.tsx`, so doing them as two
+  passes would have meant rewriting it twice.
+- **Test**: `shortcuts.check.ts` pins both new chords, that `F2` while typing is
+  the field's, that `Ctrl+Shift+G` is not ours, and that the advertised table
+  covers every action — so the sheet cannot list a chord that does not fire.
+  `commands.check.ts` pins the scopes, including that a bare marker lists the whole
+  half and that an unknown marker is text.
+- **Stop**: the shortcut sheet lists only chords that work, and all of them do. ✅
 
-### 5.3 [M] Accessibility sweep
+### 5.3 [M] Accessibility sweep ✅ done
 - **Why**: the palette is a real combobox and there is focus styling, but the
   tree, the transcript and the panels have not been through a pass.
-- **Do**: roles and labels for the tree and transcript, focus order, contrast
-  against the existing 168-pair `theme.check`, and a screen-reader sanity pass.
-  Treat the token ramp as the source of truth.
+- **Now**: four places where the app said nothing to a screen reader or nothing
+  visible to a keyboard.
+  - **The dialogs.** Customise, Settings, Setup and MCP opened as bare divs. Each
+    is now a named `role="dialog"` with `aria-modal="true"`, and the two big ones
+    gained the Escape-and-restore-focus pair the shortcut sheet and the palette
+    already had. `McpPanel` picks its role from how it is drawn — `region` inside
+    the customise hub, `dialog` over the app — because claiming a role it does
+    not have is worse than having none.
+  - **The file tree.** `src/lib/tree.ts` is new and pure: `flatten` is the rows
+    the tree draws, `move` is where each arrow key goes. It returns `null` for the
+    four moves it hands back on purpose — ArrowRight on a closed folder (the panel
+    opens it), ArrowLeft on an open one (the panel closes it), ArrowLeft on a
+    top-level row, ArrowRight on a file — and that `null` is the difference
+    between a folder that moves and one that does nothing. Left closing *before*
+    it steps out is the standard tree pattern and the only way to shut a folder
+    two levels down: step out first and there is nothing left to press. The panel
+    renders that flat list with `role="tree"`/`treeitem`, `aria-level`,
+    `aria-expanded`, `aria-selected` and a roving tabindex, so the shape the mouse
+    sees and the shape the keyboard walks cannot drift apart. Enter and Space are
+    left to the browser: a row is a button, so it is already the click. 5.2's tree
+    keys landed here.
+  - **The transcript.** A `role="log"` named "Conversation" with
+    `aria-busy={busy}`. Busy is the part that matters: a streaming answer
+    rewrites the subtree every frame, so the announcements are held back until the
+    turn settles and the answer is then read once.
+  - **Focus that survives High Contrast Mode.** Every `outline-none` in the app is
+    now `outline-hidden`. Both remove the ring, but only the v4 spelling puts it
+    back as a system-coloured outline for someone who has asked the OS for high
+    contrast — until this pass, every control vanished when focused there. Tab-
+    reachable controls that had no focus style of their own got one.
+- **Test**: two new check scripts, the 13th and 14th. `src/lib/tree.check.ts`
+  drives `flatten` and `move` on a fixture tree — including that collapsing a
+  folder hides its subtree, and that the four hand-back cases return `null`
+  rather than a number. `src/lib/a11y.check.ts` reads the components: an overlay
+  that is not inert must be a named dialog, a `role="dialog"`/`tree`/`log` must
+  have a name, the log must set `aria-busy`, `outline-none` may not appear at
+  all, and no button whose whole content is one glyph may go unnamed. Both proved
+  by falsification — the tree check failed on its own author's wrong arithmetic
+  first, and a scratch probe file failed the accessibility check on four counts
+  before it was removed.
 - **Stop**: the whole app is usable without a mouse, and the contrast check still
-  passes.
+  passes. ✅ (`theme.check.ts` still measures its 168 pairs.)
+- **Found while gating**: the first draft of the icon-button rule demanded
+  `aria-label` and flagged 22 buttons that name themselves with `title` — which
+  *is* a real accessible-name source, so the rule was wrong, not the buttons. It
+  now looks for the button with no name at all, and that found one: the composer's
+  remove-attachment `×`.
+- **Known gap, written down rather than pretended away**: nothing traps Tab in
+  the big dialogs, so a keyboard user can still Tab past one whose
+  `aria-modal="true"` claims otherwise. The upgrade is `inert` on the app's own
+  content while a dialog is open — the platform feature, which React 19 and the
+  webviews this ships in both support — and it needs the content in one wrapper
+  element first, which is a layout change rather than an attribute.
+  `a11y.check.ts` says so in its own header.
 
-### 5.4 [S] Empty states and error copy
+### 5.4 [S] Empty states and error copy ✅ done
 - **Why**: the app's voice is good where it exists; the gaps are the states nobody
   looks at (no results, no projects, failed tool, no API key).
-- **Stop**: every empty surface says what to do next.
+- **Now**: thirteen surfaces that said what was missing and stopped there now say
+  what to do about it, and each names the control that is really on screen rather
+  than a generic "get started" —
+  - the panels that own an add form point at it: *New project*, *+ Chat*, the
+    prompt form, *New task*, *Draft from a folder*;
+  - the four search boxes name the query or teach the syntax — the palette points
+    at the `>` and `@` scopes 5.2 added — instead of a bare "Nothing matches.";
+  - the two surfaces the assistant fills say so: memory is filed when it learns
+    something or is asked to remember one, and artifacts land in the gallery;
+  - the keyboard-only entries name the chord: *No conversations yet. Ctrl+N starts
+    one*, and the tab strip out of the same mouth;
+  - two errors gained a way out — the clipboard failure suggests selecting the
+    text by hand, and a failed MCP server points at the Logs tab holding the
+    stderr it printed.
+- **Checked and left alone**: the "no API key" case *is* the first-run setup
+  panel, which already labels the step and carries the fix, and a failed tool call
+  draws its own error and opens itself — neither is an empty surface.
+- **Test**: none, deliberately. This is copy, not logic: there is no invariant to
+  assert that a reader's judgement call needs, and the rule it follows — the empty
+  state names the next action — is the one this ✓ stands for.
+- **Stop**: every empty surface says what to do next. ✅
 
 ---
 
 ## Phase 6 — Release and docs housekeeping
 
-### 6.1 [S] CHANGELOG.md
+### 6.1 [S] CHANGELOG.md ✅
 - **Why**: the release notes are reconstructed by hand from `git log` each time,
   and 1.7 found there is nowhere in the README for them.
-- **Do**: one file, newest first, one line per user-visible change; the release
-  step copies it.
-- **Stop**: cutting a release reads from the file, not from memory.
+- **Now**: `CHANGELOG.md` — newest first, one line per user-visible change, and
+  *all four* sections written: the three shipped versions backfilled out of the
+  log (folding the commits that were one change, dropping the ones that were CI or
+  housekeeping) and 0.4.0 at the top. The heading is `## <version> — <date>`, with
+  the top one `## 0.4.0 — unreleased` so the tag finds it before anyone edits a
+  date. `scripts/release-notes.mjs` prints that section for a tag, **exits non-zero**
+  when the file has not got one, and writes the step's output itself when the
+  runner sets `GITHUB_OUTPUT` — so `release.yml` is one plain `node …` step whose
+  failure is the step's failure, and `releaseBody` is that output. A missing
+  section stops the release instead of publishing an empty body (see *Found while
+  gating*). The parsing is
+  `src/lib/changelog.ts`, pure, because a reader that returned the *next* version's
+  notes would be pasted into the release body and nobody proof-reads that.
+- **Test**: `src/lib/changelog.check.ts`, the 15th check — the reader over a
+  fixture (a v-tag, a bare version, a body that must stop at the next heading, the
+  last section, a version that is not there, an empty section), then the real file
+  held to its shape (newest first, exactly one unreleased and it is first, dated
+  headings, no empty section, no indented heading the reader would miss). Falsified
+  twice: renumbering 0.1.0 to 0.5.0 failed the ordering rule on exactly that pair,
+  and a PowerShell `Set-Content` round-trip — which writes the em dash as mojibake,
+  because PS 5.1 is not UTF-8 by default — failed on all four headings instead of
+  letting a mangled changelog reach a release.
+- **Stop**: cutting a release reads from the file, not from memory. ✅
 
-### 6.2 [S] CI on push, not only on tag
+### 6.2 [S] CI on push, not only on tag ✅
 - **Why**: the gate currently runs when a release is tagged; a broken push is
   found late.
-- **Do**: the same gate (`typecheck`, `check`, `build`, `cargo test`) on push to
-  `main`, with the existing Node floor. No matrix here — the release workflow
-  already builds three OSes.
-- **Stop**: a red push is known within minutes.
+- **Now**: the Why was already answered before this item was written — `ci.yml`
+  has run on push to `main` (and on pull requests) since the first commit. What it
+  did **not** run was `npm run check`: it built, typechecked and ran `cargo test`,
+  so fourteen of the fifteen house checks were not in CI at all. One line added to
+  that step is the whole change.
+- **Kept deliberately**: the three-OS matrix. This item's *Do* said "no matrix
+  here — the release workflow already builds three OSes", but that workflow only
+  runs **on a tag**, so it is the opposite of what this item is for: it is the
+  only thing that finds a macOS or Linux break at push time. The release workflow
+  duplicates the build, not this job's reason to exist, so the matrix stays.
+- **Test**: none reachable from here. A workflow file is read by GitHub, not by
+  `npm run check`, and the gate it runs is the one the README documents.
+- **Stop**: a red push is known within minutes. ✅
 
-### 6.3 [S] ARCHITECTURE.md
+### 6.3 [S] ARCHITECTURE.md ✅
 - **Why**: the repo's real knowledge lives in files like `design.rs` module docs
   and the `db.rs` comments; there is no single map.
-- **Do**: a short orientation doc — the layers, the one-owner rules, where the
-  events flow. Link, do not duplicate.
-- **Stop**: a new session can orient without grepping.
+- **Now**: `ARCHITECTURE.md` — the four layers with the flow between them; the
+  event table (`chat-delta` … `scheduled-fired`, and which module emits each); the
+  two parked events explained as one shape used twice; and the one-owner tables,
+  sixteen Rust rules and nine frontend ones, each naming the single file that owns
+  it. It links to the README for the directory tree and to this file for the why,
+  rather than repeating either — the README's own Architecture section is now four
+  lines and a link.
+- **Test**: none, deliberately — it is a map, not logic. The nearest thing to a
+  check would be "every path it names exists", and that is a list, not a rule; the
+  file is short enough to read in a minute, which is the point of it.
+- **Stop**: a new session can orient without grepping. ✅
 
-### 6.4 [S] Refresh the E2E checklist to match the app
+### 6.4 [S] Refresh the E2E checklist to match the app ✅
 - Beyond what 1.6 added (attachment filing, design systems from a conversation,
   rename, the job object, parked scheduled runs): a smoking-out step for the new
   panels.
+- **Now**: a **Smoke-out** section, placed before the long ones — every sidebar
+  panel, every dialog, Escape closing each, an empty panel that has to name the
+  next action, and the console left clear. The point is a broken build found in a
+  minute instead of by reading 340 lines of tick-boxes. The Setup list now names
+  all fifteen scripts and the release-notes step, and the Accessibility section
+  gained the one part of 5.1 only a window can confirm: with *Reduce motion* on,
+  the panels must still open with nothing sliding, and the streaming caret must
+  still be visible.
+- **Still true, and said in the file**: the checklist has not been walked end to
+  end since Phase 1. It is written and armed, not run.
+- **Stop**: the checklist matches the app. ✅
+
+---
+
+### Found while gating Phase 6
+- **A shell block swallows the exit status of the command inside it.** The first
+  version of the release step read the notes with a bash heredoc, which is the
+  pattern every example uses:
+  `{ echo "body<<__X__"; node scripts/release-notes.mjs "$TAG"; echo "__X__"; } >> "$GITHUB_OUTPUT"`.
+  A `{ …; }` group reports the status of its **last** command, so node failing on a
+  missing section was swallowed by the trailing `echo`: the step would have gone
+  green and the release body would have been empty — the exact failure 6.1 exists to
+  prevent, reintroduced by the plumbing around it. The script now writes
+  `GITHUB_OUTPUT` itself and the step is a plain `node …`. The part that looked
+  most like boilerplate was the part carrying the guarantee.
+- **`readFileSync` is `any` without Node types, and that is infectious.** With the
+  `@ts-ignore`'d import (there is no `@types/node`, on purpose), a `.check.ts` that
+  reads a file gets `any` back, so every `.map((line) => …)` over it is an *implicit
+  any* and fails `tsc` — while every existing check had avoided this by iterating
+  with `for … of`. Annotating the const (`const file: string = readFileSync(…)`) is
+  the one-line fix, and the house way to fail a check is `throw new Error(…)`, not
+  `process.exit`, which has no type either.
+- **Not fixed, because 6.2 was told to keep the floor: the Node floor disagrees
+  with itself.** The README's *Requirements* says "Node.js 20+", `package.json`'s
+  `engines` says `>=22.12`, and CI pins 24. They cannot all be right: `npm run
+  check` runs `.ts` files directly, so the floor is wherever Node strips types
+  without a flag (Node's own docs date the feature to v22.6.0). The README's "20+"
+  is the one that is certainly wrong. Left as a note rather than a guess — whoever
+  bumps it should verify the minimum on that version rather than on this machine's
+  24.
 
 ---
 

@@ -203,7 +203,7 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
             placeholder={
               "---\nname: Concise\ndescription: Answer in as few words as possible.\n---\nBe terse. Skip pleasantries."
             }
-            className="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-2 font-mono text-[11px] leading-relaxed text-neutral-300 outline-none transition duration-150 focus:border-neutral-700"
+            className="w-full resize-y rounded-lg border border-neutral-800 bg-neutral-950 p-2 font-mono text-[11px] leading-relaxed text-neutral-300 outline-hidden transition duration-150 focus:border-neutral-700"
           />
           <div className="flex items-center gap-2">
             <span className="text-[11px] text-neutral-600">
@@ -244,7 +244,10 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
         </div>
         {dir && <p className="break-all font-mono text-[10px] text-neutral-600">{dir}</p>}
         {skills.length === 0 && status === null && (
-          <p className="text-xs text-neutral-600">No skills found.</p>
+          <p className="text-xs text-neutral-600">
+            No skills found. Restore the examples above, or ask the assistant to save one from a
+            conversation.
+          </p>
         )}
         {skills.map((skill) => (
           <div

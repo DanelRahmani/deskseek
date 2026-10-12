@@ -33,6 +33,11 @@ assert(resolveShortcut(press("k", { ctrlKey: true })) === "command-palette", "Ct
 assert(resolveShortcut(press("\\", { ctrlKey: true })) === "toggle-split", "Ctrl+\\ toggles the split");
 assert(resolveShortcut(press("1", { ctrlKey: true })) === "focus-pane-0", "Ctrl+1 focuses pane 0");
 assert(resolveShortcut(press("2", { ctrlKey: true })) === "focus-pane-1", "Ctrl+2 focuses pane 1");
+assert(resolveShortcut(press("F2")) === "rename-chat", "F2 renames the open chat");
+assert(
+  resolveShortcut(press("g", { ctrlKey: true })) === "jump-to-latest",
+  "Ctrl+G jumps to the newest message",
+);
 
 // Cmd is Ctrl on the other side of the world.
 assert(resolveShortcut(press("n", { metaKey: true })) === "new-chat", "Cmd+N is the same chord");
@@ -54,6 +59,10 @@ assert(resolveShortcut(press("?"), true) === null, "? while typing stays a quest
 assert(resolveShortcut(press("Escape"), true) === null, "Escape while typing is the field's");
 assert(resolveShortcut(press("n", { ctrlKey: true }), true) === "new-chat", "a chord still works while typing");
 
+// F2 belongs to a field that has focus — including the rename box it opens.
+assert(resolveShortcut(press("F2"), true) === null, "F2 while typing is the field's");
+assert(resolveShortcut(press("g", { ctrlKey: true, shiftKey: true })) === null, "Ctrl+Shift+G is not ours");
+
 // AltGr (Ctrl+Alt, reported by some layouts) is never one of our chords.
 assert(resolveShortcut(press("n", { ctrlKey: true, altKey: true })) === null, "Ctrl+Alt+N is not ours");
 assert(resolveShortcut(press("Escape", { altKey: true })) === null, "Alt+Escape is not ours");
@@ -67,6 +76,7 @@ const documented = new Set(SHORTCUTS.map((s) => s.action));
 for (const action of [
   "new-chat",
   "close-tab",
+  "rename-chat",
   "toggle-files",
   "open-memory",
   "open-settings",
@@ -75,6 +85,7 @@ for (const action of [
   "toggle-split",
   "focus-pane-0",
   "focus-pane-1",
+  "jump-to-latest",
   "dismiss",
 ] as const) {
   assert(documented.has(action), `${action} is listed in the shortcut table`);

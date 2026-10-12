@@ -141,7 +141,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
   const busiestDay = Math.max(1, ...(report?.days.map((d) => d.costUsd) ?? []));
 
   return (
-    <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside className="panel-in-right flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
       <header className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Spend</h2>
         <span className="ml-auto flex items-center gap-1">
