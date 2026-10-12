@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / theme)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 
@@ -145,6 +145,21 @@ Tick a box only when the result matches. If something fails, note the step numbe
       question is worded
 - [ ] The same question in a chat-mode conversation searches that section's own history only
 - [ ] A query of `*`, `-` or `:` reports "no earlier message matches" rather than an error
+
+## The sidebar's search box
+
+- [ ] Typing two or more characters lists matching messages under *In messages*; one character
+      does nothing
+- [ ] The matched word is **emphasised** in the snippet, and no `[` or `]` of the search's own
+      is ever visible
+- [ ] A message that contains its own brackets (`items[0]`, `list[i]`) shows them as plain text —
+      they are not emphasised
+- [ ] A common word (something that appears in hundreds of messages) puts the messages *about* it
+      above the ones that merely mention it — the short, on-topic hit comes first, not the newest
+- [ ] "Show more matches" appears under a long list, adds the next page **below** what is already
+      there, and goes away when the last page is in
+- [ ] Scrolling and clicking a hit still opens that conversation
+- [ ] Clearing the box empties the list and brings the conversations back
 
 ## Spend
 

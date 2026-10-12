@@ -2,8 +2,8 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
-Phase 3 (3.1–3.6). Phase 4 is **in progress**: 4.1 is done, 4.2–4.4 have not been
-started, and Phase 5–6 have not been started.
+Phase 3 (3.1–3.6). **Phase 4 is done** (4.1–4.4). Phases 5–6 have not been
+started.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -742,16 +742,83 @@ Ordered by how often the author would actually reach for it.
     by asserting the exact `PathBuf`s rather than `ends_with`, plus that the cap
     keeps the best hit rather than the first one walked).
 
-### 4.3 [S] Startup time
+### 4.3 [S] Startup time ✅
 - **Why**: MCP discovery, DB open and the file watcher all start on launch.
 - **Do**: measure first. The MCP status badge already proves discovery is async;
   make sure nothing new blocks the first paint.
 - **Stop**: a cold start with three MCP servers is measured and recorded here.
+- **Done (2026-10-12). Measured, and nothing needed changing.**
+  - Temporary `Instant` marks were put around every step of `setup()` and around
+    the MCP load, with `mcp.json` written to hold **three servers that take five
+    seconds each to start** (a `cmd /c ping` stand-in: the property under test is
+    a long, known start time, which is exactly what a real `npx` server gives
+    unpredictably). Debug build, warm cargo, two runs, both this shape:
 
-### 4.4 [S] FTS search quality
+    | mark | at |
+    | --- | --- |
+    | Tauri + webview boot, up to `setup()` | **1184 ms** |
+    | profile paths ensured | 3 ms |
+    | database opened | 33 ms |
+    | startup prune | 2 ms |
+    | settings + HTTP client | 2 ms |
+    | example skills written | 1 ms |
+    | rest of `setup()` → window may show | 2 ms |
+    | **everything DeskSeek does itself** | **~42 ms** |
+    | MCP ready | 5312 ms of work, **6538 ms from process start** |
+
+  - **The window waits for 42 ms of its own work; the other 1.2 s is Tauri and
+    WebView2**, which is not ours to remove. `npm run tauri dev` starts the Vite
+    dev server first, so a dev run is slower than a packaged one either way.
+  - **MCP is off the critical path, and the fixture proves it rather than the
+    code reading suggesting it**: three servers of five seconds each were ready
+    5.3 s after discovery began — not 15 s — so `restart_all`'s `join_all` really
+    is concurrent — and the window was fully usable for all 5.3 s of it. The
+    Docker/WSL probe is spawned the same way, and the scheduled ticker's first
+    tick is 30 s out.
+  - The webview's own first paint could not be read from here: the JS console is
+    not forwarded to the dev terminal, and a `Builder::on_page_load` hook did not
+    fire for the dev-server URL. That is a gap in the *instrument*, not in the
+    app — and it is the one number the marks above do not need, since nothing
+    async is on the path to it.
+  - All instrumentation was removed: `git diff src-tauri/src/lib.rs` is empty, and
+    the temporary `mcp.json` is deleted. **This item ships documentation only.**
+
+### 4.4 [S] FTS search quality ✅
 - **Why**: results are shown without ranking or paging.
 - **Do**: rank by bm25, page the results, highlight matched words in the snippet.
 - **Stop**: a common word does not return 400 rows with the newest first.
+- **Done (2026-10-12).**
+  - **Two thirds of this was already true, and saying so matters more than
+    re-doing it.** `search_messages` already ordered by `bm25(messages_fts)` and
+    already asked SQLite's `snippet()` to bracket the matched words — the plan
+    was written from the UI, which did neither justice. What was actually
+    missing: the list stopped at 40 with no way on, and the snippet's brackets
+    were being drawn *as brackets*, so a result read `[pars]er bug`.
+  - **Paging.** `search_messages` gained an `offset` and now returns
+    `MessagePage { hits, more }`. `more` comes from asking for `PAGE + 1` rows and
+    throwing the extra away: its presence *is* the answer to "is there another
+    page", which costs one row where a `count(*)` over the match set costs a full
+    scan. The sidebar appends the next page under the list it already has, and
+    drops a page whose query has since been replaced by a keystroke.
+  - **A real bug the paging exposed:** `ORDER BY bm25` is not a total order. Rows
+    that score the same are free to come back in any order, so page two could
+    repeat a row from page one and drop another for ever. `m.id` is now the
+    tiebreak — arbitrary, but *stable*, which is the only property paging needs.
+    `pages_of_a_search_join_up_without_gaps_or_repeats` pins it with seven
+    identical messages, so every row scores exactly the same and the order can
+    only be right if the tiebreak is doing the work.
+  - **Highlighting, and the ambiguity that decides it.** Every message is allowed
+    to contain brackets — code does, constantly — so the split cannot simply take
+    `[` … `]` as a mark. `src/lib/snippet.ts` treats a bracket pair as a mark only
+    when the text inside it is one of the query's own terms; anything else is the
+    message's punctuation and stays visible. Written as a pure function with its
+    own check (`snippet.check.ts`, the eleventh), because the failure mode is
+    invisible to `tsc`: a plausible row with the emphasis in the wrong place.
+  - **Tests**: the two store tests above, plus eleven snapshot cases in the
+    snippet check — `list[0]` left alone, `items[3]` not lit up, an unclosed
+    bracket, a query with nothing searchable, and both terms of a two-word query:
+    each asserting the parts *and* what they concatenate back to, so nothing can
+    be silently dropped.
 
 ---
 

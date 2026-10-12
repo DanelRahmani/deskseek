@@ -180,7 +180,13 @@ Both sections are functional:
   change the UI already makes
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
-  both sections, so a chat can be found by what was said in it rather than by its name
+  both sections, so a chat can be found by what was said in it rather than by its name. The
+  results are **ranked by relevance, not recency** — a message that is *about* the word comes
+  above one that merely mentions it — the matched word is emphasised in the snippet, and a long
+  list is **paged**: *Show more matches* adds the next screenful underneath, so a word in
+  hundreds of messages is browsable rather than truncated at 40. Honest limit: ranking is BM25
+  over the words themselves, so it finds what you typed and not what you meant — asking for
+  "invoice" will not surface a message that only ever says "bill"
 - **Archive** — a conversation worth keeping but not worth looking at can be put away instead of
   deleted: the arrow on its sidebar row files it under *Archived (n)* at the bottom, and `↑`
   brings it back. Nothing is removed — the messages, the spend and the folder stay — which is
