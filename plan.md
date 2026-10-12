@@ -2,7 +2,7 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1,
-2.2 and 2.3 are done, the rest of 2 is the plan. Items 3–6 have not been
+2.2, 2.3 and 2.4 are done, the rest of 2 is the plan. Items 3–6 have not been
 started.
 
 Each item is independently shippable and the order is the author's own priority,
@@ -220,14 +220,27 @@ Ordered by how often the author would actually reach for it.
 - **Stop**: a saved prompt inserts into the composer and is reachable by `/p:` and
   the palette. ✅
 
-### 2.4 [M] Message branching (edit without destroying)
-- **Why**: `resend_last_turn` deletes the tail — correct for "replace", wrong for
-  "try the other answer too".
-- **Do** (the cheap version): when the tail is deleted, keep it in a discarded
-  pile and offer **Restore** on the message it replaced. No `parent_id`, no tree.
-  The tail is *moved*, never filtered, so tool calls stay paired with results.
-- **Test**: deleting the tail keeps the tool-call pairing intact.
-- **Stop**: a previous answer can be brought back without a re-run.
+### 2.4 [M] Message branching (edit without destroying) ✅ done
+- **Why**: `resend_last_turn` deletes the tail — right for "replace", wrong for
+  "try the other answer too", which cost the first answer with no way back.
+- **Now**: the tail is *moved* into `discarded_tails` (one row per turn, keyed
+  `UNIQUE(chat_id, after_seq)`, holding the rows whole as JSON) instead of being
+  deleted, and a ↺ on that turn swaps the two answers. `restore_tail` writes the
+  current tail into the pile and puts the stored one back, in one transaction —
+  which is what makes the button a **toggle**, and also what makes the seq
+  arithmetic safe: everything above `after_seq` is cleared before the stored rows
+  go back, so their original seqs are free. No `parent_id`, no tree.
+  `MessageRow.discarded` is computed on read (`EXISTS` over the pile) rather than
+  stored, so the flag cannot come to disagree with the pile it describes.
+- **Test**: `a_resend_moves_the_tail_aside_and_can_rewrite_the_turn`,
+  `a_replaced_answer_is_swapped_back_not_rerun` (there and back, plus an error for
+  a turn with nothing behind it), and `a_tail_moves_with_its_tool_results_intact`
+  — the invariant that has bitten this area twice, asserted at three points: in
+  the conversation, after being discarded, and after being restored.
+- **Stop**: a previous answer can be brought back without a re-run. ✅
+- **Honest limit**: the pile holds one answer per turn, so this is a toggle rather
+  than a branching tree. Real branching is still worth doing *later* if this
+  proves too small — which is what the plan said when it chose the cheap version.
 
 ### 2.5 [S] Duplicate a conversation, and export/import it
 - **Why**: `export_chat` writes markdown; there is no way to fork a conversation

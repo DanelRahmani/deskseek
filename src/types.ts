@@ -117,6 +117,8 @@ export interface MessageRow {
   tool_call_id: string | null;
   attachments_json: string | null;
   created_at: number;
+  /** This turn has an answer in the discarded pile that can be brought back. */
+  discarded?: boolean;
 }
 
 export interface ModelInfo {

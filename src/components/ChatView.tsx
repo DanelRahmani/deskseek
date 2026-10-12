@@ -51,6 +51,11 @@ interface Props {
   onSend: (text: string) => void;
   /** Ask again from the last user turn; `text` edits it first, null repeats it. */
   onResend: (text: string | null) => void;
+  /**
+   * Put back the answer a resend replaced, on the turn whose `seq` this is. The
+   * two answers swap, so the button is a toggle rather than a one-way door.
+   */
+  onRestoreTail: (afterSeq: number) => void;
   onStop: () => void;
   onFiles: () => void;
   onModelChange: (model: string, thinking: boolean, effort: string) => void;
@@ -170,6 +175,7 @@ export function ChatView({
   onContext,
   onSend,
   onResend,
+  onRestoreTail,
   onStop,
   onFiles,
   onModelChange,
@@ -505,6 +511,11 @@ export function ChatView({
                 onRetry={
                   item.message.id === retryId && !busy ? () => onResend(null) : undefined
                 }
+                onRestore={
+                  item.message.role === "user" && item.message.discarded && !busy
+                    ? () => onRestoreTail(item.message.seq)
+                    : undefined
+                }
               />
             ) : (
               <ToolStepGroup key={`steps-${item.steps[0].id}`} steps={item.steps} />
@@ -762,10 +773,13 @@ function Bubble({
   message,
   onEdit,
   onRetry,
+  onRestore,
 }: {
   message: MessageRow;
   /** Set on the newest user turn, which can be edited and sent again. */
   onEdit?: (text: string) => void;
+  /** Set on a user turn whose answer was replaced, to swap it back. */
+  onRestore?: () => void;
   /** Set on the newest answer, which can be asked for again. */
   onRetry?: () => void;
 }) {
@@ -853,6 +867,13 @@ function Bubble({
               icon="edit"
               label="Edit this message and ask again — the answers after it are replaced"
               onClick={() => setDraft(message.content ?? "")}
+            />
+          )}
+          {onRestore && (
+            <IconButton
+              icon="restore"
+              label="Bring back the answer this replaced — the current one is kept, so it is a swap"
+              onClick={onRestore}
             />
           )}
         </div>

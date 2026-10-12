@@ -255,7 +255,9 @@ pub async fn resend_last_turn(
             }
             db::set_message_content(&conn, &turn.id, text).map_err(|e| e.to_string())?;
         }
-        db::delete_messages_after(&conn, &chat_id, turn.seq).map_err(|e| e.to_string())?;
+        // Moved to the discarded pile rather than dropped, so the answer being
+        // replaced can be brought back without a second run.
+        db::discard_tail(&conn, &chat_id, turn.seq)?;
     }
 
     // This replaces a turn, so it registers a run exactly as send_message does:
@@ -264,6 +266,21 @@ pub async fn resend_last_turn(
     let result = agent::run(app, &state, &chat_id, cancel, false).await;
     state.runs.finish(&chat_id, run_id);
     result
+}
+
+/// Puts back the answer a resend replaced, and keeps the one it replaces.
+///
+/// No model call and no re-run: the two answers are already recorded, so the
+/// button is a swap. `after_seq` is the seq of the user turn the answer belonged
+/// to, which is what the transcript has in hand when it draws the button.
+#[tauri::command]
+pub fn restore_discarded_tail(
+    state: State<'_, AppState>,
+    chat_id: String,
+    after_seq: i64,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::restore_tail(&conn, &chat_id, after_seq)
 }
 
 #[tauri::command]
@@ -1275,7 +1292,6 @@ pub fn tool_grants(state: State<'_, AppState>) -> Result<Vec<ToolGrant>, String>
 }
 
 // ------------------------------------------------------------------- spend
-
 /// The longest window the panel may ask for. A cap rather than trust, because
 /// the argument arrives from the webview: an unbounded one would let a single
 /// call ask for every row ever written and hand the answer back as JSON.
@@ -2341,6 +2357,7 @@ mod tests {
             tool_call_id: None,
             attachments_json: attachments.map(str::to_string),
             created_at: 0,
+            discarded: false,
         }
     }
 

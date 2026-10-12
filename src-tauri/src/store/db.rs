@@ -54,6 +54,10 @@ pub struct MessageRow {
     pub tool_call_id: Option<String>,
     pub attachments_json: Option<String>,
     pub created_at: i64,
+    /// This turn has an answer in the discarded pile that can be brought back.
+    /// Computed on read rather than stored: it is a property of the turn and the
+    /// pile, and storing it twice is how the two would come to disagree.
+    pub discarded: bool,
 }
 
 const SCHEMA: &str = r#"
@@ -233,6 +237,27 @@ CREATE TABLE IF NOT EXISTS turn_usage (
 
 CREATE INDEX IF NOT EXISTS idx_turn_usage_time ON turn_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_chat ON turn_usage(chat_id, created_at);
+
+-- A tail a resend replaced, kept so it can be brought back. Without it, "ask
+-- again" is destructive: the only way to see the other answer is to lose this
+-- one. No message tree and no parent ids — a discarded tail belongs to the turn
+-- it replaced, and swapping it back in is the whole feature.
+--
+-- The rows are stored whole, as JSON, because *moving* them is the invariant: an
+-- assistant turn and the tool results it asked for have to travel together, and
+-- screening one out instead of moving it is what produced a 400 the last two
+-- times this area was touched.
+CREATE TABLE IF NOT EXISTS discarded_tails (
+    id         TEXT PRIMARY KEY,
+    chat_id    TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    -- The seq of the last message that was kept; everything above it is in rows.
+    after_seq  INTEGER NOT NULL,
+    rows       TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    -- One tail per turn. Discarding the same turn again replaces it, which is
+    -- what makes Restore a toggle between two answers rather than a pile.
+    UNIQUE (chat_id, after_seq)
+);
 
 -- A named container: a folder to work in and the chats that belong to it. The
 -- chats are the members, so deleting a project must never delete them — see
@@ -558,8 +583,11 @@ pub fn last_user_message(
     chat_id: &str,
 ) -> rusqlite::Result<Option<MessageRow>> {
     conn.query_row(
-        "SELECT id, chat_id, seq, role, content, reasoning_content, tool_calls_json, tool_call_id, attachments_json, created_at
-         FROM messages WHERE chat_id = ?1 AND role = 'user' ORDER BY seq DESC LIMIT 1",
+        "SELECT m.id, m.chat_id, m.seq, m.role, m.content, m.reasoning_content,
+                m.tool_calls_json, m.tool_call_id, m.attachments_json, m.created_at,
+                EXISTS (SELECT 1 FROM discarded_tails d
+                        WHERE d.chat_id = m.chat_id AND d.after_seq = m.seq)
+         FROM messages m WHERE m.chat_id = ?1 AND m.role = 'user' ORDER BY m.seq DESC LIMIT 1",
         [chat_id],
         |r| {
             Ok(MessageRow {
@@ -573,22 +601,144 @@ pub fn last_user_message(
                 tool_call_id: r.get(7)?,
                 attachments_json: r.get(8)?,
                 created_at: r.get(9)?,
+                discarded: r.get::<_, i64>(10)? != 0,
             })
         },
     )
     .optional()
 }
 
-/// Drops every message after `seq`, so a re-run starts from that turn instead of
-/// stacking a second question on top of the first answer. Deleting the tail
-/// rather than screening it out is what keeps the request well-formed: an
+/// Moves every message after `seq` into the discarded pile instead of dropping
+/// it, so a re-run starts from that turn without destroying the answer it is
+/// replacing.
+///
+/// Moving rather than screening out is what keeps the request well-formed: an
 /// assistant turn whose tool calls have no results is a 400 waiting to happen.
-pub fn delete_messages_after(conn: &Connection, chat_id: &str, seq: i64) -> rusqlite::Result<()> {
-    conn.execute(
+/// Everything above `seq` travels together, in order, as it was.
+pub fn discard_tail(conn: &Connection, chat_id: &str, seq: i64) -> Result<(), String> {
+    let rows = rows_after(conn, chat_id, seq).map_err(|e| e.to_string())?;
+    if rows.is_empty() {
+        // Nothing to keep. Still clear any older pile for this turn, or Restore
+        // would offer an answer that no longer belongs to it.
+        conn.execute(
+            "DELETE FROM discarded_tails WHERE chat_id = ?1 AND after_seq = ?2",
+            params![chat_id, seq],
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let json = serde_json::to_string(&rows).map_err(|e| e.to_string())?;
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO discarded_tails (id, chat_id, after_seq, rows, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(chat_id, after_seq) DO UPDATE SET
+             rows = excluded.rows, created_at = excluded.created_at",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            chat_id,
+            seq,
+            json,
+            now_ts()
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.execute(
         "DELETE FROM messages WHERE chat_id = ?1 AND seq > ?2",
         params![chat_id, seq],
+    )
+    .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Puts a replaced tail back, and puts the tail it replaces into the pile.
+///
+/// The swap is the point: asking again is not destructive, so the two answers
+/// are one click apart and neither is lost. It is also what makes the seq
+/// arithmetic safe — everything above `after_seq` is cleared before the stored
+/// rows go back, so their original seqs are free again.
+pub fn restore_tail(conn: &Connection, chat_id: &str, after_seq: i64) -> Result<(), String> {
+    let stored: String = conn
+        .query_row(
+            "SELECT rows FROM discarded_tails WHERE chat_id = ?1 AND after_seq = ?2",
+            params![chat_id, after_seq],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?
+        .ok_or("There is no replaced answer to bring back at that point.")?;
+    let incoming: Vec<MessageRow> =
+        serde_json::from_str(&stored).map_err(|e| format!("the kept answer is unreadable: {e}"))?;
+    let current = rows_after(conn, chat_id, after_seq).map_err(|e| e.to_string())?;
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    if current.is_empty() {
+        tx.execute(
+            "DELETE FROM discarded_tails WHERE chat_id = ?1 AND after_seq = ?2",
+            params![chat_id, after_seq],
+        )
+        .map_err(|e| e.to_string())?;
+    } else {
+        let json = serde_json::to_string(&current).map_err(|e| e.to_string())?;
+        tx.execute(
+            "UPDATE discarded_tails SET rows = ?3, created_at = ?4
+             WHERE chat_id = ?1 AND after_seq = ?2",
+            params![chat_id, after_seq, json, now_ts()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.execute(
+        "DELETE FROM messages WHERE chat_id = ?1 AND seq > ?2",
+        params![chat_id, after_seq],
+    )
+    .map_err(|e| e.to_string())?;
+    for row in &incoming {
+        tx.execute(
+            "INSERT INTO messages (id, chat_id, seq, role, content, reasoning_content,
+                                   tool_calls_json, tool_call_id, attachments_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                row.id,
+                row.chat_id,
+                row.seq,
+                row.role,
+                row.content,
+                row.reasoning_content,
+                row.tool_calls_json,
+                row.tool_call_id,
+                row.attachments_json,
+                row.created_at,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Every message after `seq`, in order — the unit that moves between the
+/// conversation and the discarded pile.
+fn rows_after(conn: &Connection, chat_id: &str, seq: i64) -> rusqlite::Result<Vec<MessageRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, chat_id, seq, role, content, reasoning_content, tool_calls_json,
+                tool_call_id, attachments_json, created_at
+         FROM messages WHERE chat_id = ?1 AND seq > ?2 ORDER BY seq ASC",
     )?;
-    Ok(())
+    let rows = stmt.query_map(params![chat_id, seq], |r| {
+        Ok(MessageRow {
+            id: r.get(0)?,
+            chat_id: r.get(1)?,
+            seq: r.get(2)?,
+            role: r.get(3)?,
+            content: r.get(4)?,
+            reasoning_content: r.get(5)?,
+            tool_calls_json: r.get(6)?,
+            tool_call_id: r.get(7)?,
+            attachments_json: r.get(8)?,
+            created_at: r.get(9)?,
+            discarded: false,
+        })
+    })?;
+    rows.collect()
 }
 
 /// Rewrites a turn's text in place — the edit half of edit-and-resend.
@@ -602,8 +752,11 @@ pub fn set_message_content(conn: &Connection, id: &str, content: &str) -> rusqli
 
 pub fn list_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<MessageRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, chat_id, seq, role, content, reasoning_content, tool_calls_json, tool_call_id, attachments_json, created_at
-         FROM messages WHERE chat_id = ?1 ORDER BY seq ASC",
+        "SELECT m.id, m.chat_id, m.seq, m.role, m.content, m.reasoning_content,
+                m.tool_calls_json, m.tool_call_id, m.attachments_json, m.created_at,
+                EXISTS (SELECT 1 FROM discarded_tails d
+                        WHERE d.chat_id = m.chat_id AND d.after_seq = m.seq)
+         FROM messages m WHERE m.chat_id = ?1 ORDER BY m.seq ASC",
     )?;
     let rows = stmt.query_map([chat_id], |r| {
         Ok(MessageRow {
@@ -617,6 +770,7 @@ pub fn list_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<M
             tool_call_id: r.get(7)?,
             attachments_json: r.get(8)?,
             created_at: r.get(9)?,
+            discarded: r.get::<_, i64>(10)? != 0,
         })
     })?;
     rows.collect()
@@ -656,6 +810,8 @@ pub fn insert_message(
         tool_call_id: tool_call_id.map(str::to_string),
         attachments_json: attachments_json.map(str::to_string),
         created_at: ts,
+        // A message that was just written has nothing replaced behind it.
+        discarded: false,
     })
 }
 
@@ -2050,7 +2206,7 @@ mod tests {
     }
 
     #[test]
-    fn a_resend_drops_the_tail_and_can_rewrite_the_turn() {
+    fn a_resend_moves_the_tail_aside_and_can_rewrite_the_turn() {
         let conn = mem();
         let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
         insert_message(&conn, &chat.id, "user", Some("older question"), None, None, None, None)
@@ -2064,17 +2220,111 @@ mod tests {
 
         let turn = last_user_message(&conn, &chat.id).unwrap().unwrap();
         assert_eq!(turn.content.as_deref(), Some("newer question"));
+        assert!(!turn.discarded, "nothing has been replaced yet");
 
         set_message_content(&conn, &turn.id, "edited question").unwrap();
-        delete_messages_after(&conn, &chat.id, turn.seq).unwrap();
+        discard_tail(&conn, &chat.id, turn.seq).unwrap();
 
         let left = list_messages(&conn, &chat.id).unwrap();
         assert_eq!(left.len(), 3, "only what followed the turn is gone");
         assert_eq!(left[2].content.as_deref(), Some("edited question"));
         assert_eq!(left[1].content.as_deref(), Some("older answer"), "the older turn stays");
+        // And the turn that was replaced now says so, which is what draws the
+        // button that brings it back.
+        assert!(left[2].discarded, "the replaced answer is offered back");
+
         // Nothing to re-send when there is no user turn at all.
         let empty = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
         assert!(last_user_message(&conn, &empty.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_replaced_answer_is_swapped_back_not_rerun() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let turn = insert_message(&conn, &chat.id, "user", Some("the question"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &chat.id, "assistant", Some("the first answer"), None, None, None, None)
+            .unwrap();
+
+        discard_tail(&conn, &chat.id, turn.seq).unwrap();
+        // The resend that follows produces the second answer.
+        insert_message(&conn, &chat.id, "assistant", Some("the second answer"), None, None, None, None)
+            .unwrap();
+        assert_eq!(last_answer(&conn, &chat.id), "the second answer");
+
+        restore_tail(&conn, &chat.id, turn.seq).unwrap();
+        assert_eq!(last_answer(&conn, &chat.id), "the first answer");
+        // The flag is on the user turn the answer belonged to, because that is
+        // the row the button is drawn on — not on the answer itself.
+        let rows = list_messages(&conn, &chat.id).unwrap();
+        assert!(rows[0].discarded, "the replaced answer is offered back on that turn");
+        assert!(!rows[1].discarded, "the answer itself carries no button");
+
+        // And back again: Restore is a toggle, not a one-way door.
+        restore_tail(&conn, &chat.id, turn.seq).unwrap();
+        assert_eq!(last_answer(&conn, &chat.id), "the second answer");
+
+        // Asking for an answer that was never replaced is an error, not a
+        // silent no-op.
+        assert!(restore_tail(&conn, &chat.id, 9_999).is_err());
+    }
+
+    /// The invariant that has bitten twice: an assistant turn's tool calls and
+    /// the tool results answering them are one unit. Something that deletes or
+    /// restores a tail has to keep them together, or the next request is a 400.
+    #[test]
+    fn a_tail_moves_with_its_tool_results_intact() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/p"), "m", true, "high", "manual").unwrap();
+        let turn = insert_message(&conn, &chat.id, "user", Some("go"), None, None, None, None)
+            .unwrap();
+        let calls = r#"[{"id":"c1","type":"function","function":{"name":"read_file","arguments":"{}"}}]"#;
+        insert_message(&conn, &chat.id, "assistant", None, None, Some(calls), None, None).unwrap();
+        insert_message(&conn, &chat.id, "tool", Some("the file's text"), None, None, Some("c1"), None)
+            .unwrap();
+        insert_message(&conn, &chat.id, "assistant", Some("done"), None, None, None, None).unwrap();
+
+        // Neither half may be left behind on its own: a caller with no result, or
+        // a result with no caller, is a request the API refuses.
+        fn paired(conn: &Connection, chat_id: &str, stage: &str) {
+            let rows = list_messages(conn, chat_id).unwrap();
+            let callers: Vec<&str> = rows
+                .iter()
+                .filter(|m| m.tool_calls_json.is_some())
+                .map(|m| m.id.as_str())
+                .collect();
+            let answers: Vec<&str> =
+                rows.iter().filter_map(|m| m.tool_call_id.as_deref()).collect();
+            assert_eq!(callers.len(), answers.len(), "{stage}: {rows:?}");
+            if !callers.is_empty() {
+                assert_eq!(answers, vec!["c1"], "{stage}: the pair travelled together");
+            }
+        }
+
+        paired(&conn, &chat.id, "in the conversation");
+        discard_tail(&conn, &chat.id, turn.seq).unwrap();
+        paired(&conn, &chat.id, "after being discarded");
+        restore_tail(&conn, &chat.id, turn.seq).unwrap();
+        paired(&conn, &chat.id, "after being restored");
+
+        // Restored: the whole tail is back, in order, exactly once.
+        let back = list_messages(&conn, &chat.id).unwrap();
+        assert_eq!(back.len(), 4, "{back:?}");
+        assert!(back[1].tool_calls_json.is_some());
+        assert_eq!(back[2].tool_call_id.as_deref(), Some("c1"));
+        assert_eq!(back[3].content.as_deref(), Some("done"));
+    }
+
+    /// The last assistant row's text, for the tests above.
+    fn last_answer(conn: &Connection, chat_id: &str) -> String {
+        list_messages(conn, chat_id)
+            .unwrap()
+            .into_iter()
+            .rev()
+            .find(|m| m.role == "assistant")
+            .and_then(|m| m.content)
+            .unwrap_or_default()
     }
 
     #[test]

@@ -198,7 +198,9 @@ Both sections are functional:
 - **Regenerate, and edit-and-resend** — the copy icon under the newest answer sits next to
   **Retry**, which asks the same question again, and *Edit* under your own last message changes it
   and asks again. Either way everything after that turn is dropped first, so the model is never
-  shown the answer it is replacing
+  shown the answer it is replacing — but **dropped is not deleted**: the answer that was there is
+  kept, and a ↺ button on that turn swaps it back, keeping the one you are leaving. It is a
+  toggle between two answers, not a history to wade through, and neither answer costs a second run
 
 **Coding**
 

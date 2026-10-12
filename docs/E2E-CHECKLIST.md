@@ -62,6 +62,11 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] `Ctrl+K` offers *Archive this chat*, and *Take out of the archive* once it is archived
 - [ ] Restoring does not reorder the list: the chat comes back where it was
 - [ ] Right-click → *Rename* edits the title in place; Enter saves it, Escape abandons it
+- [ ] After *Retry* or an edited resend, the turn shows ↺; clicking it brings the **previous**
+      answer back and keeps the new one, so clicking again toggles between them
+- [ ] Neither answer costs a second run — the swap makes no API call
+- [ ] A replaced turn that ran tool calls comes back with its tool results, and the next message
+      in that chat is accepted rather than rejected
 - [ ] A renamed chat keeps the new title after a restart and does **not** jump to the top —
       renaming is not activity, so the list order is untouched
 

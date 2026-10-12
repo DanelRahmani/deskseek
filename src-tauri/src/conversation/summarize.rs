@@ -409,6 +409,7 @@ mod tests {
                 tool_call_id: None,
                 attachments_json: None,
                 created_at: 0,
+                discarded: false,
             })
             .collect();
         let text = transcript(&rows);

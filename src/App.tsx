@@ -1116,6 +1116,22 @@ export default function App() {
     }
   }, [loadMessages]);
 
+  /**
+   * Swap back the answer a resend replaced. No model call and no busy state: both
+   * answers are already recorded, so this is a reload of what is on screen.
+   */
+  const restoreTail = useCallback(
+    async (chatId: string, afterSeq: number) => {
+      try {
+        await api.restoreDiscardedTail(chatId, afterSeq);
+        await loadMessages(chatId);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [loadMessages],
+  );
+
   // A backup is a file, so the API key is not in it: the key lives in the OS
   // keychain, which is not a file this app can hand out.
   const backupConfig = useCallback(async () => {
@@ -1474,6 +1490,7 @@ export default function App() {
                     contextMax={max}
                     onSend={(text) => send(text, id, pane)}
                     onResend={(text) => id && resend(id, text)}
+                    onRestoreTail={(afterSeq) => id && void restoreTail(id, afterSeq)}
                     onStop={() => id && stop(id)}
                     onFiles={() =>
                       setPanel((current) => (current === "files" ? "none" : "files"))

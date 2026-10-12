@@ -78,6 +78,9 @@ export const api = {
   /** Ask again from the last user turn; `text` edits it first. */
   resendLastTurn: (chatId: string, text: string | null) =>
     invoke<void>("resend_last_turn", { chatId, text }),
+  /** Swap back the answer a resend replaced, at that turn. No model call. */
+  restoreDiscardedTail: (chatId: string, afterSeq: number) =>
+    invoke<void>("restore_discarded_tail", { chatId, afterSeq }),
   renameChat: (chatId: string, title: string) => invoke<void>("rename_chat", { chatId, title }),
   deleteChat: (chatId: string) => invoke<void>("delete_chat", { chatId }),
   /** Moves a chat to the sidebar's archive, or back out of it. */

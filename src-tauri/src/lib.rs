@@ -214,6 +214,7 @@ pub fn run() {
             commands::search_messages,
             commands::rewind_last_run,
             commands::resend_last_turn,
+            commands::restore_discarded_tail,
             commands::rename_chat,
             commands::delete_chat,
             commands::set_chat_archived,
