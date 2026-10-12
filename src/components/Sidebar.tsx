@@ -12,13 +12,20 @@ interface Props {
   onDelete: (id: string) => void;
   /** Archive a chat, or take it back out of the archive. */
   onArchive: (id: string, archived: boolean) => void;
+  /** Right-clicked a row: open its menu at the cursor. */
+  onContextMenu: (id: string, x: number, y: number) => void;
   onSettings: () => void;
   onMemory: () => void;
-  onSkills: () => void;
-  onMcp: () => void;
+  /** Opens the Customise hub: skills, connectors, instructions, design systems. */
+  onCustomise: () => void;
+  onProjects: () => void;
+  onArtifacts: () => void;
+  onScheduled: () => void;
   keyMask: string | null;
   /** Chats with a run in flight, so a background turn is visible at a glance. */
   runningIds: string[];
+  /** Chats that finished while they were not the one being read. */
+  unreadIds: string[];
   /** Messages matching the search box, from every conversation. */
   hits: MessageHit[];
   /** The raw box text; the owner debounces and runs the full-text query. */
@@ -39,12 +46,16 @@ export function Sidebar({
   onNew,
   onDelete,
   onArchive,
+  onContextMenu,
   onSettings,
   onMemory,
-  onSkills,
-  onMcp,
+  onCustomise,
+  onProjects,
+  onArtifacts,
+  onScheduled,
   keyMask,
   runningIds,
+  unreadIds,
   hits,
   onSearch,
 }: Props) {
@@ -154,7 +165,14 @@ export function Sidebar({
           </p>
         )}
         {shown.map((c) => (
-          <div key={c.id} className={rowCls(c.id)}>
+          <div
+            key={c.id}
+            className={rowCls(c.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              onContextMenu(c.id, e.clientX, e.clientY);
+            }}
+          >
             <button
               onClick={() => onSelect(c.id)}
               className="flex flex-1 items-center gap-1.5 truncate text-left"
@@ -168,6 +186,12 @@ export function Sidebar({
               )}
               <span className="truncate">{c.title}</span>
             </button>
+            {unreadIds.includes(c.id) && (
+              <span
+                className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
+                title="Finished since you last looked"
+              />
+            )}
             {c.cost_usd > 0 && (
               <span
                 className="shrink-0 text-[10px] text-neutral-600"
@@ -209,7 +233,14 @@ export function Sidebar({
             </button>
             {showArchived &&
               archived.map((c) => (
-                <div key={c.id} className={rowCls(c.id)}>
+                <div
+                  key={c.id}
+                  className={rowCls(c.id)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onContextMenu(c.id, e.clientX, e.clientY);
+                  }}
+                >
                   <button
                     onClick={() => onSelect(c.id)}
                     className="flex-1 truncate text-left text-neutral-500"
@@ -245,16 +276,28 @@ export function Sidebar({
           Memory
         </button>
         <button
-          onClick={onSkills}
+          onClick={onProjects}
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
         >
-          Skills
+          Projects
         </button>
         <button
-          onClick={onMcp}
+          onClick={onArtifacts}
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
         >
-          MCP servers
+          Artifacts
+        </button>
+        <button
+          onClick={onCustomise}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
+        >
+          Customise
+        </button>
+        <button
+          onClick={onScheduled}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
+        >
+          Scheduled
         </button>
         <button
           onClick={onSettings}

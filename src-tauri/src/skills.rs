@@ -16,6 +16,11 @@ pub struct Skill {
     pub name: String,
     pub description: String,
     pub body: String,
+    /// `default: on` in the frontmatter: whether a *new* chat should start with
+    /// this skill already switched on. The user's standing choices belong in the
+    /// file, next to the skill they are about — this app has one store for these
+    /// and it is the skills folder.
+    pub default_on: bool,
 }
 
 /// Splits `---\nkey: value\n---\nbody` into (frontmatter, body).
@@ -58,11 +63,17 @@ pub fn parse_skill(id: &str, raw: &str) -> Skill {
     let description = frontmatter
         .and_then(|fm| frontmatter_field(fm, "description"))
         .unwrap_or_default();
+    // Deliberately off unless the file says otherwise: a skill the user added but
+    // has not thought about yet must not start changing every new chat.
+    let default_on = frontmatter
+        .and_then(|fm| frontmatter_field(fm, "default"))
+        .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "on" | "true" | "yes"));
     Skill {
         id: id.to_string(),
         name,
         description,
         body: body.trim().to_string(),
+        default_on,
     }
 }
 
@@ -97,15 +108,50 @@ fn one_line(value: &str) -> String {
 /// the instructions.
 ///
 /// Composed here rather than in the tool so the format has exactly one
-/// definition — `parse_skill(compose(..))` is the test for that.
-pub fn compose(name: &str, description: &str, body: &str) -> String {
+/// definition — `parse_skill(compose(..))` is the test for that. `default_on` is
+/// a parameter rather than a constant because the two callers that *rewrite* a
+/// skill (revising one by talking, saving a design system twice) must carry the
+/// flag through instead of silently clearing it.
+pub fn compose(name: &str, description: &str, default_on: bool, body: &str) -> String {
     let name = one_line(name);
     let description = one_line(description);
-    if description.is_empty() {
-        format!("---\nname: {name}\n---\n{}\n", body.trim())
-    } else {
-        format!("---\nname: {name}\ndescription: {description}\n---\n{}\n", body.trim())
+    let flag = if default_on { "on" } else { "off" };
+    let mut head = format!("---\nname: {name}\n");
+    if !description.is_empty() {
+        head.push_str(&format!("description: {description}\n"));
     }
+    head.push_str(&format!("default: {flag}\n---\n{}\n", body.trim()));
+    head
+}
+
+/// Flips a skill's `default:` flag in its own file.
+///
+/// Rewritten line by line rather than recomposed from the parsed parts: a skill
+/// file is the user's text, and a toggle must not quietly drop frontmatter the
+/// app does not read. Only the block above the closing `---` changes; the body is
+/// passed through byte for byte.
+pub fn set_default(root: &Path, id: &str, on: bool) -> io::Result<()> {
+    let file = root.join(id).join("SKILL.md");
+    let raw = std::fs::read_to_string(&file)?;
+    let flag = format!("default: {}", if on { "on" } else { "off" });
+
+    let (frontmatter, body) = split_frontmatter(&raw);
+    let rewritten = match frontmatter {
+        Some(frontmatter) => {
+            let mut kept: Vec<&str> = frontmatter
+                .trim()
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("default"))
+                .collect();
+            kept.push(flag.as_str());
+            format!("---\n{}\n---\n{body}", kept.join("\n"))
+        }
+        // No frontmatter to edit: give the file one, and keep every byte of what
+        // was there as the body. The byte-order mark, if the file arrived with
+        // one, belongs at the top of the file — not stranded inside the body.
+        None => format!("---\n{flag}\n---\n\n{}", raw.trim_start_matches('\u{feff}')),
+    };
+    std::fs::write(&file, rewritten)
 }
 
 /// The directory id a skill file should be installed under.
@@ -214,20 +260,91 @@ mod tests {
 
     #[test]
     fn a_composed_skill_reads_back_as_itself() {
-        let raw = compose("Terse answers", "Keep it short.", "Be brief.\nNo filler.");
+        let raw = compose("Terse answers", "Keep it short.", false, "Be brief.\nNo filler.");
         let skill = parse_skill("terse-answers", &raw);
         assert_eq!(skill.name, "Terse answers");
         assert_eq!(skill.description, "Keep it short.");
         assert_eq!(skill.body, "Be brief.\nNo filler.");
+        assert!(!skill.default_on);
 
         // A skill with no description is still a skill.
-        let bare = compose("Bare", "", "Do the thing.");
+        let bare = compose("Bare", "", false, "Do the thing.");
         assert_eq!(parse_skill("bare", &bare).description, "");
         assert_eq!(parse_skill("bare", &bare).body, "Do the thing.");
 
         // A name carrying a newline must not become a second frontmatter field.
-        let sneaky = compose("ok\ndescription: evil", "real", "body");
+        let sneaky = compose("ok\ndescription: evil", "real", false, "body");
         assert_eq!(parse_skill("x", &sneaky).description, "real");
+    }
+
+    #[test]
+    fn the_default_flag_round_trips_through_a_file() {
+        let raw = compose("House style", "How to write.", true, "Use short sentences.");
+        assert!(parse_skill("house-style", &raw).default_on);
+
+        // Rewriting a skill has to carry the flag: a chat revising a standing
+        // preference by talking must not silently turn it off.
+        let rewritten = compose("House style", "How to write.", true, "Use very short sentences.");
+        assert!(parse_skill("house-style", &rewritten).default_on);
+
+        // A file that never mentions the flag is off, not a parse error.
+        assert!(!parse_skill("x", "---\nname: X\n---\nBody.").default_on);
+        assert!(!parse_skill("x", "Body only.").default_on);
+        // And only the spellings that mean yes are yes, in any case.
+        for yes in ["on", "TRUE", "Yes"] {
+            let raw = format!("---\nname: X\ndefault: {yes}\n---\nBody.");
+            assert!(parse_skill("x", &raw).default_on, "{yes} should mean on");
+        }
+        for no in ["off", "false", "maybe", ""] {
+            let raw = format!("---\nname: X\ndefault: {no}\n---\nBody.");
+            assert!(!parse_skill("x", &raw).default_on, "{no:?} should mean off");
+        }
+    }
+
+    #[test]
+    fn toggling_the_default_flag_leaves_the_rest_of_the_file_alone() {
+        let dir = std::env::temp_dir().join(format!("deskseek-skill-{}", uuid::Uuid::new_v4()));
+        let root = dir.join("skills");
+        std::fs::create_dir_all(root.join("house-style")).unwrap();
+        // Frontmatter the app does not read, a body with markdown in it, and a
+        // line in the body starting with "default" to catch a sloppy filter.
+        std::fs::write(
+            root.join("house-style").join("SKILL.md"),
+            "---\nname: House style\ntags: writing, tone\n---\nUse short sentences.\n\ndefault: this is prose, not a field.\n",
+        )
+        .unwrap();
+
+        set_default(&root, "house-style", true).unwrap();
+        let raw = std::fs::read_to_string(root.join("house-style").join("SKILL.md")).unwrap();
+        assert!(parse_skill("house-style", &raw).default_on);
+        assert!(raw.contains("tags: writing, tone"), "unknown frontmatter kept: {raw}");
+        assert!(
+            raw.contains("default: this is prose, not a field."),
+            "the body is not frontmatter: {raw}"
+        );
+        assert_eq!(
+            parse_skill("house-style", &raw).body,
+            "Use short sentences.\n\ndefault: this is prose, not a field."
+        );
+
+        // Flipping it back changes the flag and nothing else.
+        set_default(&root, "house-style", false).unwrap();
+        let raw = std::fs::read_to_string(root.join("house-style").join("SKILL.md")).unwrap();
+        assert!(!parse_skill("house-style", &raw).default_on);
+        assert!(raw.contains("tags: writing, tone"));
+        assert_eq!(raw.matches("default:").count(), 2, "one field, one prose line: {raw}");
+
+        // A file with no frontmatter at all gains one without losing its text.
+        std::fs::create_dir_all(root.join("bare")).unwrap();
+        std::fs::write(root.join("bare").join("SKILL.md"), "# Bare\n\nJust a body.\n").unwrap();
+        set_default(&root, "bare", true).unwrap();
+        let bare = parse_skill(
+            "bare",
+            &std::fs::read_to_string(root.join("bare").join("SKILL.md")).unwrap(),
+        );
+        assert!(bare.default_on);
+        assert_eq!(bare.body, "# Bare\n\nJust a body.");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

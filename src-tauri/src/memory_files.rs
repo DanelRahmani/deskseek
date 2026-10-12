@@ -5,9 +5,11 @@
 //! Everything else used to be a row in `memory_facts`; it is now a plain file
 //! under `memory/`, one per category:
 //!
-//!     memory/work.md
-//!     memory/education.md
-//!     memory/interests.md
+//! ```text
+//! memory/work.md
+//! memory/education.md
+//! memory/interests.md
+//! ```
 //!
 //! The reason is the reason `MEMORY.md` is a file at all: the user can open it,
 //! read it, fix a wrong line and delete a stale one. A memory store nobody can

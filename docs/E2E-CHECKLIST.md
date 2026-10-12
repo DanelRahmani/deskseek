@@ -29,6 +29,10 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Markdown, a table and a fenced code block all render
 - [ ] Dropping an image attaches it and the reply accounts for it
 - [ ] `Stop` mid-stream keeps the partial reply and ends the turn
+- [ ] A tool-heavy turn folds into one *N steps* row; opening it shows each call
+- [ ] A failing tool step opens its group by itself
+- [ ] The mode and approval controls sit with the composer, and `Shift+Tab` still cycles
+- [ ] `ask_user` shows the question prompt; answering resumes the run
 - [ ] `/compact` summarises and the context meter drops
 - [ ] `/summarise` proposes entries and opens *Settings → Memory* with them
 
@@ -39,9 +43,41 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] `Ctrl+K` offers *Archive this chat*, and *Take out of the archive* once it is archived
 - [ ] Restoring does not reorder the list: the chat comes back where it was
 
+## Customise, projects and the gallery
+
+- [ ] *Customise* opens the hub; `/skills` lands on Skills and `/mcp` on Connectors
+- [ ] The hub's Skills list does not show design systems; the Design systems tab does
+- [ ] Marking a skill *always on for new chats* writes `default: on` into its `SKILL.md`
+- [ ] A chat started afterwards has that skill already checked — and an existing chat does not change
+- [ ] Unmarking it leaves the chat you are in alone, and stops the next one inheriting it
+- [ ] A skill that is off leaves only its one catalogue line in the prompt (Context panel)
+- [ ] Asking for something a switched-off skill covers makes the assistant call `use_skill`
+- [ ] Revising a skill by talking (`replace: true`) keeps its `default: on` flag
+- [ ] *Draft from a folder* writes a design system from a real project
+- [ ] Switching a design system on for a chat names it in the context breakdown
+- [ ] An instruction edited in the hub is still there after reopening Settings
+- [ ] *New project…* picks a folder; a chat started in it works there
+- [ ] Deleting a project keeps its chats and only unassigns them
+- [ ] The Artifacts list shows an artifact from another chat, and opens it
+
+## Scheduling and notifications
+
+- [ ] *Scheduled* opens the panel; `/scheduled` toggles the same panel
+- [ ] A task set for a minute's time fires within a minute and does **not** fire twice
+- [ ] The fired run lands in a fresh chat titled after the task, visible in the sidebar
+- [ ] "The first Wednesday of the month" spells out as a sentence, not a cron string
+- [ ] *Run now* runs the task and leaves *Next:* where it was
+- [ ] *Pause* stops the clock and leaves the task in the list
+- [ ] With the window in the background, a run finishing raises an OS notification
+- [ ] `notify_user` raises a notification; with the window focused, only the notice
+- [ ] Turning *Tell me when something is done* off silences the toast, not the dot
+- [ ] A conversation that finishes in the unfocused pane gets a green sidebar dot,
+      cleared when it is opened
+
 ## Two panes
 
 - [ ] *Split* shows two conversations; the divider drags and resizes
+- [ ] Right-clicking a sidebar row offers *Open in split view*, which fills the other pane
 - [ ] Closing the app and reopening restores the tabs, the split and the divider
 - [ ] Starting a run in the left pane, then clicking into the right pane, leaves
       the left run streaming with its pulse dot still lit

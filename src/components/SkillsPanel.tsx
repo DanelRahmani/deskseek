@@ -8,6 +8,8 @@ interface Props {
   /** Hand the user to a fresh chat with this as their first message. */
   onAsk: (text: string) => void;
   onClose: () => void;
+  /** Rendered inside the Customise hub: fills it, and draws no panel chrome. */
+  embedded?: boolean;
 }
 
 /**
@@ -19,8 +21,12 @@ interface Props {
 const BUILD_PROMPT =
   "I want to turn something I keep repeating into a skill. Ask me what it should cover — a couple of questions at a time — then draft it and save it with create_skill.";
 
-export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
-  const [skills, setSkills] = useState<SkillView[]>([]);
+export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props) {
+  // The full list, design systems included. The toggle has to send *every*
+  // enabled id back, so filtering the stored list here would silently switch the
+  // design systems off; `skills` below is only what this list shows.
+  const [all, setAll] = useState<SkillView[]>([]);
+  const skills = all.filter((s) => !s.id.startsWith("design-"));
   const [dir, setDir] = useState("");
   const [pasted, setPasted] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -31,7 +37,7 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
       api.listSkills(chatId ?? undefined),
       api.skillsDir(),
     ]);
-    setSkills(list);
+    setAll(list);
     setDir(path);
   };
 
@@ -110,8 +116,8 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
       setStatus("Open a chat to choose skills for it.");
       return;
     }
-    const next = skills.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
-    setSkills(next);
+    const next = all.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
+    setAll(next);
     try {
       await api.setChatSkills(
         chatId,
@@ -122,8 +128,36 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
     }
   };
 
+  /**
+   * Flip the *other* switch: whether every new chat starts with this skill.
+   *
+   * It is written into the skill's own file rather than into this chat, so the
+   * list is reloaded afterwards — what is on disk is the answer, not a guess
+   * made here.
+   */
+  const setDefault = async (skill: SkillView) => {
+    setBusy(true);
+    try {
+      await api.setSkillDefault(skill.id, !skill.default_on);
+      await reload();
+      setStatus(
+        skill.default_on
+          ? `"${skill.name}" is no longer always on. This chat still has it.`
+          : `"${skill.name}" will start switched on in every new chat.`,
+      );
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <aside className="flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
+    <aside
+      className={`flex h-full flex-col bg-neutral-950 ${
+        embedded ? "min-w-0 flex-1" : "w-96 shrink-0 border-l border-neutral-800"
+      }`}
+    >
       <header className="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
         <h2 className="text-sm font-semibold">Skills</h2>
         <span className="ml-auto flex items-center gap-1">
@@ -133,7 +167,7 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
             disabled={busy}
             onClick={() => void reload().catch((e) => setStatus(String(e)))}
           />
-          <IconButton icon="close" label="Close" onClick={onClose} />
+          {!embedded && <IconButton icon="close" label="Close" onClick={onClose} />}
         </span>
       </header>
 
@@ -142,9 +176,17 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
           A skill is an instruction file that joins this chat's system prompt while it is switched
           on. Each one is a folder under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>, so
           they are yours to edit or copy between machines.
-        </p>        <p className="text-xs leading-relaxed text-neutral-500">
-          The assistant can also reach these by itself: it switches one on when a job clearly
-          matches, and anything it writes with `create_skill` lands in this list switched on.
+        </p>
+        <p className="text-xs leading-relaxed text-neutral-500">
+          The assistant can also reach these by itself: the whole list is always in its prompt, so
+          it switches one on when a job clearly matches, and anything it writes with
+          `create_skill` lands in this list switched on. None of their text is sent until that
+          happens — a skill that is off costs one line of list.
+        </p>
+        <p className="text-xs leading-relaxed text-neutral-500">
+          <span className="text-neutral-400">Always on</span> is the other switch: it writes
+          `default: on` into the skill's own file, so <em>every new chat</em> starts with it. Use it
+          for standing preferences; its text then goes with every request in those chats.
         </p>
         <button
           onClick={() => onAsk(BUILD_PROMPT)}
@@ -211,35 +253,57 @@ export function SkillsPanel({ chatId, onAsk, onClose }: Props) {
         {skills.map((skill) => (
           <div
             key={skill.id}
-            className={`flex items-start gap-1 rounded-xl border p-3 text-[13px] transition duration-150 ${
+            className={`rounded-xl border p-3 text-[13px] transition duration-150 ${
               skill.enabled
                 ? "border-sky-800 bg-sky-950/20"
                 : "border-neutral-800/70 bg-neutral-900/40 hover:border-neutral-700"
             }`}
           >
-            <label className="flex flex-1 cursor-pointer items-start gap-3">
-              <input
-                type="checkbox"
-                checked={skill.enabled}
-                onChange={() => toggle(skill.id)}
-                className="mt-0.5"
-              />
-              <span>
-                <span className="block font-medium text-neutral-200">{skill.name}</span>
-                {skill.description && (
-                  <span className="mt-1 block leading-relaxed text-neutral-500">
-                    {skill.description}
-                  </span>
-                )}
-              </span>
-            </label>
+            <div className="flex items-start gap-1">
+              <label className="flex flex-1 cursor-pointer items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={skill.enabled}
+                  onChange={() => toggle(skill.id)}
+                  className="mt-0.5"
+                  title={`Use "${skill.name}" in this chat`}
+                />
+                <span className="min-w-0">
+                  <span className="block font-medium text-neutral-200">{skill.name}</span>
+                  {skill.description && (
+                    <span className="mt-1 block leading-relaxed text-neutral-500">
+                      {skill.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+              <button
+                onClick={() => removeSkill(skill)}
+                disabled={busy}
+                title="Delete this skill's folder"
+                className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
+              >
+                <Icon name="close" />
+              </button>
+            </div>
+            {/* Outside the label on purpose: inside it, a click would also work
+                the chat's checkbox, which is a different question. */}
             <button
-              onClick={() => removeSkill(skill)}
+              type="button"
+              onClick={() => void setDefault(skill)}
               disabled={busy}
-              title="Delete this skill's folder"
-              className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
+              title={
+                skill.default_on
+                  ? "Every new chat starts with this skill on. Click to stop that."
+                  : "Start every new chat with this skill switched on."
+              }
+              className={`mt-2 rounded py-0.5 pr-2 pl-1 text-[11px] transition duration-150 ${
+                skill.default_on
+                  ? "text-emerald-300 hover:bg-emerald-500/10"
+                  : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
+              }`}
             >
-              <Icon name="close" />
+              {skill.default_on ? "✓ always on for new chats" : "always on for new chats?"}
             </button>
           </div>
         ))}

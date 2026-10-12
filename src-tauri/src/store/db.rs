@@ -28,6 +28,9 @@ pub struct ChatRow {
     /// Out of the way in the sidebar, and nothing else: the messages, the spend
     /// and the folder are exactly where they were.
     pub archived: bool,
+    /// The project this chat belongs to, or `None`. Membership only — the chat's
+    /// own folder and memory do not depend on it.
+    pub project_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -66,6 +69,10 @@ CREATE TABLE IF NOT EXISTS chats (
     agent_mode   TEXT NOT NULL DEFAULT 'standard',
     -- Kept out of the sidebar's way without deleting anything.
     archived     INTEGER NOT NULL DEFAULT 0,
+    -- The project this chat belongs to, or NULL. Membership only: the chat's own
+    -- folder and memory do not depend on it. Also added by ALTER for databases
+    -- written before projects existed.
+    project_id   TEXT,
     created_at   INTEGER NOT NULL,
     updated_at   INTEGER NOT NULL
 );
@@ -188,14 +195,67 @@ CREATE TABLE IF NOT EXISTS file_checkpoints (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_chat ON file_checkpoints(chat_id, created_at);
+
+-- A named container: a folder to work in and the chats that belong to it. The
+-- chats are the members, so deleting a project must never delete them — see
+-- `delete_project`.
+CREATE TABLE IF NOT EXISTS projects (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    -- Where a new chat in this project starts. Optional: a project can be a
+    -- grouping alone.
+    folder     TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at);
+CREATE INDEX IF NOT EXISTS idx_chats_project ON chats(project_id);
+
+-- A prompt that runs itself on a calendar. `next_run_at` is stored rather than
+-- derived so a due task is one indexed comparison, and so a task that was missed
+-- because the app was closed does not fire the instant it opens: the ticker
+-- advances before it fires, and a stale `next_run_at` just means it runs once.
+CREATE TABLE IF NOT EXISTS scheduled_tasks (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    prompt      TEXT NOT NULL,
+    -- The chat to run in, or NULL to start a fresh one each time.
+    chat_id     TEXT,
+    -- Membership only, as with a chat: the run's folder and memory come from the
+    -- chat it lands in, or from the project's folder when a fresh one is made.
+    project_id  TEXT,
+    freq        TEXT NOT NULL DEFAULT 'daily',
+    -- Local wall-clock time, "HH:MM".
+    time        TEXT NOT NULL DEFAULT '09:00',
+    -- 0 = Monday. Read only by the weekly and monthly shapes.
+    weekday     INTEGER NOT NULL DEFAULT 0,
+    -- 1 = first … 4 = fourth. Read only by the monthly shape.
+    nth         INTEGER NOT NULL DEFAULT 1,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    next_run_at INTEGER NOT NULL,
+    last_run_at INTEGER,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_tasks(next_run_at);
 "#;
 
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
-    conn.execute_batch(SCHEMA)?;
-    // Additive migrations for databases written by earlier versions. A failure
-    // here just means the column is already present.
+
+    // Column migrations run BEFORE the schema batch, and the order is load
+    // bearing: `SCHEMA` is one statement batch, so it either all applies or none
+    // of it does, and it contains indexes over columns that an older database
+    // only gains from the ALTERs below. Running the batch first meant
+    // `CREATE INDEX ... ON chats(project_id)` hit a database written before
+    // projects existed and took the whole app down at startup — an index on a
+    // column is a hard dependency, unlike `CREATE TABLE IF NOT EXISTS`.
+    //
+    // A failure here is expected and ignored: on a fresh database the tables do
+    // not exist yet ("no such table"), and on an upgraded one the column is
+    // already there ("duplicate column name"). Neither is an error.
     let _ = conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT", []);
     let _ = conn.execute(
         "ALTER TABLE chats ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'manual'",
@@ -219,6 +279,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // Which project a chat belongs to, if any. NULL for every chat made before
+    // projects existed, which is exactly right: it belongs to none.
+    let _ = conn.execute("ALTER TABLE chats ADD COLUMN project_id TEXT", []);
+
+    conn.execute_batch(SCHEMA)?;
+
     // Databases written before the search index existed have no rows in it. The
     // triggers only fire on new writes, so an empty index over a non-empty table
     // means "first launch after the upgrade" and gets one build. `rebuild` is
@@ -241,7 +307,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 /// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -259,6 +325,7 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             updated_at: r.get(10)?,
             archived: r.get::<_, i64>(11)? != 0,
             agent_mode: r.get(12)?,
+            project_id: r.get(13)?,
         })
     })?;
     rows.collect()
@@ -292,6 +359,7 @@ pub fn create_chat(
         cost_usd: 0.0,
         agent_mode: "standard".to_string(),
         archived: false,
+        project_id: None,
         created_at: ts,
         updated_at: ts,
     })
@@ -299,7 +367,7 @@ pub fn create_chat(
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -317,6 +385,7 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 updated_at: r.get(10)?,
                 archived: r.get::<_, i64>(11)? != 0,
                 agent_mode: r.get(12)?,
+                project_id: r.get(13)?,
             })
         },
     )
@@ -808,6 +877,274 @@ pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, Str
     rows.collect()
 }
 
+// ---------------------------------------------------------------- projects
+
+/// A named container: a folder to work in, and the chats that belong to it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectRow {
+    pub id: String,
+    pub name: String,
+    /// The folder new chats in this project start in. Optional.
+    pub folder: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+const PROJECT_COLS: &str = "id, name, folder, created_at, updated_at";
+
+fn project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
+    Ok(ProjectRow {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        folder: r.get(2)?,
+        created_at: r.get(3)?,
+        updated_at: r.get(4)?,
+    })
+}
+
+pub fn list_projects(conn: &Connection) -> rusqlite::Result<Vec<ProjectRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {PROJECT_COLS} FROM projects ORDER BY updated_at DESC"
+    ))?;
+    let rows = stmt.query_map([], project_row)?;
+    rows.collect()
+}
+
+/// An empty name would make a project unfindable in the list, so it falls back
+/// rather than being refused — the user can rename it straight after.
+pub fn create_project(
+    conn: &Connection,
+    name: &str,
+    folder: Option<&str>,
+) -> rusqlite::Result<ProjectRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let name = name.trim();
+    let name = if name.is_empty() { "New project" } else { name };
+    conn.execute(
+        "INSERT INTO projects (id, name, folder, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![id, name, folder, ts],
+    )?;
+    Ok(ProjectRow {
+        id,
+        name: name.to_string(),
+        folder: folder.map(str::to_string),
+        created_at: ts,
+        updated_at: ts,
+    })
+}
+
+pub fn rename_project(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<()> {
+    let name = name.trim();
+    let name = if name.is_empty() { "New project" } else { name };
+    conn.execute(
+        "UPDATE projects SET name = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, name, now_ts()],
+    )?;
+    Ok(())
+}
+
+pub fn set_project_folder(
+    conn: &Connection,
+    id: &str,
+    folder: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE projects SET folder = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, folder, now_ts()],
+    )?;
+    Ok(())
+}
+
+/// Removes the container only. The chats stay — deleting a project must not
+/// delete conversations — they simply stop belonging to anything.
+pub fn delete_project(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("UPDATE chats SET project_id = NULL WHERE project_id = ?1", [id])?;
+    tx.execute("DELETE FROM projects WHERE id = ?1", [id])?;
+    tx.commit()
+}
+
+/// Puts a chat in a project, or takes it out of one.
+pub fn set_chat_project(
+    conn: &Connection,
+    id: &str,
+    project_id: Option<&str>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET project_id = ?2 WHERE id = ?1",
+        params![id, project_id],
+    )?;
+    Ok(())
+}
+
+// ---------------------------------------------------------- scheduled tasks
+
+/// One recurring task: a prompt, when it next runs, and where its run goes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScheduledRow {
+    pub id: String,
+    pub title: String,
+    pub prompt: String,
+    /// The chat to run in, or `None` to start a fresh one each time.
+    pub chat_id: Option<String>,
+    pub project_id: Option<String>,
+    pub freq: String,
+    /// Local wall-clock "HH:MM".
+    pub time: String,
+    /// 0 = Monday. Read only by the weekly and monthly shapes.
+    pub weekday: i64,
+    /// 1 = first … 4 = fourth. Read only by the monthly shape.
+    pub nth: i64,
+    pub enabled: bool,
+    pub next_run_at: i64,
+    pub last_run_at: Option<i64>,
+    pub created_at: i64,
+}
+
+const SCHEDULED_COLS: &str = "id, title, prompt, chat_id, project_id, freq, time, weekday, nth, \
+                              enabled, next_run_at, last_run_at, created_at";
+
+fn scheduled_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledRow> {
+    Ok(ScheduledRow {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        prompt: r.get(2)?,
+        chat_id: r.get(3)?,
+        project_id: r.get(4)?,
+        freq: r.get(5)?,
+        time: r.get(6)?,
+        weekday: r.get(7)?,
+        nth: r.get(8)?,
+        enabled: r.get::<_, i64>(9)? != 0,
+        next_run_at: r.get(10)?,
+        last_run_at: r.get(11)?,
+        created_at: r.get(12)?,
+    })
+}
+
+pub fn list_scheduled(conn: &Connection) -> rusqlite::Result<Vec<ScheduledRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SCHEDULED_COLS} FROM scheduled_tasks ORDER BY next_run_at"
+    ))?;
+    let rows = stmt.query_map([], scheduled_row)?;
+    rows.collect()
+}
+
+/// Adds a task. `next_run_at` comes from the caller, so the row has no clock of
+/// its own and a test can schedule a task into the past.
+#[allow(clippy::too_many_arguments)]
+pub fn create_scheduled(
+    conn: &Connection,
+    title: &str,
+    prompt: &str,
+    chat_id: Option<&str>,
+    project_id: Option<&str>,
+    freq: &str,
+    time: &str,
+    weekday: i64,
+    nth: i64,
+    next_run_at: i64,
+) -> rusqlite::Result<ScheduledRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let title = title.trim();
+    let title = if title.is_empty() { "Scheduled task" } else { title };
+    conn.execute(
+        "INSERT INTO scheduled_tasks
+         (id, title, prompt, chat_id, project_id, freq, time, weekday, nth, enabled, next_run_at, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)",
+        params![id, title, prompt, chat_id, project_id, freq, time, weekday, nth, next_run_at, ts],
+    )?;
+    Ok(ScheduledRow {
+        id,
+        title: title.to_string(),
+        prompt: prompt.to_string(),
+        chat_id: chat_id.map(str::to_string),
+        project_id: project_id.map(str::to_string),
+        freq: freq.to_string(),
+        time: time.to_string(),
+        weekday,
+        nth,
+        enabled: true,
+        next_run_at,
+        last_run_at: None,
+        created_at: ts,
+    })
+}
+
+/// Rewrites a task, including when it next runs — a changed time has to move the
+/// next run, or the edit would only take effect after the old one fired.
+#[allow(clippy::too_many_arguments)]
+pub fn update_scheduled(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    prompt: &str,
+    chat_id: Option<&str>,
+    project_id: Option<&str>,
+    freq: &str,
+    time: &str,
+    weekday: i64,
+    nth: i64,
+    enabled: bool,
+    next_run_at: i64,
+) -> rusqlite::Result<()> {
+    let title = title.trim();
+    let title = if title.is_empty() { "Scheduled task" } else { title };
+    conn.execute(
+        "UPDATE scheduled_tasks
+         SET title = ?2, prompt = ?3, chat_id = ?4, project_id = ?5, freq = ?6, time = ?7,
+             weekday = ?8, nth = ?9, enabled = ?10, next_run_at = ?11
+         WHERE id = ?1",
+        params![
+            id,
+            title,
+            prompt,
+            chat_id,
+            project_id,
+            freq,
+            time,
+            weekday,
+            nth,
+            enabled as i64,
+            next_run_at
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_scheduled(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Enabled tasks whose time has come, earliest first.
+pub fn due_scheduled(conn: &Connection, now: i64) -> rusqlite::Result<Vec<ScheduledRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SCHEDULED_COLS} FROM scheduled_tasks
+         WHERE enabled = 1 AND next_run_at <= ?1 ORDER BY next_run_at"
+    ))?;
+    let rows = stmt.query_map([now], scheduled_row)?;
+    rows.collect()
+}
+
+/// Records a run and moves the task on. Called *before* the run starts: a run
+/// that outlasts the tick interval must not be started again by the next tick.
+pub fn mark_scheduled_ran(
+    conn: &Connection,
+    id: &str,
+    next_run_at: i64,
+    ran_at: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE scheduled_tasks SET next_run_at = ?2, last_run_at = ?3 WHERE id = ?1",
+        params![id, next_run_at, ran_at],
+    )?;
+    Ok(())
+}
+
 // --------------------------------------------------------------- artifacts
 
 /// One artifact: a titled, versioned document the panel renders. `kind` picks
@@ -956,6 +1293,16 @@ pub fn list_artifacts(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec<
     rows.collect()
 }
 
+/// Every artifact, newest first, across every chat — what the gallery lists.
+/// Capped: the gallery is a browsing surface, not an export.
+pub fn list_all_artifacts(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<ArtifactRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {ARTIFACT_COLS} FROM artifacts ORDER BY updated_at DESC LIMIT ?1"
+    ))?;
+    let rows = stmt.query_map([limit as i64], artifact_row)?;
+    rows.collect()
+}
+
 /// The artifact, one version's content (`None` = current), and every version's
 /// metadata — newest first, which is the order the dropdown shows.
 pub fn get_artifact_detail(
@@ -1084,10 +1431,84 @@ pub fn rewind_last_run(conn: &Connection, chat_id: &str) -> Result<Vec<String>, 
 mod tests {
     use super::*;
 
+    /// A **fresh** database: `SCHEMA` and nothing else.
+    ///
+    /// Note the blind spot this creates. It is the schema as `CREATE TABLE`
+    /// builds it, so a column that only arrives via `ALTER` is present here from
+    /// the start and the upgrade path is never exercised — a bug in `open()`'s
+    /// ordering passed 251 tests and then took the app down on the user's real
+    /// database. Anything about upgrading needs a file and `open()`; see
+    /// `an_older_database_upgrades_instead_of_refusing_to_open`.
     fn mem() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(SCHEMA).unwrap();
         conn
+    }
+
+    #[test]
+    fn an_older_database_upgrades_instead_of_refusing_to_open() {
+        // Exactly the `chats` table as it was before projects existed: the same
+        // columns, minus `project_id`. `SCHEMA` carries an index over that column,
+        // so if `open()` ran the schema batch before the ALTERs it would abort
+        // here — which is precisely what happened in the wild.
+        let dir = std::env::temp_dir().join(format!("deskseek-upgrade-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("deskseek.db");
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE chats (
+                    id           TEXT PRIMARY KEY,
+                    title        TEXT NOT NULL,
+                    kind         TEXT NOT NULL DEFAULT 'chat',
+                    workspace    TEXT,
+                    model        TEXT NOT NULL,
+                    thinking     INTEGER NOT NULL DEFAULT 1,
+                    effort       TEXT NOT NULL DEFAULT 'high',
+                    permission_mode TEXT NOT NULL DEFAULT 'manual',
+                    cost_usd     REAL NOT NULL DEFAULT 0,
+                    agent_mode   TEXT NOT NULL DEFAULT 'standard',
+                    archived     INTEGER NOT NULL DEFAULT 0,
+                    created_at   INTEGER NOT NULL,
+                    updated_at   INTEGER NOT NULL
+                );
+                INSERT INTO chats
+                    (id, title, kind, model, created_at, updated_at)
+                    VALUES ('old-1', 'A chat from before', 'chat', 'm', 1, 1);",
+            )
+            .unwrap();
+        }
+
+        let conn = open(&path).expect("an older database must still open");
+
+        // The column the index needs is there, and the old row kept its identity
+        // while gaining exactly nothing: it belongs to no project.
+        let kept = get_chat(&conn, "old-1").unwrap();
+        assert_eq!(kept.title, "A chat from before");
+        assert!(kept.project_id.is_none());
+
+        // The index that actually failed must really exist now. "Did not crash"
+        // would also be satisfied by the batch silently skipping it.
+        let built: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_chats_project'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(built, 1, "the index over the ALTERed column was not created");
+
+        // And the new features work against the upgraded file, not just against
+        // an in-memory schema.
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        set_chat_project(&conn, &chat.id, None).unwrap();
+        assert!(list_projects(&conn).unwrap().is_empty());
+        assert!(list_scheduled(&conn).unwrap().is_empty());
+        create_scheduled(&conn, "t", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
+        assert_eq!(list_scheduled(&conn).unwrap().len(), 1);
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -1433,5 +1854,127 @@ mod tests {
         set_summary(&conn, &chat.id, "first").unwrap();
         set_summary(&conn, &chat.id, "second").unwrap();
         assert_eq!(get_summary(&conn, &chat.id).unwrap().as_deref(), Some("second"));
+    }
+
+    #[test]
+    fn deleting_a_project_keeps_its_chats_and_unassigns_them() {
+        let conn = mem();
+        let project = create_project(&conn, "Client work", Some("/repo")).unwrap();
+        let inside = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let outside = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        set_chat_project(&conn, &inside.id, Some(&project.id)).unwrap();
+
+        assert_eq!(get_chat(&conn, &inside.id).unwrap().project_id.as_deref(), Some(project.id.as_str()));
+        assert!(get_chat(&conn, &outside.id).unwrap().project_id.is_none());
+        assert_eq!(list_projects(&conn).unwrap().len(), 1);
+
+        delete_project(&conn, &project.id).unwrap();
+
+        // The container goes; the conversation does not. It is only unassigned,
+        // which is the whole reason deleting a project needs no confirmation.
+        assert!(list_projects(&conn).unwrap().is_empty());
+        assert!(get_chat(&conn, &inside.id).unwrap().project_id.is_none());
+        assert!(get_chat(&conn, &outside.id).is_ok());
+    }
+
+    #[test]
+    fn renaming_a_project_keeps_an_empty_name_from_hiding_it() {
+        let conn = mem();
+        let project = create_project(&conn, "  ", None).unwrap();
+        assert_eq!(project.name, "New project");
+        rename_project(&conn, &project.id, "   ").unwrap();
+        assert_eq!(list_projects(&conn).unwrap()[0].name, "New project");
+        rename_project(&conn, &project.id, "Real name").unwrap();
+        assert_eq!(list_projects(&conn).unwrap()[0].name, "Real name");
+    }
+
+    #[test]
+    fn only_tasks_whose_time_has_come_are_due() {
+        let conn = mem();
+        let soon = create_scheduled(
+            &conn, "Morning brief", "summarise the news", None, None, "daily", "09:00", 0, 1, 1_000,
+        )
+        .unwrap();
+        let later = create_scheduled(
+            &conn, "Weekly review", "check the books", None, None, "weekly", "17:00", 2, 1, 9_000,
+        )
+        .unwrap();
+
+        let due = due_scheduled(&conn, 5_000).unwrap();
+        assert_eq!(due.len(), 1);
+        assert_eq!(due[0].id, soon.id);
+        assert!(due_scheduled(&conn, 0).unwrap().is_empty());
+        // Both, oldest first.
+        let both = due_scheduled(&conn, 10_000).unwrap();
+        assert_eq!(
+            both.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            vec![soon.id.as_str(), later.id.as_str()]
+        );
+    }
+
+    #[test]
+    fn a_disabled_task_is_never_due() {
+        let conn = mem();
+        let task = create_scheduled(
+            &conn, "Later", "do a thing", None, None, "daily", "09:00", 0, 1, 1,
+        )
+        .unwrap();
+        update_scheduled(
+            &conn, &task.id, "Later", "do a thing", None, None, "daily", "09:00", 0, 1, false, 1,
+        )
+        .unwrap();
+        assert!(due_scheduled(&conn, 999_999).unwrap().is_empty());
+        assert!(!list_scheduled(&conn).unwrap()[0].enabled);
+    }
+
+    #[test]
+    fn advancing_a_task_records_the_run_and_moves_it_on() {
+        let conn = mem();
+        let task = create_scheduled(
+            &conn, "Brief", "p", None, None, "daily", "09:00", 0, 1, 1_000,
+        )
+        .unwrap();
+        assert!(task.last_run_at.is_none());
+
+        mark_scheduled_ran(&conn, &task.id, 86_401_000, 1_000).unwrap();
+
+        let after = &list_scheduled(&conn).unwrap()[0];
+        assert_eq!(after.next_run_at, 86_401_000);
+        assert_eq!(after.last_run_at, Some(1_000));
+        // Already advanced, so the same due check does not fire it again.
+        assert!(due_scheduled(&conn, 1_001).unwrap().is_empty());
+    }
+
+    #[test]
+    fn updating_a_task_moves_its_next_run_and_keeps_one_row() {
+        let conn = mem();
+        let task = create_scheduled(
+            &conn, "Old", "old prompt", None, None, "daily", "09:00", 0, 1, 1_000,
+        )
+        .unwrap();
+        update_scheduled(
+            &conn, &task.id, "New", "new prompt", None, None, "weekly", "08:30", 2, 1, true,
+            555_000,
+        )
+        .unwrap();
+
+        let all = list_scheduled(&conn).unwrap();
+        assert_eq!(all.len(), 1, "an update must not add a second task");
+        assert_eq!(all[0].title, "New");
+        assert_eq!(all[0].prompt, "new prompt");
+        assert_eq!(all[0].freq, "weekly");
+        assert_eq!(all[0].time, "08:30");
+        assert_eq!(all[0].weekday, 2);
+        assert_eq!(all[0].next_run_at, 555_000);
+
+        delete_scheduled(&conn, &task.id).unwrap();
+        assert!(list_scheduled(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_task_with_no_title_still_shows_up_in_the_list() {
+        let conn = mem();
+        create_scheduled(&conn, "  ", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
+        assert_eq!(list_scheduled(&conn).unwrap()[0].title, "Scheduled task");
     }
 }

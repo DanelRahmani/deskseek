@@ -22,6 +22,12 @@ Both sections are functional:
 - Streaming replies with a collapsible *thinking* pane, Markdown and highlighted code — and every
   fenced block, and every answer, carries a quiet **copy** button, so a snippet does not have to be
   drag-selected out of the page
+- **Tool steps fold away** — a turn that reads twelve files is one collapsible *N steps* line
+  rather than twelve cards. Open it to see each call; a failed step, or a screenshot, opens the
+  group by itself
+- **It can ask you a question** — when it genuinely cannot proceed without a decision only you can
+  make, it calls `ask_user` and the run waits for your answer in the composer instead of guessing;
+  every question offers a few options and always lets you type your own
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
   one. An image is downscaled and sent to the model as a multimodal content part; a text file
   is sent as its own text, so the model can actually read it; anything else is kept as a name
@@ -66,6 +72,45 @@ Both sections are functional:
     itself: `use_skill` switches it on and hands over its instructions mid-conversation, and
     `list_skills` asks for the list again. `/skill` lists them from the composer, `/skill <id>`
     toggles one, and the panel's toggle does the same thing
+  - **Nothing is sent until it is used.** The list is always in the prompt — a skill that is off
+    costs one line — and only the skills marked `[on]` have their text in there too. So a store of
+    twelve skills costs twelve lines until one is actually wanted, which is the point of having
+    them
+  - **Two switches, and they answer different questions.** The checkbox is *this chat*: the skill's
+    text joins this conversation's prompt. **always on for new chats** writes `default: on` into the
+    skill's own `SKILL.md`, so every chat you start from then on begins with it switched on — the
+    right setting for a standing preference, and the one to be deliberate about, because that text
+    then goes with every request in those chats. Neither switch touches a chat that already exists
+  - Skills live in **Customise** (the sidebar's *Customise* entry, or `/skills`), together with
+    connectors, instructions and design systems
+- **Design systems** — a stored style reference the assistant applies when it builds or writes UI:
+  the type scale, the palette, the spacing, and the rules that hold them together. *Draft from a
+  folder* reads a project that already has a look and writes the reference from what is really in
+  it; or write one from scratch and revise it by saving again. It joins the prompt while it is
+  switched on for a chat, so a page or a document comes out looking like the rest
+- **Projects** — a named container with a folder, and the conversations that belong to it. *New
+  project…* picks the folder; a chat started inside it works there, and an existing chat can be
+  moved in or out from the panel. Deleting a project keeps its chats — they are only unassigned,
+  which is exactly why it needs no confirmation
+- **Scheduled tasks** (*Scheduled* in the sidebar, or `/scheduled`) — a prompt that runs itself on
+  a calendar: every day at 09:00, every Wednesday at 17:00, or **the first Wednesday of the month**
+  at 08:00. There is no cron string to learn; the three fields that describe the schedule *are*
+  the schedule. Each run goes through the ordinary turn path in a fresh chat, so a daily task does
+  not become one conversation that grows forever, and the chat appears in the sidebar under the
+  task's title. *Run now* fires it without moving when it next runs on its own; *Pause* leaves it
+  in the list and stops the clock
+  - Two things are deliberate rather than missing. A run never waits for an approval — nobody is
+    watching at 09:00 — so a scheduled chat is always in auto; the catastrophic guard still
+    applies, and a tool that is never auto-approved (driving a browser, pressing keys) waits for
+    you instead of being clicked unattended. And a window missed while the app was closed fires
+    **once** on the next launch rather than catching up on every missed occurrence
+- **It tells you when it is done** — a conversation that finishes while you are reading another one
+  gets a green dot on its sidebar row, cleared the moment you open it; a scheduled task starting,
+  or the assistant calling `notify_user` at the end of a long job, raises an **OS notification** as
+  well. It only pops up when the window is not already in front of you — if it is, the answer is on
+  screen and a second popup over it is noise — and **Settings → Tools** turns the whole thing off
+  or loosens that rule. The dot is not affected by either switch: `on` or `off`, you can still see
+  which conversation moved while you were elsewhere
 - **Scoped instructions** — named instruction blocks that apply only in chat, only in coding,
   or both (the bundled *Document design* one is an example)
 - **The system prompt is assembled, not written once** — the base prompt says what you have
@@ -75,8 +120,8 @@ Both sections are functional:
   instructions, then memory — and the skills this chat has on, whose text joins the prompt as its
   own section. **Settings → Models & prompt** shows the base prompt; *Context* in a chat shows the
   assembled result part by part
-- `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`
-  and `/export`
+- `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`,
+  `/projects`, `/artifacts`, `/scheduled` and `/export`
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
@@ -140,8 +185,8 @@ Both sections are functional:
 
 **Approvals, permission modes and stopping a run**
 
-Each conversation carries its own **mode**, chosen in the header and cycled with `Shift+Tab` (or
-`/mode <name>`). The modes are a ladder, and each rung is about what is *allowed*, not tone:
+Each conversation carries its own **mode**, chosen beside the message box and cycled with `Shift+Tab`
+(or `/mode <name>`). The modes are a ladder, and each rung is about what is *allowed*, not tone:
 
 - **Ask** — no tools at all. The model answers from what it knows and says plainly when something
   would need a file, the web or a command, instead of implying it looked
@@ -224,7 +269,9 @@ is on and a pulse while it is working.
 *Split* turns the window into two panes, each showing a different conversation. The badge on a
 tab says which pane it is in, and the divider between them drags to resize. Clicking anywhere in
 a pane aims the sidebar, the tab strip and the file tree at it — so *Files* shows the folder of
-the pane you clicked, not the other one. Closing a tab refills its pane from another open tab
+the pane you clicked, not the other one. Right-clicking a conversation in the sidebar offers
+**Open in split view**, which puts it in the other pane — splitting first if there is only one —
+rather than replacing what is already on screen. Closing a tab refills its pane from another open tab
 rather than leaving a hole.
 
 The layout is remembered, so reopening the app brings back the same tabs, the same split and
@@ -347,7 +394,10 @@ And the limits, stated rather than papered over:
 
 When the answer is a document rather than a reply — a report, a page, a chart, a diagram, a note
 or a snippet worth keeping — the agent calls `artifact_create` instead of pasting it into the
-chat. The document opens in a panel beside the conversation and is kept, not scrolled away:
+chat. The document opens in a panel beside the conversation and is kept, not scrolled away.
+Every one of them is also in the **Artifacts** list in the sidebar (`/artifacts`), newest first
+across every conversation — a document is usually wanted long after the chat that made it is
+forgotten:
 
 | Kind | How it is shown |
 | --- | --- |
@@ -405,10 +455,10 @@ disagree about what the document says. Four things are worth saying plainly:
 - **Existing files are never overwritten.** A second document with the same name becomes
   `name-2`, so a re-run costs nothing.
 
-**MCP servers**
+**Connectors (MCP servers)**
 
-DeskSeek is an MCP *client*. Servers you configure are launched as child processes and their
-tools are offered to the model in **both** sections:
+Managed in **Customise → Connectors** (`/mcp`). DeskSeek is an MCP *client*. Servers you configure
+are launched as child processes and their tools are offered to the model in **both** sections:
 
 - Config lives in `mcp.json` next to your settings, and can be edited in the app under
   **MCP servers** or by hand (the panel has a *Re-read file* button for that)
@@ -562,6 +612,8 @@ src-tauri/src/
   tools/                 built-in tools, path sandbox, process runner, permission guard
   mcp/                   MCP client (rmcp) and server config
   runs.rs                in-flight run registry + cancel handles
+  schedule.rs            when a recurring task next runs (pure local-time arithmetic)
+  notify.rs              one place that decides whether a ping becomes an OS toast
   fs_watch.rs            workspace watcher, refcounted roots, coalesced events
   commands.rs            the Tauri command surface
 ```
@@ -573,6 +625,8 @@ Notable invariants (covered by tests):
 - `tool_choice: required`/named is rejected in thinking mode.
 - Model prices are half off-peak; peak is 01:00–04:00 and 06:00–10:00 UTC, Mon–Fri.
 - A chat has at most one live run; starting another cancels the first.
+- `next_run_at` is always **strictly after** now, and the scheduler advances it *before* the run
+  starts — those two together are what stop a task firing twice.
 
 ## License
 

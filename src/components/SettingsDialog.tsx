@@ -7,7 +7,7 @@ import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
 import { MemorySection } from "./MemorySection";
 import { Icon } from "./Icon";
-import type { EnvProbe, Instruction, ModelInfo, Settings, ToolGrant } from "../types";
+import type { EnvProbe, ModelInfo, Settings, ToolGrant } from "../types";
 
 /**
  * The stored "always allow" grants.
@@ -81,7 +81,6 @@ interface Props {
 }
 
 const EFFORTS = ["low", "high", "max"];
-const SCOPES = ["chat", "coding", "both"];
 const inputCls =
   "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
 
@@ -91,7 +90,6 @@ export type SettingsSection =
   | "prompt"
   | "tools"
   | "browsing"
-  | "instructions"
   | "memory"
   | "commands";
 
@@ -121,7 +119,6 @@ const SECTIONS: { id: SettingsSection; label: string; keywords: string }[] = [
     label: "Browsing",
     keywords: "internet searxng search browser edge chrome fetch web",
   },
-  { id: "instructions", label: "Instructions", keywords: "scoped rules context" },
   {
     id: "memory",
     label: "Memory",
@@ -375,30 +372,6 @@ export function SettingsDialog({
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
-
-  const setInstruction = (id: string, patch: Partial<Instruction>) =>
-    setForm((f) => ({
-      ...f,
-      instructions: f.instructions.map((i) => (i.id === id ? { ...i, ...patch } : i)),
-    }));
-
-  const addInstruction = () =>
-    setForm((f) => ({
-      ...f,
-      instructions: [
-        ...f.instructions,
-        {
-          id: `custom-${Date.now()}`,
-          name: "New instruction",
-          scope: "chat",
-          body: "",
-          enabled: true,
-        },
-      ],
-    }));
-
-  const removeInstruction = (id: string) =>
-    setForm((f) => ({ ...f, instructions: f.instructions.filter((i) => i.id !== id) }));
 
   const saveKey = async () => {
     if (!apiKey.trim()) return;
@@ -961,68 +934,6 @@ export function SettingsDialog({
             </>
           )}
 
-          {tab === "instructions" && (
-            <>
-              <p className="text-xs text-neutral-500">
-                Instructions apply only in their scope — so “when writing a document use this type”
-                does not clutter every chat.
-              </p>
-              {form.instructions.map((instruction) => (
-                <div
-                  key={instruction.id}
-                  className="space-y-2 rounded-lg border border-neutral-800 bg-neutral-900/40 p-3"
-                >
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-none"
-                      value={instruction.name}
-                      onChange={(e) => setInstruction(instruction.id, { name: e.target.value })}
-                    />
-                    <select
-                      className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none"
-                      value={instruction.scope}
-                      onChange={(e) => setInstruction(instruction.id, { scope: e.target.value })}
-                    >
-                      {SCOPES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <label className="flex items-center gap-1 text-[11px] text-neutral-400">
-                      <input
-                        type="checkbox"
-                        checked={instruction.enabled}
-                        onChange={(e) =>
-                          setInstruction(instruction.id, { enabled: e.target.checked })
-                        }
-                      />
-                      on
-                    </label>
-                    <button
-                      onClick={() => removeInstruction(instruction.id)}
-                      className="text-neutral-500 hover:text-red-400"
-                      title="Remove"
-                    >
-                      <Icon name="close" />
-                    </button>
-                  </div>
-                  <textarea
-                    className={`${inputCls} h-24 resize-y font-mono text-[11px]`}
-                    value={instruction.body}
-                    onChange={(e) => setInstruction(instruction.id, { body: e.target.value })}
-                  />
-                </div>
-              ))}
-              <button
-                onClick={addInstruction}
-                className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100"
-              >
-                + Add instruction
-              </button>
-            </>
-          )}
-
           {tab === "tools" && (
             <>
               <section>
@@ -1167,6 +1078,31 @@ export function SettingsDialog({
                   It asks before every press and every keystroke, and Ctrl+Alt+Esc stops it
                   immediately. Off by default, because whatever is on screen may be private.
                   Windows only.
+                </p>
+              </section>
+
+              <section>
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.notifications}
+                    onChange={(e) => saveTool({ notifications: e.target.checked })}
+                  />
+                  Tell me when something is done
+                </label>
+                <label className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.notifyOnlyWhenUnfocused}
+                    disabled={!form.notifications}
+                    onChange={(e) => saveTool({ notifyOnlyWhenUnfocused: e.target.checked })}
+                  />
+                  Only when the window is not in front of me
+                </label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Covers a scheduled task starting, and the assistant using its `notify_user`
+                  tool. A conversation that finishes while you are reading another one always
+                  gets a dot in the sidebar, whether or not a popup is allowed.
                 </p>
               </section>
             </>

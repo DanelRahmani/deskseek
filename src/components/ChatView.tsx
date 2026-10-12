@@ -8,15 +8,18 @@ import type {
   MessageRow,
   ModelInfo,
   PermissionMode,
+  QuestionEvent,
   ToolRun,
 } from "../types";
 import { tasksFrom } from "../lib/tasks";
+import { buildTranscript } from "../lib/transcript";
 import { CopyButton, Markdown } from "./Markdown";
 import { IconButton } from "./Icon";
 import { formatTokens } from "../lib/context";
 import { ThinkingBlock } from "./ThinkingBlock";
-import { ToolCallCard } from "./ToolCallCard";
+import { ToolStepGroup } from "./ToolStepGroup";
 import { ApprovalPrompt } from "./ApprovalPrompt";
+import { QuestionPrompt } from "./QuestionPrompt";
 import { TaskList } from "./TaskList";
 
 interface Props {
@@ -25,6 +28,8 @@ interface Props {
   stream: { content: string; reasoning: string } | null;
   tools: ToolRun[];
   approvals: ApprovalEvent[];
+  /** Questions the model is waiting on for this chat. */
+  questions: QuestionEvent[];
   attachments: Attachment[];
   busy: boolean;
   models: ModelInfo[];
@@ -55,6 +60,9 @@ interface Props {
   onAttach: (files: FileList | File[]) => void;
   onRemoveAttachment: (index: number) => void;
   onDecideApproval: (requestId: string, decision: "once" | "session" | "always" | "deny") => void;
+  /** Answer a question the model asked; `selected` and `free` are per question. */
+  onAnswerQuestion: (requestId: string, selected: string[][], free: string[]) => void;
+  onSkipQuestion: (requestId: string) => void;
 }
 
 const EFFORTS = ["low", "high", "max"];
@@ -112,8 +120,11 @@ export const COMMANDS = [
   { name: "/summarise", description: "Propose memories from this chat" },
   { name: "/memory", description: "Open the memory settings" },
   { name: "/skill", description: "List skills, or switch one on for this chat" },
-  { name: "/skills", description: "Choose skills for this chat" },
-  { name: "/mcp", description: "Manage MCP servers" },
+  { name: "/skills", description: "Skills, connectors, instructions and design systems" },
+  { name: "/mcp", description: "Manage MCP servers (connectors)" },
+  { name: "/projects", description: "Projects: a folder and the chats in it" },
+  { name: "/artifacts", description: "Every artifact, from every chat" },
+  { name: "/scheduled", description: "Recurring prompts on a calendar" },
   { name: "/setup", description: "Reopen the setup screen" },
   { name: "/files", description: "Show the file tree" },
   { name: "/folder", description: "Pick the folder for a coding task" },
@@ -130,6 +141,7 @@ export function ChatView({
   stream,
   tools,
   approvals,
+  questions,
   attachments,
   busy,
   models,
@@ -155,12 +167,17 @@ export function ChatView({
   onAttach,
   onRemoveAttachment,
   onDecideApproval,
+  onAnswerQuestion,
+  onSkipQuestion,
 }: Props) {
   const [draft, setDraft] = useState("");
   const [cmdIndex, setCmdIndex] = useState(0);
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.
   const tasks = useMemo(() => tasksFrom(tools), [tools]);
+  // Messages and the turn in flight, folded so a run of tool calls draws as one
+  // row the user can open instead of a column of cards.
+  const transcript = useMemo(() => buildTranscript(messages, tools), [messages, tools]);
   // Only the newest user turn is editable: an older one has answers after it
   // that a re-run would silently discard, and offering that would be a surprise.
   const lastUserId = useMemo(() => {
@@ -332,61 +349,6 @@ export function ChatView({
             </button>
           )}
 
-          {/* The mode first, then its consequence: the approval control is a real
-              second choice in Standard, and in the other three there is nothing to
-              choose — so it is not shown at all. */}
-          {chat && (
-            <div
-              className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
-              title={AGENT_MODES.find((m) => m.id === chat.agent_mode)?.hint}
-            >
-              {AGENT_MODES.map((entry) => {
-                const active = chat.agent_mode === entry.id;
-                return (
-                  <button
-                    key={entry.id}
-                    onClick={() => onAgentMode(entry.id)}
-                    title={entry.hint}
-                    className={`rounded-md px-2 py-0.5 text-[13px] transition duration-150 ${
-                      active
-                        ? "bg-sky-500/15 font-medium text-sky-300"
-                        : "text-neutral-500 hover:text-neutral-300"
-                    }`}
-                  >
-                    {entry.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
-          {chat && chat.agent_mode === "standard" && (
-            <div
-              className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
-              title={MODES.find((m) => m.id === chat.permission_mode)?.hint}
-            >
-              {MODES.map((mode) => {
-                const active = chat.permission_mode === mode.id;
-                const tone =
-                  mode.id === "skip"
-                    ? "bg-red-500/15 text-red-300"
-                    : "bg-sky-500/15 text-sky-300";
-                return (
-                  <button
-                    key={mode.id}
-                    onClick={() => onModeChange(mode.id)}
-                    title={mode.hint}
-                    className={`rounded-md px-1.5 py-0.5 text-xs transition duration-150 ${
-                      active ? `${tone} font-medium` : "text-neutral-500 hover:text-neutral-300"
-                    }`}
-                  >
-                    {mode.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-
           <button
             onClick={onContext}
             className="flex items-center gap-1.5 rounded px-1 py-0.5 transition hover:bg-neutral-800"
@@ -483,18 +445,20 @@ export function ChatView({
             </div>
           )}
 
-          {messages.map((m) => (
-            <Bubble
-              key={m.id}
-              message={m}
-              onEdit={m.id === lastUserId ? onResend : undefined}
-              onRetry={m.id === retryId && !busy ? () => onResend(null) : undefined}
-            />
-          ))}
-
-          {tools.map((run) => (
-            <ToolCallCard key={run.id} run={run} />
-          ))}
+          {transcript.map((item) =>
+            item.kind === "message" ? (
+              <Bubble
+                key={item.message.id}
+                message={item.message}
+                onEdit={item.message.id === lastUserId ? onResend : undefined}
+                onRetry={
+                  item.message.id === retryId && !busy ? () => onResend(null) : undefined
+                }
+              />
+            ) : (
+              <ToolStepGroup key={`steps-${item.steps[0].id}`} steps={item.steps} />
+            ),
+          )}
 
           {stream && (
             <div className="flex flex-col">
@@ -564,6 +528,15 @@ export function ChatView({
         <div className="mx-auto max-w-3xl">
           {tasks.length > 0 && <TaskList tasks={tasks} />}
 
+          {questions.map((request) => (
+            <QuestionPrompt
+              key={request.requestId}
+              request={request}
+              onSubmit={onAnswerQuestion}
+              onSkip={onSkipQuestion}
+            />
+          ))}
+
           {approvals.map((request) => (
             <ApprovalPrompt key={request.requestId} request={request} onDecide={onDecideApproval} />
           ))}
@@ -620,6 +593,64 @@ export function ChatView({
                   <span className="truncate text-neutral-500">{command.description}</span>
                 </button>
               ))}
+            </div>
+          )}
+
+          {chat && (
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <div
+                className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
+                title={AGENT_MODES.find((m) => m.id === chat.agent_mode)?.hint}
+              >
+                {AGENT_MODES.map((entry) => {
+                  const active = chat.agent_mode === entry.id;
+                  return (
+                    <button
+                      key={entry.id}
+                      onClick={() => onAgentMode(entry.id)}
+                      title={entry.hint}
+                      className={`rounded-md px-2 py-0.5 text-[12px] transition duration-150 ${
+                        active
+                          ? "bg-sky-500/15 font-medium text-sky-300"
+                          : "text-neutral-500 hover:text-neutral-300"
+                      }`}
+                    >
+                      {entry.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {chat.agent_mode === "standard" && (
+                <div
+                  className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
+                  title={MODES.find((m) => m.id === chat.permission_mode)?.hint}
+                >
+                  {MODES.map((mode) => {
+                    const active = chat.permission_mode === mode.id;
+                    const tone =
+                      mode.id === "skip"
+                        ? "bg-red-500/15 text-red-300"
+                        : "bg-sky-500/15 text-sky-300";
+                    return (
+                      <button
+                        key={mode.id}
+                        onClick={() => onModeChange(mode.id)}
+                        title={mode.hint}
+                        className={`rounded-md px-1.5 py-0.5 text-[12px] transition duration-150 ${
+                          active ? `${tone} font-medium` : "text-neutral-500 hover:text-neutral-300"
+                        }`}
+                      >
+                        {mode.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <span className="ml-auto hidden text-[11px] text-neutral-600 sm:block">
+                Shift+Tab to change mode
+              </span>
             </div>
           )}
 

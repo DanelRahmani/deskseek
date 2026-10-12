@@ -11,6 +11,9 @@ import {
   onError,
   onGuard,
   onMcpReady,
+  onNotify,
+  onQuestion,
+  onScheduledFired,
   onShot,
   onTool,
 } from "./api";
@@ -25,6 +28,8 @@ import type {
   MessageRow,
   ModelInfo,
   PermissionMode,
+  ProjectRow,
+  QuestionEvent,
   SectionKind,
   Settings,
   ToolRun,
@@ -34,23 +39,42 @@ import { ChatView } from "./components/ChatView";
 import { AGENT_MODES } from "./components/ChatView";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { SettingsSection } from "./components/SettingsDialog";
-import { McpPanel } from "./components/McpPanel";
-import { SkillsPanel } from "./components/SkillsPanel";
+import { CustomiseDialog } from "./components/CustomiseDialog";
+import type { CustomiseSection } from "./components/CustomiseDialog";
+import { ProjectsPanel } from "./components/ProjectsPanel";
+import { ArtifactsGallery } from "./components/ArtifactsGallery";
+import { ScheduledPanel } from "./components/ScheduledPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
 import { ArtifactPanel } from "./components/ArtifactPanel";
 import { ContextPanel } from "./components/ContextPanel";
 import { TabStrip } from "./components/TabStrip";
 import { CommandPalette } from "./components/CommandPalette";
+import { ContextMenu } from "./components/ContextMenu";
 import { ShortcutSheet } from "./components/ShortcutSheet";
-import { loadShell, openChatIn, pruneShell, saveShell, setPaneChat, toggleSplitPanes } from "./lib/shell";
+import {
+  loadShell,
+  openChatIn,
+  openInOtherPane,
+  pruneShell,
+  saveShell,
+  setPaneChat,
+  toggleSplitPanes,
+} from "./lib/shell";
 import type { Shell } from "./lib/shell";
 import { resolveShortcut } from "./lib/shortcuts";
 import { buildPalette } from "./lib/commands";
 import { resolveMode, resolveTheme } from "./lib/theme";
 import { tokensFromChars } from "./lib/context";
 
-type Panel = "none" | "skills" | "mcp" | "files" | "artifact" | "context";
+type Panel =
+  | "none"
+  | "files"
+  | "artifact"
+  | "context"
+  | "projects"
+  | "artifacts"
+  | "scheduled";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -58,6 +82,8 @@ interface SessionRuntime {
   stream: { content: string; reasoning: string } | null;
   tools: ToolRun[];
   approvals: ApprovalEvent[];
+  /** Questions the model is waiting on for this chat. */
+  questions: QuestionEvent[];
   usage: DoneEvent | null;
   /** Last failure for this chat, cleared when a new turn starts. */
   error: string | null;
@@ -68,12 +94,13 @@ const IDLE: SessionRuntime = {
   stream: null,
   tools: [],
   approvals: [],
+  questions: [],
   usage: null,
   error: null,
 };
 
 const HELP =
-  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /setup · /folder · /new · /export · /rewind · /help";
+  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /projects · /artifacts · /scheduled · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -98,10 +125,19 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [showSetup, setShowSetup] = useState(false);
   const [panel, setPanel] = useState<Panel>("none");
+  // The Customise hub, and which of its entries it opens on: `/skills` and
+  // `/mcp` are two doors into the one room.
+  const [customise, setCustomise] = useState<{ open: boolean; section: CustomiseSection }>({
+    open: false,
+    section: "skills",
+  });
   const [palette, setPalette] = useState(false);
+  // A right-clicked conversation's menu, at the cursor. `fixed` at the root so
+  // the scrolling sidebar cannot clip it.
   // The shortcut list, on top of everything: `?` is the one chord nothing else
   // in the UI advertises.
   const [sheet, setSheet] = useState(false);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Full-text results for the sidebar's search box. The query itself lives in
@@ -110,6 +146,9 @@ export default function App() {
   // Live turn state, keyed by chat — so a run in a background chat keeps
   // streaming while the user reads a different conversation.
   const [sessions, setSessions] = useState<Record<string, SessionRuntime>>({});
+  // Chats that finished while they were not the one on screen. Not part of
+  // `sessions`: it is about whether the user has *looked*, which outlives a turn.
+  const [unread, setUnread] = useState<Record<string, boolean>>({});
   // Process-wide, not per chat: the kill switch stops everything, so one banner
   // in every pane is the truth rather than a per-chat guess.
   const [computer, setComputer] = useState<{ paused: boolean; reason: string | null }>({
@@ -144,6 +183,15 @@ export default function App() {
     const msgs = await api.getMessages(id);
     setMessagesByChat((prev) => ({ ...prev, [id]: msgs }));
   }, []);
+
+  /** Show a chat beside what is already open: split if needed, other pane. */
+  const openInSplit = useCallback(
+    (id: string) => {
+      setShell((s) => openInOtherPane(s, id));
+      if (!(id in messagesByChat)) loadMessages(id).catch((e) => setError(String(e)));
+    },
+    [messagesByChat, loadMessages],
+  );
 
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
@@ -289,6 +337,27 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [notice]);
 
+  /** Open the Customise hub, optionally on one of its entries. */
+  const openCustomise = useCallback((section: CustomiseSection = "skills") => {
+    setCustomise({ open: true, section });
+  }, []);
+
+  /** Re-read one section's chats and fold them into the maps the UI reads. */
+  const refreshChats = useCallback(async (which: SectionKind) => {
+    const list = await api.listChats(which);
+    if (kindRef.current === which) setChats(list);
+    setChatsById((prev) => {
+      const next = { ...prev };
+      // Drop this section's chats that are gone (deleted elsewhere), keep the rest.
+      for (const [id, chat] of Object.entries(next)) {
+        if (chat.kind === which && !list.some((c) => c.id === id)) delete next[id];
+      }
+      for (const chat of list) next[chat.id] = chat;
+      return next;
+    });
+    return list;
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let unlisten: Array<() => void> = [];
@@ -335,6 +404,12 @@ export default function App() {
           approvals: [...rt.approvals.filter((a) => a.requestId !== e.requestId), e],
         }));
       }),
+      onQuestion((e) => {
+        patch(e.chatId, (rt) => ({
+          ...rt,
+          questions: [...rt.questions.filter((q) => q.requestId !== e.requestId), e],
+        }));
+      }),
       onShot((e) => {
         // The picture arrives on its own event and is pinned to the tool call
         // that took it, so a screenshot stays with the step it belongs to.
@@ -356,6 +431,26 @@ export default function App() {
       }),
       onDone((e) => {
         patch(e.chatId, (rt) => ({ ...rt, busy: false, usage: e }));
+        // A turn that finished in a conversation the user is not reading leaves
+        // a dot; the sidebar is how they notice without hunting for it.
+        if (e.chatId !== activeIdRef.current) {
+          setUnread((prev) => ({ ...prev, [e.chatId]: true }));
+        }
+      }),
+      onNotify((e) => {
+        // The model said something is done. Only worth a notice when it is not
+        // the chat on screen — there, the answer itself is right there.
+        if (!e.chatId || e.chatId !== activeIdRef.current) {
+          setNotice(`${e.title}: ${e.body}`);
+        }
+        const id = e.chatId;
+        if (id) setUnread((prev) => ({ ...prev, [id]: true }));
+      }),
+      onScheduledFired(() => {
+        // The run lands in a chat the sidebar may not know about yet — a task
+        // that starts a fresh chat every time makes a new one.
+        void refreshChats(kindRef.current);
+        setNotice("A scheduled task started a run.");
       }),
       onError((e) => {
         patch(e.chatId, (rt) => ({ ...rt, busy: false, error: e.message }));
@@ -385,7 +480,7 @@ export default function App() {
       disposed = true;
       unlisten.forEach((f) => f());
     };
-  }, [patch, attachPaths]);
+  }, [patch, attachPaths, refreshChats]);
 
   /**
    * Open settings, optionally on one section. Memory used to be a side panel of
@@ -395,21 +490,6 @@ export default function App() {
   const openSettings = useCallback((section: SettingsSection = "appearance") => {
     setSettingsSection(section);
     setShowSettings(true);
-  }, []);
-
-  const refreshChats = useCallback(async (which: SectionKind) => {
-    const list = await api.listChats(which);
-    if (kindRef.current === which) setChats(list);
-    setChatsById((prev) => {
-      const next = { ...prev };
-      // Drop this section's chats that are gone (deleted elsewhere), keep the rest.
-      for (const [id, chat] of Object.entries(next)) {
-        if (chat.kind === which && !list.some((c) => c.id === id)) delete next[id];
-      }
-      for (const chat of list) next[chat.id] = chat;
-      return next;
-    });
-    return list;
   }, []);
 
   useEffect(() => {
@@ -438,6 +518,13 @@ export default function App() {
   const selectChat = useCallback(
     async (id: string) => {
       setError(null);
+      // Looking at it is what clears the dot, not the run finishing.
+      setUnread((prev) => {
+        if (!prev[id]) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
       showChat(id);
       try {
         await loadMessages(id);
@@ -453,6 +540,34 @@ export default function App() {
     await refreshChats(kindRef.current);
     await selectChat(chat.id);
   }, [refreshChats, selectChat]);
+
+  /** A chat that starts inside a project: its folder, and its membership. */
+  const newChatInProject = useCallback(
+    async (project: ProjectRow) => {
+      try {
+        const chat = await api.createChat(kindRef.current, project.folder ?? null);
+        await api.setChatProject(chat.id, project.id);
+        await refreshChats(kindRef.current);
+        setPanel("none");
+        await selectChat(chat.id);
+        setNotice(`New chat in "${project.name}".`);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats, selectChat],
+  );
+
+  /** Open one artifact in the panel, from the gallery or anywhere else. */
+  const openArtifact = useCallback(async (artifactId: string) => {
+    try {
+      const detail = await api.getArtifact(artifactId);
+      setArtifact({ chatId: detail.artifact.chat_id, detail });
+      setPanel("artifact");
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
 
   /** Pick the folder a coding chat works in; `pane` is the pane that asked. */
   const pickWorkspace = useCallback(
@@ -496,10 +611,21 @@ export default function App() {
             openSettings("memory");
             return;
           case "/skills":
-            setPanel("skills");
+          case "/customise":
+            openCustomise("skills");
             return;
           case "/mcp":
-            setPanel("mcp");
+            openCustomise("connectors");
+            return;
+          case "/projects":
+            setPanel((current) => (current === "projects" ? "none" : "projects"));
+            return;
+          case "/artifacts":
+            setPanel((current) => (current === "artifacts" ? "none" : "artifacts"));
+            return;
+          case "/scheduled":
+          case "/schedule":
+            setPanel((current) => (current === "scheduled" ? "none" : "scheduled"));
             return;
           case "/setup":
             setShowSetup(true);
@@ -700,7 +826,7 @@ export default function App() {
         if (chatId) patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
       }
     },
-    [attachmentsByChat, loadMessages, newChat, pickPane, pickWorkspace, refreshChats],
+    [attachmentsByChat, loadMessages, newChat, openCustomise, pickPane, pickWorkspace, refreshChats],
   );
 
   const changeModel = useCallback(
@@ -787,6 +913,67 @@ export default function App() {
     },
     [],
   );
+
+  /** Take a pending question off whichever chat holds it, and send the answer. */
+  const clearQuestion = useCallback((requestId: string) => {
+    setSessions((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).map(([id, rt]) => [
+          id,
+          { ...rt, questions: rt.questions.filter((q) => q.requestId !== requestId) },
+        ]),
+      ),
+    );
+  }, []);
+
+  const answerQuestion = useCallback(
+    async (requestId: string, selected: string[][], free: string[]) => {
+      clearQuestion(requestId);
+      try {
+        await api.respondQuestion(requestId, {
+          answers: selected.map((sel, index) => ({
+            index,
+            selected: sel,
+            freeform: free[index] ?? "",
+          })),
+          cancelled: false,
+        });
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [clearQuestion],
+  );
+
+  const skipQuestion = useCallback(
+    async (requestId: string) => {
+      clearQuestion(requestId);
+      try {
+        await api.respondQuestion(requestId, { answers: [], cancelled: true });
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [clearQuestion],
+  );
+
+  const deleteChat = useCallback(
+    async (id: string) => {
+      await api.deleteChat(id);
+      await refreshChats(kindRef.current);
+      setMessagesByChat((prev) => {
+        if (!(id in prev)) return prev;
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      // The tab goes too; a pane showing it refills from the remaining tabs.
+      setShell((s) => pruneShell(s, (t) => t === id));
+    },
+    [refreshChats],
+  );
+
+  const openMenu = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), []);
 
   const attach = useCallback(async (chatId: string | null, files: FileList | File[]) => {
     // Keyed by the draft, not the chat: files can be attached before a chat
@@ -931,11 +1118,17 @@ export default function App() {
         case "memory":
           openSettings("memory");
           return;
-        case "skills":
-          setPanel("skills");
+        case "customise":
+          openCustomise("skills");
           return;
-        case "mcp":
-          setPanel("mcp");
+        case "projects":
+          setPanel((current) => (current === "projects" ? "none" : "projects"));
+          return;
+        case "artifacts":
+          setPanel((current) => (current === "artifacts" ? "none" : "artifacts"));
+          return;
+        case "scheduled":
+          setPanel((current) => (current === "scheduled" ? "none" : "scheduled"));
           return;
         case "files":
           setPanel((current) => (current === "files" ? "none" : "files"));
@@ -971,6 +1164,7 @@ export default function App() {
       chatsById,
       exportChat,
       newChat,
+      openCustomise,
       restoreConfig,
       rewind,
       selectChat,
@@ -1024,8 +1218,10 @@ export default function App() {
         case "dismiss":
           // Topmost first: the sheet and the palette sit above a dialog, which
           // covers a panel.
-          if (sheet) setSheet(false);
+          if (menu) setMenu(null);
+          else if (sheet) setSheet(false);
           else if (palette) setPalette(false);
+          else if (customise.open) setCustomise((c) => ({ ...c, open: false }));
           else if (showSettings) setShowSettings(false);
           else if (showSetup) setShowSetup(false);
           else setPanel("none");
@@ -1034,12 +1230,13 @@ export default function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activeId, closeTab, newChat, palette, runPalette, sheet, showSettings, showSetup, toggleSplit]);
+  }, [activeId, closeTab, customise.open, menu, newChat, palette, runPalette, sheet, showSettings, showSetup, toggleSplit]);
 
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),
     [sessions],
   );
+  const unreadIds = useMemo(() => Object.keys(unread), [unread]);
 
   /** Rough context estimate for one chat, using the app's one token rule. */
   const tokensFor = useCallback(
@@ -1086,25 +1283,24 @@ export default function App() {
         onSearch={searchMessages}
         onSelect={selectChat}
         onNew={newChat}
-        onDelete={async (id) => {
-          await api.deleteChat(id);
-          await refreshChats(kind);
-          setMessagesByChat((prev) => {
-            if (!(id in prev)) return prev;
-            const next = { ...prev };
-            delete next[id];
-            return next;
-          });
-          // The tab goes too; a pane showing it refills from the remaining tabs.
-          setShell((s) => pruneShell(s, (t) => t === id));
-        }}
+        onDelete={deleteChat}
         onSettings={() => openSettings()}
         onArchive={setArchived}
+        onContextMenu={openMenu}
         onMemory={() => openSettings("memory")}
-        onSkills={() => setPanel("skills")}
-        onMcp={() => setPanel("mcp")}
+        onCustomise={() => openCustomise("skills")}
+        onProjects={() =>
+          setPanel((current) => (current === "projects" ? "none" : "projects"))
+        }
+        onArtifacts={() =>
+          setPanel((current) => (current === "artifacts" ? "none" : "artifacts"))
+        }
+        onScheduled={() =>
+          setPanel((current) => (current === "scheduled" ? "none" : "scheduled"))
+        }
         keyMask={keyMask}
         runningIds={runningIds}
+        unreadIds={unreadIds}
       />
 
       {panel === "files" && (
@@ -1167,6 +1363,7 @@ export default function App() {
                     stream={rt.stream}
                     tools={rt.tools}
                     approvals={rt.approvals}
+                    questions={rt.questions}
                     attachments={attachmentsByChat[id ?? ""] ?? []}
                     busy={rt.busy}
                     models={models}
@@ -1177,7 +1374,7 @@ export default function App() {
                     computerReason={computer.reason}
                     onResumeComputer={() => api.setComputerPaused(false)}
                     mcp={mcp}
-                    onMcp={() => setPanel("mcp")}
+                    onMcp={() => openCustomise("connectors")}
                     contextTokens={id ? tokensFor(id) : 0}
                     contextMax={max}
                     onSend={(text) => send(text, id, pane)}
@@ -1196,6 +1393,8 @@ export default function App() {
                     onAttach={(files) => attach(id, files)}
                     onRemoveAttachment={(index) => removeAttachment(id, index)}
                     onDecideApproval={decideApproval}
+                    onAnswerQuestion={answerQuestion}
+                    onSkipQuestion={skipQuestion}
                   />
                 </div>
               </Fragment>
@@ -1204,23 +1403,27 @@ export default function App() {
         </div>
       </div>
 
-      {panel === "skills" && (
-        <SkillsPanel
-          chatId={activeId}
-          /* A skill is built by talking about it, so the panel hands the user a
-             chat rather than growing an editor of its own. */
-          onAsk={async (text) => {
-            try {
-              const chat = await api.createChat(kindRef.current);
-              await refreshChats(kindRef.current);
-              setPanel("none");
-              await selectChat(chat.id);
-              await send(text, chat.id, focus);
-            } catch (e) {
-              setError(String(e));
-            }
-          }}
+      {panel === "projects" && (
+        <ProjectsPanel
+          chats={chats}
+          activeId={activeId}
+          onSelectChat={selectChat}
+          onNewChatInProject={newChatInProject}
+          onChanged={() => void refreshChats(kindRef.current)}
           onClose={() => setPanel("none")}
+        />
+      )}
+      {panel === "artifacts" && (
+        <ArtifactsGallery
+          chatsById={chatsById}
+          onOpen={openArtifact}
+          onClose={() => setPanel("none")}
+        />
+      )}
+      {panel === "scheduled" && (
+        <ScheduledPanel
+          onClose={() => setPanel("none")}
+          onChanged={() => void refreshChats(kindRef.current)}
         />
       )}
       {panel === "context" && activeId && (
@@ -1230,7 +1433,6 @@ export default function App() {
           onClose={() => setPanel("none")}
         />
       )}
-      {panel === "mcp" && <McpPanel onClose={() => setPanel("none")} />}
       {panel === "artifact" && artifact && (
         <ArtifactPanel
           // Re-mounted per version: a new one resets the version picker and the
@@ -1251,6 +1453,28 @@ export default function App() {
           }}
           onSaved={setSettings}
           onClose={() => setShowSetup(false)}
+        />
+      )}
+
+      {customise.open && (
+        <CustomiseDialog
+          chatId={activeId}
+          section={customise.section}
+          /* A skill is built by talking about it, so the hub hands the user a
+             chat rather than growing an editor of its own. */
+          onAsk={async (text) => {
+            try {
+              const chat = await api.createChat(kindRef.current);
+              await refreshChats(kindRef.current);
+              setCustomise((c) => ({ ...c, open: false }));
+              await selectChat(chat.id);
+              await send(text, chat.id, focus);
+            } catch (e) {
+              setError(String(e));
+            }
+          }}
+          onSaved={setSettings}
+          onClose={() => setCustomise((c) => ({ ...c, open: false }))}
         />
       )}
 
@@ -1282,6 +1506,27 @@ export default function App() {
       )}
 
       {sheet && <ShortcutSheet onClose={() => setSheet(false)} />}
+
+      {menu &&
+        (() => {
+          const row = chatsById[menu.id];
+          return (
+            <ContextMenu
+              x={menu.x}
+              y={menu.y}
+              onClose={() => setMenu(null)}
+              items={[
+                { label: "Open", onSelect: () => void selectChat(menu.id) },
+                { label: "Open in split view", onSelect: () => openInSplit(menu.id) },
+                {
+                  label: row?.archived ? "Take out of the archive" : "Archive",
+                  onSelect: () => void setArchived(menu.id, !row?.archived),
+                },
+                { label: "Delete", danger: true, onSelect: () => void deleteChat(menu.id) },
+              ]}
+            />
+          );
+        })()}
 
       {dropping && (
         // Inert on purpose: the drop is handled natively by the window, so the

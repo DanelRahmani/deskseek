@@ -135,6 +135,14 @@ pub struct Settings {
     /// may be private.
     #[serde(default)]
     pub computer_use: bool,
+    /// Master switch for OS notifications. Off silences every toast; the in-app
+    /// notice is not affected, because it costs nothing and cannot be missed.
+    #[serde(default = "default_true")]
+    pub notifications: bool,
+    /// Raise a toast only when the window is not in front of the user. When it
+    /// is, the answer is already on screen and a popup over it is noise.
+    #[serde(default = "default_true")]
+    pub notify_only_when_unfocused: bool,
     /// Set once the first-run setup screen has been finished or dismissed.
     #[serde(default)]
     pub setup_done: bool,
@@ -190,6 +198,8 @@ impl Default for Settings {
             sandbox: default_sandbox(),
             sandbox_image: default_sandbox_image(),
             computer_use: false,
+            notifications: true,
+            notify_only_when_unfocused: true,
             setup_done: false,
         }
     }

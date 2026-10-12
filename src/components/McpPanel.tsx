@@ -5,6 +5,8 @@ import type { McpServer, McpStatus, ToolLog } from "../types";
 
 interface Props {
   onClose: () => void;
+  /** Rendered inside the Customise hub: fills it instead of covering the app. */
+  embedded?: boolean;
 }
 
 const smallCls =
@@ -49,7 +51,7 @@ function logLine(line: ToolLog): string {
   return line.ok ? `${call} → ${line.size} chars in ${line.ms}ms` : `${call} → ${line.detail}`;
 }
 
-export function McpPanel({ onClose }: Props) {
+export function McpPanel({ onClose, embedded = false }: Props) {
   const [tab, setTab] = useState<"servers" | "logs">("servers");
   const [servers, setServers] = useState<McpServer[]>([]);
   const [status, setStatus] = useState<McpStatus | null>(null);
@@ -152,8 +154,20 @@ export function McpPanel({ onClose }: Props) {
   const statusOf = (name: string) => status?.servers.find((s) => s.name === name);
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950">
+    <div
+      className={
+        embedded
+          ? "flex h-full min-h-0 min-w-0 flex-1 flex-col bg-neutral-950"
+          : "fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
+      }
+    >
+      <div
+        className={
+          embedded
+            ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+            : "flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-950"
+        }
+      >
         <div className="flex items-center justify-between border-b border-neutral-800 px-5 py-3">
           <div>
             <h2 className="text-sm font-semibold">MCP servers</h2>
@@ -163,9 +177,11 @@ export function McpPanel({ onClose }: Props) {
                 : "Loading…"}
             </p>
           </div>
-          <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
-            <Icon name="close" size={15} />
-          </button>
+          {!embedded && (
+            <button onClick={onClose} className="text-neutral-500 hover:text-neutral-200" title="Close">
+              <Icon name="close" size={15} />
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-1 border-b border-neutral-800 px-5">

@@ -102,6 +102,21 @@ export function setPaneChat(shell: Shell, pane: number, id: string | null): Shel
   return { ...shell, panes, tabs, focus: pane };
 }
 
+/**
+ * Show `id` beside what is already on screen: split if there is one pane, and
+ * put it in the pane that is not focused. A chat already open in a pane is only
+ * focused — opening it twice would show the same conversation on both sides.
+ */
+export function openInOtherPane(shell: Shell, id: string): Shell {
+  const at = shell.panes.indexOf(id);
+  if (at >= 0) return { ...shell, focus: at };
+  const panes = shell.panes.length > 1 ? [...shell.panes] : [shell.panes[0], null];
+  const target = shell.focus === 0 ? 1 : 0;
+  panes[target] = id;
+  const tabs = shell.tabs.includes(id) ? shell.tabs : [...shell.tabs, id];
+  return { ...shell, panes, tabs, focus: target };
+}
+
 /** One pane, or two — the second taking the next tab that is not already shown. */
 export function toggleSplitPanes(shell: Shell): Shell {
   if (shell.panes.length > 1) return { ...shell, panes: [shell.panes[0]], focus: 0 };

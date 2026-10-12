@@ -325,6 +325,101 @@ pub fn parse_tasks(args: &serde_json::Value) -> Result<Vec<Task>, String> {
     Ok(tasks)
 }
 
+/// A question the model asked, as validated from `ask_user`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionOption {
+    pub label: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub header: String,
+    pub question: String,
+    pub options: Vec<QuestionOption>,
+    pub multi_select: bool,
+}
+
+/// How many questions one `ask_user` call may carry. More than a handful is an
+/// interrogation, and the user answers all of them before the run resumes.
+pub const MAX_QUESTIONS: usize = 4;
+/// Choices per question. The point is a few concrete options, not a menu.
+pub const MAX_OPTIONS: usize = 4;
+
+/// Validates `ask_user`. The error text is fed back to the model, so it should
+/// say what to send instead.
+pub fn parse_questions(args: &serde_json::Value) -> Result<Vec<Question>, String> {
+    let raw = args
+        .get("questions")
+        .and_then(serde_json::Value::as_array)
+        .ok_or("ask_user needs a \"questions\" array")?;
+    if raw.is_empty() {
+        return Err("ask_user needs at least one question".to_string());
+    }
+    if raw.len() > MAX_QUESTIONS {
+        return Err(format!("ask_user takes at most {MAX_QUESTIONS} questions"));
+    }
+
+    let mut out = Vec::with_capacity(raw.len());
+    for (index, item) in raw.iter().enumerate() {
+        let at = index + 1;
+        let question = item
+            .get("question")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| format!("question {at} needs a non-empty \"question\""))?;
+        let header = item
+            .get("header")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .unwrap_or("");
+        let opts = item
+            .get("options")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| format!("question {at} needs an \"options\" array"))?;
+        if opts.is_empty() {
+            return Err(format!("question {at} needs at least one option"));
+        }
+        if opts.len() > MAX_OPTIONS {
+            return Err(format!("question {at} takes at most {MAX_OPTIONS} options"));
+        }
+        let mut options = Vec::with_capacity(opts.len());
+        for option in opts {
+            let label = option
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("question {at} has an option with no \"label\""))?;
+            options.push(QuestionOption {
+                // Capped so one runaway label cannot stretch the composer.
+                label: label.chars().take(80).collect(),
+                description: option
+                    .get("description")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(200)
+                    .collect(),
+            });
+        }
+        out.push(Question {
+            header: header.chars().take(12).collect(),
+            question: question.chars().take(400).collect(),
+            options,
+            multi_select: item
+                .get("multiSelect")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+        });
+    }
+    Ok(out)
+}
+
 /// (spec, class) for every built-in coding tool.
 pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
     vec![
@@ -450,6 +545,57 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                         "id": {"type": "string", "description": "The skill's id, as `list_skills` reports it"}
                     }),
                     &["id"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "ask_user",
+                "Ask the user a question and wait for their answer. Use it when you genuinely cannot proceed without a decision only they can make — a preference, a choice between approaches, a missing fact — instead of guessing. Each question offers a few options and always lets them type their own answer. Do not use it to ask permission for a tool: the app asks for that itself.",
+                params(
+                    json!({
+                        "questions": {
+                            "type": "array",
+                            "description": "One to four questions, asked together.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "header": {"type": "string", "description": "Short label, at most 12 characters, e.g. 'Framework'."},
+                                    "question": {"type": "string", "description": "The question itself, one sentence."},
+                                    "options": {
+                                        "type": "array",
+                                        "description": "One to four choices. The user can always type their own as well.",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "label": {"type": "string", "description": "The choice, short."},
+                                                "description": {"type": "string", "description": "One line explaining it."}
+                                            },
+                                            "required": ["label"]
+                                        }
+                                    },
+                                    "multiSelect": {"type": "boolean", "description": "Allow more than one choice. Default false."}
+                                },
+                                "required": ["question", "options"]
+                            }
+                        }
+                    }),
+                    &["questions"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "notify_user",
+                "Ping the user when something is done. Use it at the end of a long job, or when a step finishes that they are waiting on and might not be watching the app — the app raises an OS notification. One short sentence; do not use it to ask a question (that is `ask_user`) or to narrate every step.",
+                params(
+                    json!({
+                        "message": {"type": "string", "description": "What is done, in one sentence."},
+                        "title": {"type": "string", "description": "Short heading. Defaults to the app's name."}
+                    }),
+                    &["message"],
                 ),
             ),
             ToolClass::Internal,
@@ -1080,5 +1226,54 @@ mod tests {
     #[test]
     fn coding_mode_has_everything() {
         assert_eq!(tools_for("coding").len(), builtin_tools().len());
+    }
+
+    #[test]
+    fn ask_user_is_internal_so_the_app_never_asks_permission_to_ask() {
+        assert_eq!(class_of("ask_user"), ToolClass::Internal);
+        // Offered wherever there are tools at all, in both sections.
+        assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "ask_user"));
+        assert!(tools_for("coding").iter().any(|(t, _)| t.function.name == "ask_user"));
+    }
+
+    #[test]
+    fn a_question_needs_a_prompt_and_at_least_one_option() {
+        let good = parse_questions(&json!({
+            "questions": [{
+                "header": "Framework",
+                "question": "Which one?",
+                "options": [{"label": "React", "description": "Components"}, {"label": "Vue"}]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(good.len(), 1);
+        assert_eq!(good[0].options.len(), 2);
+        assert_eq!(good[0].options[0].description, "Components");
+        assert!(!good[0].multi_select, "multi-select is opt-in");
+
+        // The header is capped so it cannot stretch the composer.
+        let long = parse_questions(&json!({
+            "questions": [{
+                "header": "x".repeat(40),
+                "question": "q",
+                "options": [{"label": "a"}]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(long[0].header.chars().count(), 12);
+
+        // Each of these is a shape a model actually produces.
+        for bad in [
+            json!({}),
+            json!({"questions": []}),
+            json!({"questions": [{}]}),
+            json!({"questions": [{"question": "q"}]}),
+            json!({"questions": [{"question": "q", "options": []}]}),
+            json!({"questions": [{"question": "q", "options": [{}]}]}),
+            json!({"questions": (0..MAX_QUESTIONS + 1).map(|i| json!({"question": format!("q{i}"), "options": [{"label": "a"}]})).collect::<Vec<_>>()}),
+        ] {
+            let err = parse_questions(&bad).expect_err("should have been rejected");
+            assert!(!err.is_empty(), "a rejection must explain itself");
+        }
     }
 }

@@ -2,11 +2,15 @@ mod api;
 mod approvals;
 mod commands;
 mod conversation;
+mod design;
 mod fs_watch;
 mod mcp;
 mod memory;
 mod memory_files;
+mod notify;
+mod questions;
 mod runs;
+mod schedule;
 mod skills;
 mod store;
 mod tools;
@@ -22,6 +26,8 @@ pub struct AppState {
     pub paths: store::paths::AppPaths,
     pub settings: Mutex<store::settings::Settings>,
     pub approvals: approvals::Approvals,
+    /// Questions the model is waiting on, so the UI can answer one mid-run.
+    pub questions: questions::Questions,
     /// Live agent runs, so the UI can stop one mid-stream.
     pub runs: runs::Runs,
     /// Watches the open workspace so the file tree updates by itself.
@@ -41,11 +47,43 @@ pub struct AppState {
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
 }
 
+/// One tick of the scheduler: fire whatever is due.
+///
+/// A function rather than a closure inside the spawn, because it takes the app
+/// handle by reference: the state guard borrows from it, and that borrow is held
+/// across an await, which a closure capturing its own handle could not do.
+async fn scheduled_tick(handle: &tauri::AppHandle) {
+    let state = handle.state::<AppState>();
+    let due = {
+        let conn = state.db.lock().unwrap();
+        store::db::due_scheduled(&conn, store::db::now_ts()).unwrap_or_default()
+    };
+    for task in due {
+        // Move it on *first*: a run that outlasts this tick must not be started
+        // again by the next one.
+        let sched = schedule::Schedule::parse(&task.freq, &task.time, task.weekday, task.nth);
+        let next = schedule::next_run_at(chrono::Local::now(), &sched);
+        {
+            let conn = state.db.lock().unwrap();
+            if let Err(err) =
+                store::db::mark_scheduled_ran(&conn, &task.id, next, store::db::now_ts())
+            {
+                eprintln!("could not advance scheduled task {}: {err}", task.id);
+                continue;
+            }
+        }
+        if let Err(err) = commands::fire_scheduled(handle, &state, &task).await {
+            eprintln!("scheduled task {} failed: {err}", task.id);
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -106,6 +144,7 @@ pub fn run() {
                 paths,
                 settings: Mutex::new(settings),
                 approvals: approvals::Approvals::default(),
+                questions: questions::Questions::default(),
                 runs: runs::Runs::default(),
                 files: fs_watch::FileWatcher::new(app.handle().clone()),
                 sandbox,
@@ -139,6 +178,21 @@ pub fn run() {
             // engine is installed but asleep, which must never delay the window.
             tauri::async_runtime::spawn(async move {
                 *sandbox_probe.write().await = tools::sandbox_exec::detect().await;
+            });
+
+            // The scheduled-task ticker. Half a minute, against a schedule
+            // grammar whose finest unit is a minute: a task fires within a minute
+            // of its time, and the loop costs one indexed query when nothing is
+            // due. A missed window (the app was closed) fires once on the next
+            // tick rather than catching up — `mark_scheduled_ran` moves the time
+            // on before the run starts.
+            let ticker = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut beat = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    beat.tick().await;
+                    scheduled_tick(&ticker).await;
+                }
             });
             Ok(())
         })
@@ -188,9 +242,21 @@ pub fn run() {
             commands::list_artifacts,
             commands::get_artifact,
             commands::save_artifact_version,
+            commands::list_projects,
+            commands::create_project,
+            commands::rename_project,
+            commands::set_project_folder,
+            commands::delete_project,
+            commands::set_chat_project,
+            commands::list_all_artifacts,
+            commands::list_design_systems,
+            commands::save_design_system,
+            commands::design_system_from_project,
+            commands::delete_design_system,
             commands::get_summary,
             commands::list_skills,
             commands::set_chat_skills,
+            commands::set_skill_default,
             commands::skills_dir,
             commands::install_skill,
             commands::install_skill_text,
@@ -198,12 +264,18 @@ pub fn run() {
             commands::delete_skill,
             commands::attach_path,
             commands::respond_approval,
+            commands::respond_question,
             commands::list_tool_permissions,
             commands::revoke_tool_permission,
             commands::tool_grants,
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,
+            commands::list_scheduled,
+            commands::create_scheduled,
+            commands::update_scheduled,
+            commands::delete_scheduled,
+            commands::run_scheduled_now,
             commands::probe_environment,
             commands::computer_state,
             commands::set_computer_paused,

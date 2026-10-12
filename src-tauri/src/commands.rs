@@ -3,15 +3,19 @@
 use std::path::PathBuf;
 
 use base64::Engine as _;
+use chrono::Local;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
+use crate::questions::Answer;
 use crate::conversation::{agent, assemble, summarize};
 use crate::mcp::{McpServer, ServerStatus, ToolLog};
 use crate::memory;
+use crate::notify;
+use crate::schedule;
 use crate::skills;
 use crate::store::{db, keychain, settings::Settings};
 use crate::tools::{browse, desktop, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
@@ -161,17 +165,45 @@ pub fn create_chat(
     } else {
         settings.chat_model.clone()
     };
+    let chat = {
+        let conn = state.db.lock().unwrap();
+        db::create_chat(
+            &conn,
+            &kind,
+            workspace.as_deref(),
+            &model,
+            settings.thinking,
+            &settings.effort,
+            &settings.permission_mode,
+        )
+        .map_err(|e| e.to_string())?
+    };
+    seed_default_skills(&state, &chat.id);
+    Ok(chat)
+}
+
+/// A new chat starts with every skill whose file says `default: on` already
+/// switched on.
+///
+/// The flag lives in the skill's own SKILL.md, so the user's standing choices
+/// are made once, in the folder that is already the store for skills, and no
+/// chat has to be set up by hand. It is not free: the bodies of these skills
+/// become part of every request in that chat, which is precisely what marking
+/// one asks for. Everything else costs a single line of catalogue in the prompt
+/// and is fetched with `use_skill` only when it is actually wanted.
+fn seed_default_skills(state: &AppState, chat_id: &str) {
+    let defaults: Vec<String> = skills::discover(&state.paths.skills_dir())
+        .into_iter()
+        .filter(|skill| skill.default_on)
+        .map(|skill| skill.id)
+        .collect();
+    if defaults.is_empty() {
+        return;
+    }
     let conn = state.db.lock().unwrap();
-    db::create_chat(
-        &conn,
-        &kind,
-        workspace.as_deref(),
-        &model,
-        settings.thinking,
-        &settings.effort,
-        &settings.permission_mode,
-    )
-    .map_err(|e| e.to_string())
+    if let Err(err) = db::set_chat_skills(&conn, chat_id, &defaults) {
+        eprintln!("could not switch this chat's default skills on: {err}");
+    }
 }
 
 #[tauri::command]
@@ -814,6 +846,9 @@ pub struct SkillView {
     pub name: String,
     pub description: String,
     pub enabled: bool,
+    /// `default: on` — a new chat starts with it switched on. Not the same
+    /// question as `enabled`, which is about *this* chat.
+    pub default_on: bool,
 }
 
 #[tauri::command]
@@ -829,11 +864,31 @@ pub fn list_skills(state: State<'_, AppState>, chat_id: Option<String>) -> Vec<S
         .into_iter()
         .map(|s| SkillView {
             enabled: enabled.contains(&s.id),
+            default_on: s.default_on,
             id: s.id,
             name: s.name,
             description: s.description,
         })
         .collect()
+}
+
+/// Marks a skill as one a new chat should start with — or stops it being one.
+///
+/// This is not a per-chat switch: it is the skill's own file, so it applies to
+/// chats that do not exist yet and leaves the current one exactly as it is.
+#[tauri::command]
+pub fn set_skill_default(
+    state: State<'_, AppState>,
+    id: String,
+    default_on: bool,
+) -> Result<(), String> {
+    if id.is_empty() || id.contains(['/', '\\']) || id.contains("..") {
+        return Err("That is not a skill id.".to_string());
+    }
+    if !state.paths.skills_dir().join(&id).is_dir() {
+        return Err(format!("No skill called \"{id}\"."));
+    }
+    skills::set_default(&state.paths.skills_dir(), &id, default_on).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -917,6 +972,156 @@ pub fn delete_skill(state: State<'_, AppState>, id: String) -> Result<(), String
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------- projects
+
+#[tauri::command]
+pub fn list_projects(state: State<'_, AppState>) -> Result<Vec<db::ProjectRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_projects(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_project(
+    state: State<'_, AppState>,
+    name: String,
+    folder: Option<String>,
+) -> Result<db::ProjectRow, String> {
+    let conn = state.db.lock().unwrap();
+    db::create_project(&conn, &name, folder.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_project(state: State<'_, AppState>, id: String, name: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::rename_project(&conn, &id, &name).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_project_folder(
+    state: State<'_, AppState>,
+    id: String,
+    folder: Option<String>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_project_folder(&conn, &id, folder.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Deletes the container, never the chats inside it — they are only unassigned.
+#[tauri::command]
+pub fn delete_project(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::delete_project(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_chat_project(
+    state: State<'_, AppState>,
+    chat_id: String,
+    project_id: Option<String>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_project(&conn, &chat_id, project_id.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Every artifact in every chat — what the gallery lists.
+#[tauri::command]
+pub fn list_all_artifacts(state: State<'_, AppState>) -> Result<Vec<db::ArtifactRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_all_artifacts(&conn, 200).map_err(|e| e.to_string())
+}
+
+// ----------------------------------------------------------- design systems
+
+/// The design systems: the skills whose id carries the `design-` prefix. Same
+/// shape as `SkillView`, so the panel renders them with the skills list's rules.
+#[tauri::command]
+pub fn list_design_systems(state: State<'_, AppState>, chat_id: Option<String>) -> Vec<SkillView> {
+    let enabled: Vec<String> = match chat_id {
+        Some(id) => {
+            let conn = state.db.lock().unwrap();
+            db::get_chat_skills(&conn, &id).unwrap_or_default()
+        }
+        None => Vec::new(),
+    };
+    skills::discover(&state.paths.skills_dir())
+        .into_iter()
+        .filter(|s| crate::design::is_design(&s.id))
+        .map(|s| SkillView {
+            enabled: enabled.contains(&s.id),
+            default_on: s.default_on,
+            id: s.id,
+            name: s.name,
+            description: s.description,
+        })
+        .collect()
+}
+
+/// Writes a design system as a skill of that name, overwriting one that already
+/// exists. Overwriting is the point here rather than a risk: this is the
+/// authoring surface, so Save has to be able to save twice.
+fn write_design(root: &std::path::Path, name: &str, body: &str) -> Result<String, String> {
+    let id = crate::design::id_for(name);
+    let dir = root.join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let raw = skills::compose(
+        name,
+        "A design system: apply it whenever you build UI.",
+        // A design system is opted into a chat deliberately, so saving one never
+        // makes it a standing default.
+        false,
+        body,
+    );
+    std::fs::write(dir.join("SKILL.md"), raw).map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn save_design_system(
+    state: State<'_, AppState>,
+    name: String,
+    body: String,
+) -> Result<String, String> {
+    if name.trim().is_empty() {
+        return Err("A design system needs a name.".to_string());
+    }
+    if body.trim().is_empty() {
+        return Err("There is nothing to save yet.".to_string());
+    }
+    write_design(&state.paths.skills_dir(), &name, &body)
+}
+
+/// Draft one from a folder that already has a look, then store it.
+#[tauri::command]
+pub fn design_system_from_project(
+    state: State<'_, AppState>,
+    folder: String,
+) -> Result<String, String> {
+    let path = std::path::Path::new(&folder);
+    if !path.is_dir() {
+        return Err(format!("{folder} is not a folder."));
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("design system");
+    let draft = crate::design::draft_from_project(path);
+    write_design(&state.paths.skills_dir(), name, &draft)
+}
+
+/// Removes a design system's folder. Guarded to the prefix, so this cannot be
+/// pointed at an ordinary skill — or at anything else.
+#[tauri::command]
+pub fn delete_design_system(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    if !crate::design::is_design(&id) || id.contains(['/', '\\']) || id.contains("..") {
+        return Err("That is not a design system id.".to_string());
+    }
+    let dir = state.paths.skills_dir().join(&id);
+    if !dir.is_dir() {
+        return Err(format!("No design system called \"{id}\"."));
+    }
+    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------ permissions
 
 #[tauri::command]
@@ -926,6 +1131,16 @@ pub fn respond_approval(
     decision: String,
 ) -> Result<bool, String> {
     Ok(state.approvals.respond(&request_id, Decision::parse(&decision)))
+}
+
+/// Resolve a question the model asked mid-run, which resumes the parked run.
+#[tauri::command]
+pub fn respond_question(
+    state: State<'_, AppState>,
+    request_id: String,
+    answer: Answer,
+) -> Result<bool, String> {
+    Ok(state.questions.respond(&request_id, answer))
 }
 
 #[tauri::command]
@@ -977,17 +1192,32 @@ pub async fn send_message(
     text: String,
     attachments: Option<Vec<Attachment>>,
 ) -> Result<(), String> {
+    start_turn(app, &state, &chat_id, &text, attachments.unwrap_or_default()).await
+}
+
+/// The body of `send_message`, callable outside a command context.
+///
+/// The scheduler runs a turn through exactly this path rather than a second one
+/// of its own, so a task that fired at 09:00 gets the same project scope, the
+/// same mode and the same tool gating as a message the user typed — and a bug in
+/// one cannot make the other behave differently.
+pub async fn start_turn(
+    app: AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    text: &str,
+    attachments: Vec<Attachment>,
+) -> Result<(), String> {
     keychain::get_api_key()?.ok_or("No API key set")?;
 
     let chat = {
         let conn = state.db.lock().unwrap();
-        db::get_chat(&conn, &chat_id).map_err(|e| e.to_string())?
+        db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?
     };
     if chat.kind == "coding" && chat.workspace.is_none() {
         return Err("Pick a folder for this coding task first.".to_string());
     }
 
-    let attachments = attachments.unwrap_or_default();
     if text.trim().is_empty() && attachments.is_empty() {
         return Err("Nothing to send.".to_string());
     }
@@ -1001,9 +1231,9 @@ pub async fn send_message(
         let conn = state.db.lock().unwrap();
         db::insert_message(
             &conn,
-            &chat_id,
+            chat_id,
             "user",
-            Some(&text),
+            Some(text),
             None,
             None,
             None,
@@ -1014,16 +1244,19 @@ pub async fn send_message(
             let title = if text.trim().is_empty() {
                 format!("{} attachment(s)", attachments.len())
             } else {
-                title_from(&text)
+                title_from(text)
             };
-            db::rename_chat(&conn, &chat_id, &title).map_err(|e| e.to_string())?;
+            db::rename_chat(&conn, chat_id, &title).map_err(|e| e.to_string())?;
         }
     }
 
     // One live run per chat: registering cancels any turn already in flight.
-    let (run_id, cancel) = state.runs.begin(&chat_id);
-    let result = agent::run(app, &state, &chat_id, cancel).await;
-    state.runs.finish(&chat_id, run_id);
+    let (run_id, cancel) = state.runs.begin(chat_id);
+    let result = agent::run(app.clone(), state, chat_id, cancel).await;
+    state.runs.finish(chat_id, run_id);
+    // Tell someone who is not looking. `notify` decides whether that is a toast
+    // at all; this only reports what happened.
+    notify::turn_finished(&app, state, chat_id, result.is_err());
     result
 }
 
@@ -1037,6 +1270,196 @@ pub fn stop_chat(state: State<'_, AppState>, chat_id: String) -> bool {
 #[tauri::command]
 pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
     state.runs.running()
+}
+
+// --------------------------------------------------------------- scheduling
+
+/// A scheduled task fired. The UI cannot see the app's clock, so it is told.
+pub const EVENT_SCHEDULED_FIRED: &str = "scheduled-fired";
+
+/// "HH:MM" as stored, normalised through the parsed time so `9:00` and `09:00`
+/// cannot both end up in the database.
+fn clock(time: chrono::NaiveTime) -> String {
+    time.format("%H:%M").to_string()
+}
+
+#[tauri::command]
+pub fn list_scheduled(state: State<'_, AppState>) -> Result<Vec<db::ScheduledRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_scheduled(&conn).map_err(|e| e.to_string())
+}
+
+/// Adds a task, computing its first run here. The form sends the three fields
+/// that describe a schedule rather than a timestamp, so "daily at 09:00" is one
+/// description and not two that can disagree.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn create_scheduled(
+    state: State<'_, AppState>,
+    title: String,
+    prompt: String,
+    chat_id: Option<String>,
+    project_id: Option<String>,
+    freq: String,
+    time: String,
+    weekday: i64,
+    nth: i64,
+) -> Result<db::ScheduledRow, String> {
+    if prompt.trim().is_empty() {
+        return Err("A scheduled task needs something to do.".to_string());
+    }
+    let sched = schedule::Schedule::parse(&freq, &time, weekday, nth);
+    let next = schedule::next_run_at(Local::now(), &sched);
+    let conn = state.db.lock().unwrap();
+    db::create_scheduled(
+        &conn,
+        &title,
+        prompt.trim(),
+        chat_id.as_deref(),
+        project_id.as_deref(),
+        sched.freq.id(),
+        &clock(sched.time),
+        sched.weekday as i64,
+        sched.nth as i64,
+        next,
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Rewrites a task. A changed time moves its next run: otherwise an edit made
+/// ten minutes before the old time would appear to do nothing for a day.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_scheduled(
+    state: State<'_, AppState>,
+    id: String,
+    title: String,
+    prompt: String,
+    chat_id: Option<String>,
+    project_id: Option<String>,
+    freq: String,
+    time: String,
+    weekday: i64,
+    nth: i64,
+    enabled: bool,
+) -> Result<(), String> {
+    if prompt.trim().is_empty() {
+        return Err("A scheduled task needs something to do.".to_string());
+    }
+    let sched = schedule::Schedule::parse(&freq, &time, weekday, nth);
+    let next = schedule::next_run_at(Local::now(), &sched);
+    let conn = state.db.lock().unwrap();
+    db::update_scheduled(
+        &conn,
+        &id,
+        &title,
+        prompt.trim(),
+        chat_id.as_deref(),
+        project_id.as_deref(),
+        sched.freq.id(),
+        &clock(sched.time),
+        sched.weekday as i64,
+        sched.nth as i64,
+        enabled,
+        next,
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_scheduled(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::delete_scheduled(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Runs a task now, without moving when it next runs on its own.
+#[tauri::command]
+pub async fn run_scheduled_now(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, String> {
+    let task = {
+        let conn = state.db.lock().unwrap();
+        db::list_scheduled(&conn)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or("That task is gone.")?
+    };
+    fire_scheduled(&app, &state, &task).await
+}
+
+/// Runs one task: in its own chat, or in a fresh one, then the prompt through
+/// the ordinary turn path.
+///
+/// The caller advances `next_run_at` *before* calling this, so a run longer than
+/// the tick interval is never started a second time.
+pub async fn fire_scheduled(
+    app: &AppHandle,
+    state: &AppState,
+    task: &db::ScheduledRow,
+) -> Result<String, String> {
+    let settings = state.settings.lock().unwrap().clone();
+    // Whether this run got a chat of its own. A chat the task already owns keeps
+    // the skills it has; only a brand-new one takes the standing defaults.
+    let (chat_id, fresh) = {
+        let conn = state.db.lock().unwrap();
+        let existing = task
+            .chat_id
+            .as_deref()
+            .and_then(|id| db::get_chat(&conn, id).ok());
+        match existing {
+            Some(chat) => {
+                // Nobody is watching an unattended run, so nothing may park on an
+                // approval prompt — it would sit there until the user came back.
+                // Auto is the honest mode for a run the user scheduled.
+                let _ = db::set_chat_permission_mode(&conn, &chat.id, "auto");
+                (chat.id, false)
+            }
+            None => {
+                // A fresh chat per run, so a daily task does not become one
+                // conversation that grows forever.
+                let folder = task.project_id.as_deref().and_then(|id| {
+                    db::list_projects(&conn)
+                        .ok()?
+                        .into_iter()
+                        .find(|p| p.id == id)?
+                        .folder
+                });
+                let chat = db::create_chat(
+                    &conn,
+                    "chat",
+                    folder.as_deref(),
+                    &settings.chat_model,
+                    settings.thinking,
+                    &settings.effort,
+                    "auto",
+                )
+                .map_err(|e| e.to_string())?;
+                db::rename_chat(&conn, &chat.id, &task.title).map_err(|e| e.to_string())?;
+                if let Some(project) = task.project_id.as_deref() {
+                    db::set_chat_project(&conn, &chat.id, Some(project))
+                        .map_err(|e| e.to_string())?;
+                }
+                (chat.id, true)
+            }
+        }
+    };
+    // After the lock is released: the seeding helper takes it itself.
+    if fresh {
+        seed_default_skills(state, &chat_id);
+    }
+
+    let _ = app.emit(
+        EVENT_SCHEDULED_FIRED,
+        serde_json::json!({ "taskId": task.id, "chatId": chat_id }),
+    );
+    // No toast here: `start_turn` reports when the run *finishes*, which is the
+    // moment the user asked to hear about. The event above is what says it
+    // started, for the UI that is already open.
+    start_turn(app.clone(), state, &chat_id, &task.prompt, Vec::new()).await?;
+    Ok(chat_id)
 }
 
 /// Whether computer control is currently stopped. Read on startup so the banner
@@ -1535,6 +1958,7 @@ mod tests {
             cost_usd: 0.0,
             agent_mode: "standard".to_string(),
             archived: false,
+            project_id: None,
             created_at: 0,
             updated_at: 0,
         }

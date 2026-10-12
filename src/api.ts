@@ -25,7 +25,13 @@ import type {
   MessageHit,
   MessageRow,
   ModelInfo,
+  NotifyEvent,
   PermissionMode,
+  ProjectRow,
+  QuestionAnswer,
+  QuestionEvent,
+  ScheduledFiredEvent,
+  ScheduledTask,
   SectionKind,
   Settings,
   ShotEvent,
@@ -103,6 +109,13 @@ export const api = {
   compactChat: (chatId: string) => invoke<string>("compact_chat", { chatId }),
 
   listSkills: (chatId?: string) => invoke<SkillView[]>("list_skills", { chatId: chatId ?? null }),
+  /**
+   * Marks a skill as one a new chat starts with. Written into the skill's own
+   * SKILL.md, so it applies to chats that do not exist yet — and leaves this one
+   * exactly as it is.
+   */
+  setSkillDefault: (id: string, defaultOn: boolean) =>
+    invoke<void>("set_skill_default", { id, defaultOn }),
   setChatSkills: (chatId: string, skillIds: string[]) =>
     invoke<void>("set_chat_skills", { chatId, skillIds }),
   skillsDir: () => invoke<string>("skills_dir"),
@@ -115,6 +128,9 @@ export const api = {
 
   respondApproval: (requestId: string, decision: string) =>
     invoke<boolean>("respond_approval", { requestId, decision }),
+  /** Answer the question the model asked mid-run, which resumes the run. */
+  respondQuestion: (requestId: string, answer: { answers: QuestionAnswer[]; cancelled: boolean }) =>
+    invoke<boolean>("respond_question", { requestId, answer }),
   listToolPermissions: (workspace: string) =>
     invoke<string[]>("list_tool_permissions", { workspace }),
   revokeToolPermission: (workspace: string, tool: string) =>
@@ -135,13 +151,14 @@ export const api = {
   startDocker: () => invoke<void>("start_docker"),
 
   listArtifacts: (chatId: string) => invoke<Artifact[]>("list_artifacts", { chatId }),
+  /** Every artifact, from every chat — what the gallery lists. */
+  listAllArtifacts: () => invoke<Artifact[]>("list_all_artifacts"),
   getArtifact: (artifactId: string, version?: number) =>
     invoke<ArtifactDetail>("get_artifact", { artifactId, version: version ?? null }),
   saveArtifactVersion: (artifactId: string, content: string) =>
     invoke<ArtifactDetail>("save_artifact_version", { artifactId, content }),
 
-  mcpStatus: () => invoke<McpStatus>("mcp_status"),
-  mcpServers: () => invoke<McpServer[]>("mcp_servers"),
+  mcpStatus: () => invoke<McpStatus>("mcp_status"),  mcpServers: () => invoke<McpServer[]>("mcp_servers"),
   mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),
   mcpReload: () => invoke<McpStatus>("mcp_reload"),
   mcpRestart: (name: string) => invoke<McpStatus>("mcp_restart", { name }),
@@ -163,6 +180,52 @@ export const api = {
     invoke<FilePreview>("read_preview", { chatId, path }),
   watchWorkspace: (chatId: string) => invoke<string>("watch_workspace", { chatId }),
   unwatchWorkspace: (chatId: string) => invoke<void>("unwatch_workspace", { chatId }),
+
+  listProjects: () => invoke<ProjectRow[]>("list_projects"),
+  createProject: (name: string, folder: string | null = null) =>
+    invoke<ProjectRow>("create_project", { name, folder }),
+  renameProject: (id: string, name: string) => invoke<void>("rename_project", { id, name }),
+  setProjectFolder: (id: string, folder: string | null) =>
+    invoke<void>("set_project_folder", { id, folder }),
+  deleteProject: (id: string) => invoke<void>("delete_project", { id }),
+  setChatProject: (chatId: string, projectId: string | null) =>
+    invoke<void>("set_chat_project", { chatId, projectId }),
+
+  /** A design system is a skill with a `design-` id, so the two lists stay apart
+   *  in the UI while storage and injection are the app's existing skill path. */
+  listDesignSystems: (chatId?: string) =>
+    invoke<SkillView[]>("list_design_systems", { chatId: chatId ?? null }),
+  saveDesignSystem: (name: string, body: string) =>
+    invoke<string>("save_design_system", { name, body }),
+  designSystemFromProject: (folder: string) =>
+    invoke<string>("design_system_from_project", { folder }),
+  deleteDesignSystem: (id: string) => invoke<void>("delete_design_system", { id }),
+
+  /** Recurring tasks and their internal calendar. */
+  listScheduled: () => invoke<ScheduledTask[]>("list_scheduled"),
+  createScheduled: (task: ScheduledDraft) => invoke<ScheduledTask>("create_scheduled", task),
+  updateScheduled: (id: string, task: ScheduledDraft & { enabled: boolean }) =>
+    invoke<void>("update_scheduled", { id, ...task }),
+  deleteScheduled: (id: string) => invoke<void>("delete_scheduled", { id }),
+  /** Run a task now without moving when it next runs on its own. */
+  runScheduledNow: (id: string) => invoke<string>("run_scheduled_now", { id }),
+};
+
+/**
+ * Everything a task's form collects. `nextRunAt` is computed on the Rust side.
+ *
+ * A type alias rather than an interface on purpose: `invoke` takes an indexable
+ * argument, and only an alias gets the implicit index signature for it.
+ */
+export type ScheduledDraft = {
+  title: string;
+  prompt: string;
+  chat_id: string | null;
+  project_id: string | null;
+  freq: string;
+  time: string;
+  weekday: number;
+  nth: number;
 };
 
 export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {
@@ -208,6 +271,21 @@ export function onMcpReady(handler: (e: McpReadyEvent) => void): Promise<Unliste
 
 export function onApproval(handler: (e: ApprovalEvent) => void): Promise<UnlistenFn> {
   return listen<ApprovalEvent>("chat-approval", (event) => handler(event.payload));
+}
+
+/** The model asked the user a question mid-run, via `ask_user`. */
+export function onQuestion(handler: (e: QuestionEvent) => void): Promise<UnlistenFn> {
+  return listen<QuestionEvent>("chat-question", (event) => handler(event.payload));
+}
+
+/** Something done — a `notify_user` call, or a run finishing while away. */
+export function onNotify(handler: (e: NotifyEvent) => void): Promise<UnlistenFn> {
+  return listen<NotifyEvent>("chat-notify", (event) => handler(event.payload));
+}
+
+/** A scheduled task fired, in a chat the sidebar may not know about yet. */
+export function onScheduledFired(handler: (e: ScheduledFiredEvent) => void): Promise<UnlistenFn> {
+  return listen<ScheduledFiredEvent>("scheduled-fired", (event) => handler(event.payload));
 }
 
 export function onDone(handler: (e: DoneEvent) => void): Promise<UnlistenFn> {

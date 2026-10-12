@@ -27,6 +27,9 @@ pub const EVENT_GUARD: &str = "chat-guard";
 /// A new or updated artifact, for the side panel. Carries the whole document so
 /// opening it is one event, not an event plus a fetch.
 pub const EVENT_ARTIFACT: &str = "chat-artifact";
+/// The model asked the user a question with `ask_user`. The run is parked until
+/// `respond_question` answers it — and `chat-done` still fires either way.
+pub const EVENT_QUESTION: &str = "chat-question";
 
 /// How many tool round-trips before we stop and hand back to the user. A cap is
 /// essential: without it a confused model can loop forever on its own budget.
@@ -367,6 +370,24 @@ approval first, so say in one line what you are about to do and then call it.",
         );
     }
 
+    // Asking a question is not a change to anything, so it is offered wherever
+    // there are tools at all — but not in ask mode, which has none. The guidance
+    // says so rather than promising a tool that is not there.
+    if tools::AgentMode::parse(&chat.agent_mode) != tools::AgentMode::Ask {
+        base.push_str(
+            "\n\n# Asking the user a question\n\n\
+When you cannot proceed without a decision only the user can make — a preference, a choice \
+between approaches, a missing fact — call `ask_user` instead of guessing; the run picks up from \
+their answer. Ask one to four short questions at once, each with a few concrete options, and they \
+can always type their own answer as well. Do not use it to ask permission for a tool — the app \
+asks for that itself — and do not use it for something you could reasonably decide and state. In \
+agent mode, prefer the smallest sensible assumption over stopping to ask.\n\n\
+When a long job finishes, call `notify_user` with one short sentence — the app raises an OS \
+notification, which is how a user who wandered off learns that you are done. Say it once, at the \
+end, not after every step.",
+        );
+    }
+
     let scope = if coding { "coding" } else { "chat" };
     let agent_mode = tools::AgentMode::parse(&chat.agent_mode);
 
@@ -531,10 +552,14 @@ first — the app handles it.",
     let skills_guide = format!(
         "\n\n# Skills\n\n\
 Skills are reusable instruction files on this machine. Installed:\n\n{catalogue}\n\n\
-The full text of the ones marked [on] is in this prompt; the rest are one call away. When the \
-user names a skill, or a job clearly matches one of these, call `use_skill` with its id — that \
-switches it on for this chat and hands you its instructions, which then apply from here on. Call \
-`list_skills` if you want the catalogue again later in the conversation.\n\n\
+This list is always here, so you always know what the user has — but only the skills marked `[on]` \
+have their text further down this prompt. One that is not on costs nothing but its line above, so \
+nothing is written into the prompt until it is used.\n\n\
+When the user names a skill, or the job at hand clearly matches one of these, call `use_skill` \
+with its id *before you answer* — that switches it on for this chat and hands you its \
+instructions, which then apply for the rest of the conversation. Say which one you are using. \
+Call `list_skills` if you want the catalogue again later. Do not be shy about it: a skill that \
+plainly applies and is not pulled in is worse than one pulled in needlessly.\n\n\
 When the user describes rules they want followed from now on — a house style, a checklist, a way \
 of answering — offer to save it with `create_skill`: it lands in their skills folder and is \
 switched on for this chat. Say what you are about to save first, and ask what should be in it if \
@@ -712,6 +737,62 @@ async fn run_tool(
         return state.mcp.read().await.call(name, args).await;
     }
 
+    if name == "ask_user" {
+        let questions = tools::parse_questions(args)?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        let rx = state.questions.register(&request_id);
+        let _ = app.emit(
+            EVENT_QUESTION,
+            serde_json::json!({
+                "chatId": chat_id,
+                "requestId": request_id,
+                "questions": &questions,
+            }),
+        );
+        // A stopped run must not leave the loop parked on a question, so the wait
+        // also ends (as cancelled) the moment the run is cancelled.
+        let answer = tokio::select! {
+            _ = cancel.cancelled() => crate::questions::Answer { answers: Vec::new(), cancelled: true },
+            answer = rx => answer.unwrap_or_default(),
+        };
+        if answer.cancelled {
+            return Ok("The user dismissed the question without answering. Do not ask it again — \
+                       carry on with the smallest sensible assumption, say which you took, and \
+                       continue."
+                .to_string());
+        }
+        // Match each answer to its question by index, so a sparse reply still
+        // lines up and a question with no answer is reported as such rather than
+        // silently dropped.
+        let lines = questions
+            .iter()
+            .enumerate()
+            .map(|(index, question)| {
+                let mut parts: Vec<String> = Vec::new();
+                if let Some(given) = answer.answers.iter().find(|a| a.index == index) {
+                    parts.extend(given.selected.iter().cloned());
+                    let free = given.freeform.trim();
+                    if !free.is_empty() {
+                        parts.push(free.to_string());
+                    }
+                }
+                let got = if parts.is_empty() {
+                    "(no answer)".to_string()
+                } else {
+                    parts.join("; ")
+                };
+                let label = if question.header.is_empty() {
+                    question.question.clone()
+                } else {
+                    question.header.clone()
+                };
+                format!("- {label}: {got}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(format!("The user answered:\n{lines}"));
+    }
+
     if name == "save_memory" {
         let draft = tools::parse_memory(args)?;
 
@@ -838,10 +919,16 @@ async fn run_tool(
                 "A skill called \"{id}\" already exists. Pass replace: true to rewrite it, or use a different name."
             ));
         }
+        // Revising a skill must not quietly clear whether it is a standing
+        // default — the flag is the user's, and only they should move it.
+        let keep_default = std::fs::read_to_string(&file)
+            .ok()
+            .map(|raw| crate::skills::parse_skill(&id, &raw).default_on)
+            .unwrap_or(false);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         std::fs::write(
             &file,
-            crate::skills::compose(&draft.name, &draft.description, &draft.body),
+            crate::skills::compose(&draft.name, &draft.description, keep_default, &draft.body),
         )
         .map_err(|e| e.to_string())?;
 
@@ -864,6 +951,23 @@ async fn run_tool(
             draft.name,
             if switched { "switched it on" } else { "it was already on" }
         ));
+    }
+
+    if name == "notify_user" {
+        let message = argument(args, "message");
+        if message.is_empty() {
+            return Err("notify_user needs a \"message\".".to_string());
+        }
+        let title = argument(args, "title");
+        let title = if title.is_empty() {
+            "DeskSeek".to_string()
+        } else {
+            title
+        };
+        // The app decides whether this becomes an OS toast — when the window has
+        // focus, it is already on screen — so the answer is the same either way.
+        crate::notify::ping(app, state, Some(chat_id), &title, &message);
+        return Ok("The user has been notified.".to_string());
     }
 
     if name == "update_tasks" {

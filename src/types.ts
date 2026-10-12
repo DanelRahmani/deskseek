@@ -25,17 +25,69 @@ export interface ChatRow {
   agent_mode: string;
   /** Out of the sidebar's way. Nothing else about the chat changes. */
   archived: boolean;
+  /** The project this chat belongs to, or null. Membership only. */
+  project_id: string | null;
   created_at: number;
   updated_at: number;
+}
+
+/**
+ * A named container: a folder to work in, and the chats that belong to it.
+ * Deleting one never deletes its chats — they are only unassigned.
+ */
+export interface ProjectRow {
+  id: string;
+  name: string;
+  folder: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * One recurring task: a prompt and when to run it. The three fields that
+ * describe the schedule are `freq`, `time` and — for weekly and monthly —
+ * `weekday`/`nth`, so "the first Wednesday of the month at 08:00" is one
+ * description rather than a timestamp that has to be recomputed on every edit.
+ */
+export interface ScheduledTask {
+  id: string;
+  title: string;
+  prompt: string;
+  /** The chat it runs in, or null to start a fresh one each time. */
+  chat_id: string | null;
+  project_id: string | null;
+  /** `daily` | `weekly` | `monthly` */
+  freq: string;
+  /** Local wall-clock "HH:MM". */
+  time: string;
+  /** 0 = Monday. Read only by the weekly and monthly shapes. */
+  weekday: number;
+  /** 1 = first … 4 = fourth. Read only by the monthly shape. */
+  nth: number;
+  enabled: boolean;
+  next_run_at: number;
+  last_run_at: number | null;
+  created_at: number;
+}
+
+/** A `notify_user` ping, or a run finishing while the user was away. */
+export interface NotifyEvent {
+  chatId: string | null;
+  title: string;
+  body: string;
+}
+
+/** A scheduled task fired, so the sidebar and tabs need reloading. */
+export interface ScheduledFiredEvent {
+  taskId: string;
+  chatId: string;
 }
 
 /** One stored "always allow" grant: a tool, in one folder. */
 export interface ToolGrant {
   workspace: string;
   tool: string;
-}
-
-/** One message that matched a full-text search, with its match in context. */
+}/** One message that matched a full-text search, with its match in context. */
 export interface MessageHit {
   chatId: string;
   chatTitle: string;
@@ -115,6 +167,10 @@ export interface Settings {
   sandboxImage: string;
   /** Master switch for reading the desktop (`ui_snapshot`). Off by default. */
   computerUse: boolean;
+  /** Master switch for OS notifications. Off silences the toast, not the notice. */
+  notifications: boolean;
+  /** Raise a toast only when the window is not in front of the user. */
+  notifyOnlyWhenUnfocused: boolean;
   /** Set once the first-run setup screen has been finished or dismissed. */
   setupDone: boolean;
 }
@@ -261,7 +317,13 @@ export interface SkillView {
   id: string;
   name: string;
   description: string;
+  /** Switched on for the chat the panel is looking at. */
   enabled: boolean;
+  /**
+   * `default: on` in the skill's own file: a *new* chat starts with it switched
+   * on. A different question from `enabled`, which is about this chat.
+   */
+  default_on: boolean;
 }
 
 export type ToolClassName = "read" | "internal" | "write" | "command" | "computer";
@@ -314,6 +376,35 @@ export interface DoneEvent {
 export interface ErrorEvent {
   chatId: string;
   message: string;
+}
+
+/** One choice the model offered when it asked a question. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** One question the model asked mid-run, via the `ask_user` tool. */
+export interface Question {
+  /** A short label, at most 12 characters, e.g. "Framework". */
+  header: string;
+  question: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+/** The model asked the user something; the run is parked until it is answered. */
+export interface QuestionEvent {
+  chatId: string;
+  requestId: string;
+  questions: Question[];
+}
+
+/** One answer, tied to its question by index so a sparse reply still lines up. */
+export interface QuestionAnswer {
+  index: number;
+  selected: string[];
+  freeform: string;
 }
 
 /** One row of the project tree. */

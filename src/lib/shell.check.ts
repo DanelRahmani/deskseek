@@ -7,7 +7,7 @@
  * leave a pane blank while another tab is still open — both are easy to get
  * wrong by inspection and invisible in the type checker.
  */
-import { DEFAULT_SHELL, openChatIn, parseShell, setPaneChat, pruneShell, toggleSplitPanes } from "./shell.ts";
+import { DEFAULT_SHELL, openChatIn, openInOtherPane, parseShell, setPaneChat, pruneShell, toggleSplitPanes } from "./shell.ts";
 import type { Shell } from "./shell.ts";
 
 function assert(ok: boolean, message: string): void {
@@ -60,5 +60,17 @@ assert(lonely.panes.length === 2 && lonely.panes[1] === null, "splitting with on
 const placed = setPaneChat(shell({ tabs: [], panes: [null, null], focus: 0 }), 1, "n");
 assert(eq(placed.tabs, ["n"]) && placed.panes[1] === "n", "setPaneChat opens a tab when needed");
 assert(placed.focus === 1, "setPaneChat focuses the pane it filled");
+
+// "Open in split view" puts the chat in the pane that is not focused, adding a
+// second pane when there is only one — and never shows it on both sides.
+const splitOne = openInOtherPane(shell({ tabs: ["a"], panes: ["a"], focus: 0 }), "z");
+assert(splitOne.panes.length === 2, "opening beside a single pane splits it");
+assert(splitOne.panes[0] === "a" && splitOne.panes[1] === "z", "the chat lands in the other pane");
+assert(splitOne.focus === 1, "the new pane is focused");
+assert(eq(splitOne.tabs, ["a", "z"]), "a tab is opened for it");
+const fromRight = openInOtherPane(shell({ tabs: ["a", "b"], panes: ["a", "b"], focus: 1 }), "z");
+assert(fromRight.panes[0] === "z" && fromRight.panes[1] === "b", "the other pane is the one not focused");
+const again = openInOtherPane(shell({ tabs: ["a", "b"], panes: ["a", "b"], focus: 1 }), "a");
+assert(again.focus === 0 && eq(again.panes, ["a", "b"]), "a chat already open is focused, not duplicated");
 
 console.log("shell.check.ts: all checks passed");
