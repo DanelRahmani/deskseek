@@ -481,7 +481,9 @@ app draws the bars or the line. That is deliberate. A model asked to hand-write 
 produces a picture that is subtly wrong and impossible to check by looking; a spec either has one
 value per label or it says it does not. `type` is `bar` or `line`, up to eight series, and the
 tool result names what to fix when a shape is wrong. A chart that still cannot be drawn shows the
-reason and the JSON in the panel rather than an empty frame.
+reason and the JSON in the panel rather than an empty frame. A chart is also **drawn in the
+conversation itself**, inside the tool card that published it — the card has the numbers it sent,
+so the picture is there without a click and without the panel having to be open.
 
 **Maths** renders as LaTeX wherever Markdown does — in the chat and in a `markdown` artifact.
 Write `$…$` for inline and `$$…$$` for a displayed equation. It is the model's own LaTeX, drawn by
@@ -531,6 +533,14 @@ disagree about what the document says. Four things are worth saying plainly:
   tool says so rather than producing a deck that looks wrong in the editor.
 - **Existing files are never overwritten.** A second document with the same name becomes
   `name-2`, so a re-run costs nothing.
+
+**When something in the window breaks**
+
+A component that throws would leave a blank window and nothing to go on, so the app renders on top
+of an error boundary: what failed, a stack you can copy, and two ways back — *Try again*, which
+re-renders, and *Reload the window*. It is honest about being a report rather than a fix, and about
+one limit: whatever was half-typed in the composer is in the tree it replaces, so it does not
+survive a crash.
 
 **Connectors (MCP servers)**
 

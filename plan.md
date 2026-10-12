@@ -170,6 +170,15 @@ Ordered by how often the author would actually reach for it.
   applies to a database written before the table existed.
 - **Stop**: cost per day is readable for the last 30 days and matches the summed
   chat totals. ✅
+- **Found in use (2026-10-12), the first time the panel met a real window**: the
+  panel and its types were written against `total_usd` / `cost_usd` / `chat_id`,
+  but the three structs are `#[serde(rename_all = "camelCase")]` — so every money
+  field arrived as `undefined`, and `money()` took the **whole window** down
+  formatting it. The TypeScript types were the lie, not the Rust (everything
+  else in `types.ts` is camelCase). Both sides are fixed, and
+  `the_spend_payload_is_camel_case_on_the_wire` now asserts the *wire* keys, which
+  is the check a type can never give. That blank screen is also why 3.1's
+  boundary was pulled forward into this batch.
 
 ### 2.2 [M] Search past conversations from the chat ✅ done
 - **Why**: `messages_fts` already indexed everything and the sidebar showed
@@ -347,6 +356,13 @@ Ordered by how often the author would actually reach for it.
   failed, and offers *Reload*. Reuse the existing error copy voice.
 - **Test**: a temporary throw behind a dev flag, then an E2E checklist line.
 - **Stop**: a thrown component leaves a readable screen and an intact draft.
+- **Pulled forward and partly done (2026-10-12)**: 2.1's panel blanked the window
+  the first time it was opened, so the boundary could not wait. `ErrorBoundary`
+  wraps `<App/>` in `main.tsx`: the message, React's component stack, *Try again*
+  (a re-render), *Reload the window*, and copy. **The draft half is not done** —
+  the prompt lives in the tree the boundary replaces — and neither is the plan's
+  own test, so nothing in the gate *forces* the screen. The Stop condition is
+  therefore not met: the boundary is armed, not proven.
 
 ### 3.2 [M] Interrupted-run recovery
 - **Why**: a crash or a kill mid-run leaves a chat with a half-written turn and no

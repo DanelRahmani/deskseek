@@ -3,6 +3,7 @@ import { api } from "../api";
 import type { ToolRun } from "../types";
 import { savedPath } from "../lib/docs";
 import { tasksFrom } from "../lib/tasks";
+import { chartSvg } from "../lib/chart";
 
 const ICONS: Record<string, string> = {
   read_file: "📄",
@@ -90,6 +91,21 @@ function describe(run: ToolRun): string {
   }
 }
 
+/**
+ * The chart the model just published, drawn from the tool's own arguments.
+ *
+ * The arguments carry the spec, so the picture belongs in the conversation as
+ * well as in the panel — with no round trip and no extra state to keep in step.
+ * The markup is ours and every value in it went through `esc`; `chart.check.ts`
+ * asserts that a hostile label cannot become markup.
+ */
+function inlineChart(run: ToolRun) {
+  if (run.tool !== "artifact_create") return null;
+  const args = (run.args ?? {}) as Record<string, unknown>;
+  if (args.kind !== "chart" || typeof args.content !== "string") return null;
+  return chartSvg(args.content);
+}
+
 export function ToolCallCard({ run }: { run: ToolRun }) {
   const [open, setOpen] = useState(false);
 
@@ -109,6 +125,9 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
   // A document has been written to disk; the path is the only useful thing to do
   // with it, so the card offers it rather than making the user hunt for it.
   const document = run.status === "ok" ? savedPath(run.tool, run.output) : null;
+  // A chart is the one result that is a picture rather than a path or a log, so
+  // it is drawn here — not behind the chevron, which is for detail.
+  const chart = inlineChart(run);
 
   return (
     <div className={`mb-2 rounded-lg border px-3 py-2 text-xs ${tone}`}>
@@ -126,6 +145,20 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
           {run.status === "running" ? "running…" : run.status === "ok" ? "done" : "failed"}
         </span>
       </button>
+      {chart &&
+        ("error" in chart ? (
+          // The panel shows the reason in full; a line here is enough to say so.
+          <p className="mt-1.5 border-l-2 border-amber-800/60 pl-2 text-[10px] leading-relaxed text-amber-200/70">
+            That chart could not be drawn — the panel has the reason.
+          </p>
+        ) : (
+          // White behind the drawing: the chart is laid out for paper, and the
+          // frame it normally lives in is what supplies the background.
+          <div
+            className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-white p-2 [&_svg]:h-auto [&_svg]:w-full"
+            dangerouslySetInnerHTML={{ __html: chart.svg }}
+          />
+        ))}
       {run.note && (
         // Not a function of `open`: the caveat is the point of the card, and a
         // warning behind a click is a warning nobody reads.

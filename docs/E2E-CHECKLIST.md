@@ -205,10 +205,19 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] *Restore* on an older version makes it current without deleting the newer one
 - [ ] *Copy* puts the version on screen on the clipboard
 - [ ] `artifact_create` with `chart` draws a bar chart, and the bar heights match the values sent
+- [ ] The same chart is drawn **in the conversation**, inside the tool card, and matches the panel
+- [ ] A chart with a second series draws grouped bars, or two lines, in distinct colours
 - [ ] A `line` chart of the same data draws a line with a point per label
 - [ ] A chart whose spec is wrong (a missing `type`, or one value short) shows the reason and the
       JSON in the panel, and the tool result names what was wrong
 - [ ] A label containing markup (`<b>x</b>`) is shown as text, not drawn as markup
+
+## Robustness
+
+- [ ] A render error shows the error screen — the message, a copyable stack, *Try again* and
+      *Reload the window* — and never a blank window. Nothing forces one today, so this is checked
+      whenever a bug happens to throw: a **blank window is a failure**, an error screen is a pass
+- [ ] *Try again* re-renders and recovers; *Reload the window* reloads from disk
 
 ## Maths
 

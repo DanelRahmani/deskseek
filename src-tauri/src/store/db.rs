@@ -2745,6 +2745,66 @@ mod tests {
         assert_eq!(windowed.chats[0].turns, 3);
     }
 
+    /// Walk a payload and fail on any snake_case key.
+    fn assert_camel_case_keys(value: &serde_json::Value, path: &str) {
+        match value {
+            serde_json::Value::Object(map) => {
+                for (key, child) in map {
+                    assert!(!key.contains('_'), "{path}.{key} is snake_case on the wire");
+                    assert_camel_case_keys(child, &format!("{path}.{key}"));
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    assert_camel_case_keys(item, &format!("{path}[{i}]"));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn the_spend_payload_is_camel_case_on_the_wire() {
+        // The spend structs are `rename_all = "camelCase"`, so the frontend is
+        // written against `totalUsd`, not `total_usd`. When it asked for the
+        // latter it got `undefined`, formatted it, and took the whole window
+        // down — a TypeScript type cannot check the wire, so the wire is
+        // asserted here instead.
+        let report = SpendReport {
+            since: 1,
+            total_usd: 1.25,
+            turns: 3,
+            prompt_tokens: 900,
+            completion_tokens: 60,
+            days: vec![DaySpend {
+                day: "2026-10-12".into(),
+                cost_usd: 1.25,
+                turns: 3,
+                prompt_tokens: 900,
+                completion_tokens: 60,
+            }],
+            models: vec![ModelSpend {
+                model: "flash".into(),
+                cost_usd: 1.25,
+                turns: 3,
+            }],
+            chats: vec![ChatSpend {
+                chat_id: "chat-1".into(),
+                title: "A conversation".into(),
+                cost_usd: 1.25,
+                turns: 3,
+            }],
+        };
+
+        let value = serde_json::to_value(&report).unwrap();
+        // Named keys first, so the walk below cannot pass over an empty object.
+        assert_eq!(value["totalUsd"], serde_json::json!(1.25));
+        assert_eq!(value["promptTokens"], serde_json::json!(900));
+        assert_eq!(value["days"][0]["costUsd"], serde_json::json!(1.25));
+        assert_eq!(value["chats"][0]["chatId"], serde_json::json!("chat-1"));
+        assert_camel_case_keys(&value, "report");
+    }
+
     #[test]
     fn an_older_database_gains_the_usage_table() {
         // The new table arrives with `CREATE TABLE IF NOT EXISTS` inside the

@@ -104,7 +104,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
   }, [days, load]);
 
   // The longest bar is the whole width; every other one is its share of it.
-  const busiestDay = Math.max(1, ...(report?.days.map((d) => d.cost_usd) ?? []));
+  const busiestDay = Math.max(1, ...(report?.days.map((d) => d.costUsd) ?? []));
 
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
@@ -152,11 +152,11 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
           <>
             <div className="rounded-xl border border-neutral-800/70 bg-neutral-900/40 p-3">
               <p className="text-2xl font-semibold tabular-nums text-neutral-100">
-                {money(report.total_usd)}
+                {money(report.totalUsd)}
               </p>
               <p className="mt-0.5 text-[11px] text-neutral-500">
                 {report.turns} turn{report.turns === 1 ? "" : "s"} ·{" "}
-                {tokens(report.prompt_tokens)} in · {tokens(report.completion_tokens)} out
+                {tokens(report.promptTokens)} in · {tokens(report.completionTokens)} out
               </p>
             </div>
 
@@ -174,7 +174,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                       {day.turns} turn{day.turns === 1 ? "" : "s"}
                     </span>
                     <span className="shrink-0 tabular-nums text-neutral-300">
-                      {money(day.cost_usd)}
+                      {money(day.costUsd)}
                     </span>
                   </div>
                   {/* The bar is the whole point of a per-day list: it makes the
@@ -182,7 +182,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                   <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-neutral-800">
                     <div
                       className="h-full rounded-full bg-sky-500/70"
-                      style={{ width: `${(day.cost_usd / busiestDay) * 100}%` }}
+                      style={{ width: `${(day.costUsd / busiestDay) * 100}%` }}
                     />
                   </div>
                 </div>
@@ -198,7 +198,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                   key={model.model}
                   label={model.model}
                   detail={`${model.turns} turn${model.turns === 1 ? "" : "s"}`}
-                  value={money(model.cost_usd)}
+                  value={money(model.costUsd)}
                 />
               ))}
             </div>
@@ -209,11 +209,11 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
             <div className="mt-1">
               {report.chats.map((chat) => (
                 <Row
-                  key={chat.chat_id}
+                  key={chat.chatId}
                   label={chat.title}
                   detail={`${chat.turns} turn${chat.turns === 1 ? "" : "s"}`}
-                  value={money(chat.cost_usd)}
-                  onClick={() => onOpenChat(chat.chat_id)}
+                  value={money(chat.costUsd)}
+                  onClick={() => onOpenChat(chat.chatId)}
                 />
               ))}
             </div>

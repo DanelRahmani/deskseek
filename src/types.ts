@@ -512,25 +512,31 @@ export interface GuardEvent {
   escalated?: boolean;
 }
 
-/** One day's spend. `day` is `YYYY-MM-DD` in local time. */
+/**
+ * Spend figures. The Rust structs behind these are
+ * `#[serde(rename_all = "camelCase")]`, like every other payload this app
+ * receives. A snake_case field here is `undefined` at runtime — a type cannot
+ * check the wire — and the panel then takes the whole window down formatting
+ * it. `db.rs` has a test that asserts these keys.
+ */
 export interface DaySpend {
   day: string;
-  cost_usd: number;
+  costUsd: number;
   turns: number;
-  prompt_tokens: number;
-  completion_tokens: number;
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export interface ModelSpend {
   model: string;
-  cost_usd: number;
+  costUsd: number;
   turns: number;
 }
 
 export interface ChatSpend {
-  chat_id: string;
+  chatId: string;
   title: string;
-  cost_usd: number;
+  costUsd: number;
   turns: number;
 }
 
@@ -542,10 +548,10 @@ export interface ChatSpend {
 export interface SpendReport {
   /** The window these figures cover, as a Unix timestamp. */
   since: number;
-  total_usd: number;
+  totalUsd: number;
   turns: number;
-  prompt_tokens: number;
-  completion_tokens: number;
+  promptTokens: number;
+  completionTokens: number;
   /** Newest day first, and only days that actually had spend. */
   days: DaySpend[];
   /** Dearest first. */
