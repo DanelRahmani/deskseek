@@ -1247,29 +1247,33 @@ export default function App() {
 
   // A backup is a file, so the API key is not in it: the key lives in the OS
   // keychain, which is not a file this app can hand out.
-  const backupConfig = useCallback(async () => {
+  const backupProfile = useCallback(async () => {
     try {
-      const path = await api.backupConfig();
+      const path = await api.backupProfile();
       const name = path.split(/[\\/]/).pop() ?? path;
-      setNotice(`Backed up to ${name} in your documents folder.`);
+      setNotice(`Backed up the whole profile to ${name} in your documents folder.`);
     } catch (e) {
       setError(String(e));
     }
   }, []);
 
-  const restoreConfig = useCallback(async () => {
+  /**
+   * Restoring replaces the database the running window is reading, so the honest
+   * end is a reload: every open chat, transcript and stored shell belongs to the
+   * profile that was just swapped out, and re-fetching all of it by hand is a
+   * longer path to the same place.
+   */
+  const restoreProfile = useCallback(async () => {
     try {
       const { open: openDialog } = await import("@tauri-apps/plugin-dialog");
       const selected = await openDialog({
         multiple: false,
-        filters: [{ name: "DeskSeek backup", extensions: ["json"] }],
+        filters: [{ name: "DeskSeek backup", extensions: ["zip"] }],
         title: "Choose a DeskSeek backup",
       });
       if (typeof selected !== "string") return;
-      await api.restoreConfig(selected);
-      setSettings(await api.getSettings());
-      await api.mcpReload();
-      setNotice("Settings and MCP servers restored.");
+      await api.restoreProfile(selected);
+      window.location.reload();
     } catch (e) {
       setError(String(e));
     }
@@ -1358,10 +1362,10 @@ export default function App() {
           toggleSplit();
           return;
         case "backup":
-          void backupConfig();
+          void backupProfile();
           return;
         case "restore":
-          void restoreConfig();
+          void restoreProfile();
           return;
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
@@ -1390,12 +1394,12 @@ export default function App() {
       }
     },
     [
-      backupConfig,
+      backupProfile,
       chatsById,
       exportChat,
       newChat,
       openCustomise,
-      restoreConfig,
+      restoreProfile,
       rewind,
       selectChat,
       setArchived,

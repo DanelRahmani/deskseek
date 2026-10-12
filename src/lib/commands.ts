@@ -34,8 +34,8 @@ export function buildPalette(
     { id: "spend", label: "Spend", hint: "What the last turns cost, by day and model" },
     { id: "files", label: "Show or hide the file tree", hint: "Action" },
     { id: "split", label: "Split into two panes", hint: "Action" },
-    { id: "backup", label: "Back up settings and MCP servers", hint: "Action" },
-    { id: "restore", label: "Restore settings from a backup…", hint: "Action" },
+    { id: "backup", label: "Back up the whole profile", hint: "Action" },
+    { id: "restore", label: "Restore a backup over this profile…", hint: "Action" },
     { id: "import-chat", label: "Import a conversation from JSON…", hint: "Action" },
   ];
   // Exporting needs something to export; undoing needs something to undo, which

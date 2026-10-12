@@ -253,6 +253,16 @@ Tick a box only when the result matches. If something fails, note the step numbe
       half-finished tail is dropped rather than left in the history)
 - [ ] *Dismiss* clears the banner without re-running, and it does not come back on the next launch
 
+## Backup and restore
+
+- [ ] `Ctrl+K` → *Back up the whole profile* names a `.zip` in the documents folder
+- [ ] Open the zip: it holds `deskseek.db`, `MEMORY.md`, `settings.json` and the store folders, and
+      **no** API key anywhere
+- [ ] Add a chat and a skill, back up, then delete a chat and edit a skill, then restore that zip:
+      the window reloads and the deleted chat and the older skill are back
+- [ ] Restoring a `.json` file (or any file that is not a profile zip) reports the reason and leaves
+      the profile as it was
+
 ## Maths
 
 - [ ] An answer containing `$E = mc^2$` renders it as maths, not as dollar signs

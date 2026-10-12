@@ -1,5 +1,6 @@
 mod api;
 mod approvals;
+mod backup;
 mod commands;
 mod conversation;
 mod design;
@@ -210,8 +211,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::save_settings,
-            commands::backup_config,
-            commands::restore_config,
+            commands::backup_profile,
+            commands::restore_profile,
             commands::has_api_key,
             commands::masked_api_key,
             commands::set_api_key,

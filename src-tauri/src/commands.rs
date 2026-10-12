@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::api::models::{self, ModelInfo};
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
+use crate::backup;
 use crate::questions::Answer;
 use crate::conversation::{agent, assemble, summarize};
 use crate::mcp::{McpServer, ServerStatus, ToolLog};
@@ -53,59 +54,69 @@ pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<S
 
 // ---------------------------------------------------------------- backup
 
-/// The API key is deliberately absent: it lives in the OS keychain, which is not
-/// a file this app can hand out, and a backup is a file that gets mailed around.
-/// Everything else the app would miss if the disk died is here.
-const BACKUP_VERSION: u32 = 1;
-
-/// Write settings and the MCP server list to one JSON file in the documents
-/// folder. The MCP file is copied as opaque JSON rather than re-serialised: this
-/// does not need to understand it, only to move it.
+/// What a backup is worth: `src/backup.rs` owns the list and the archive. The
+/// API key is deliberately absent — it lives in the OS keychain, which is not a
+/// file this app can hand out, and a backup is a file that gets mailed around.
+///
+/// Write the whole profile to one zip in the documents folder.
+///
+/// The database is checkpointed first, so the single file the archive holds is
+/// complete: in WAL mode the newest commits are still in `deskseek.db-wal` until
+/// something flushes them, and those commits are exactly what a backup is for.
 #[tauri::command]
-pub fn backup_config(state: State<'_, AppState>) -> Result<String, String> {
+pub fn backup_profile(state: State<'_, AppState>) -> Result<String, String> {
     let dir = documents_dir_path(&state);
     std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
-    let settings = state.settings.lock().unwrap().clone();
-    let mcp = std::fs::read_to_string(state.paths.mcp_file())
-        .ok()
-        .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
-        .unwrap_or(serde_json::Value::Null);
-    let bundle = serde_json::json!({
-        "version": BACKUP_VERSION,
-        "settings": settings,
-        "mcp": mcp,
-    });
+    {
+        let conn = state.db.lock().unwrap();
+        db::checkpoint(&conn);
+    }
     let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
-    let path = crate::tools::docs::free_path(&dir, &format!("deskseek-backup-{stamp}"), "json");
-    let body = serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())?;
-    std::fs::write(&path, body).map_err(|e| e.to_string())?;
+    let path = crate::tools::docs::free_path(&dir, &format!("deskseek-backup-{stamp}"), "zip");
+    backup::write(state.paths.root(), &path)?;
     Ok(path.display().to_string())
 }
 
-/// Put a backup back. Deliberately all-or-nothing: the settings are parsed before
-/// anything is written, so a file that is not a backup leaves the app untouched
-/// rather than half-restored.
+/// Put a whole profile back over this one.
+///
+/// All-or-nothing in the same spirit as before: the archive is unpacked into a
+/// scratch folder first, so a file that is not a backup — or is a truncated one —
+/// leaves the live profile untouched rather than half-replaced.
+///
+/// The caller reloads the window afterwards: every open chat, transcript and
+/// stored shell in the UI belongs to the database that has just been replaced.
 #[tauri::command]
-pub async fn restore_config(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    let body = std::fs::read_to_string(&path).map_err(|e| format!("could not read {path}: {e}"))?;
-    let bundle: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| format!("{path} is not a DeskSeek backup: {e}"))?;
-    let settings: Settings = serde_json::from_value(
-        bundle
-            .get("settings")
-            .cloned()
-            .ok_or("this backup has no settings in it")?,
-    )
-    .map_err(|e| format!("the settings in {path} could not be read: {e}"))?;
+pub async fn restore_profile(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let root = state.paths.root().to_path_buf();
+    let scratch = backup::scratch_dir(&root);
+    std::fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+    let result = restore_into(&state, &root, &scratch, &path).await;
+    // The scratch copy is a full profile; leaving it behind would double the
+    // disk cost of a restore for no reason.
+    let _ = std::fs::remove_dir_all(&scratch);
+    result
+}
 
-    crate::store::settings::save(&state.paths.settings_file(), &settings)
-        .map_err(|e| e.to_string())?;
-    *state.settings.lock().unwrap() = settings;
+async fn restore_into(
+    state: &AppState,
+    root: &Path,
+    scratch: &Path,
+    path: &str,
+) -> Result<(), String> {
+    backup::extract(Path::new(path), scratch)?;
 
-    if let Some(mcp) = bundle.get("mcp").filter(|value| !value.is_null()) {
-        let pretty = serde_json::to_string_pretty(mcp).map_err(|e| e.to_string())?;
-        std::fs::write(state.paths.mcp_file(), pretty).map_err(|e| e.to_string())?;
+    let restored_dir = scratch.join(backup::DB_FILE);
+    if restored_dir.exists() {
+        // Under the lock for the whole swap: between parking the connection and
+        // reopening it, the handle must not be handed to anyone else.
+        let mut conn = state.db.lock().unwrap();
+        db::swap_file(&mut conn, &state.paths.db_file(), &restored_dir)?;
     }
+    backup::replace_items(scratch, root)?;
+
+    // The settings and the server list just changed underneath the running app.
+    let settings = crate::store::settings::load(&state.paths.settings_file());
+    *state.settings.lock().unwrap() = settings;
     state.mcp.write().await.reload().await;
     Ok(())
 }

@@ -647,12 +647,21 @@ than instructions. What is lost is stderr — a local server's complaints land i
 
 **Backups** (both sections)
 
-*Back up settings and MCP servers* and *Restore settings from a backup…* are in the command
-palette (`Ctrl+K`). The bundle is one JSON file in your documents folder, holding the settings and
-the `mcp.json` server list. It **never contains the API key** — that is in the OS keychain, which
-is not a file this app can hand out, and a backup is a file that gets mailed around. Restoring is
-all-or-nothing: the settings are parsed before anything is written, so a file that is not a backup
-leaves the app as it was rather than half-restored.
+*Back up the whole profile* and *Restore a backup over this profile…* are in the command palette
+(`Ctrl+K`). A backup is **one zip** in your documents folder holding the database, `MEMORY.md` and
+`memory/`, the skills, design systems and saved prompts, the `documents/` folder conversations
+filed into, the chat logs, the settings and the `mcp.json` server list. It **never contains the API
+key** — that is in the OS keychain, which is not a file this app can hand out, and a backup is a
+file that gets mailed around. The automation browser's own profile is left out too: it is
+re-creatable and never your data.
+
+Two honest points. The database is checkpointed before it is copied, because in WAL mode the newest
+writes sit in a side file until something flushes them. And restoring replaces the database the
+window is already reading, so the app **reloads itself** afterwards — every open chat, transcript
+and stored shell belonged to the profile that was just swapped out. Restoring is all-or-nothing: the
+archive is unpacked into a scratch folder first, so a file that is not a backup leaves the profile
+as it was rather than half-replaced. A coding chat's attachments live in *your* workspace, not in
+the profile, so they are not in the archive.
 
 ## First run
 
@@ -747,6 +756,8 @@ src-tauri/src/
   mcp/                   MCP client (rmcp) and server config
   runs.rs                in-flight run registry + cancel handles (the durable
                          marker a killed run leaves behind is db::in_flight_runs)
+  backup.rs              one zip for the whole profile: what it carries, and how a
+                         restore puts it back (writes: db's WAL is flushed first)
   schedule.rs            when a recurring task next runs (pure local-time arithmetic)
   notify.rs              one place that decides whether a ping becomes an OS toast
   fs_watch.rs            workspace watcher, refcounted roots, coalesced events

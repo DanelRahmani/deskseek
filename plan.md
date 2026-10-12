@@ -490,7 +490,7 @@ Ordered by how often the author would actually reach for it.
   keyed to the run rather than the chat, and a second run replacing the first
   marker instead of stacking.
 
-### 3.3 [M] Back up and restore the whole profile
+### 3.3 [M] Back up and restore the whole profile ✅
 - **Why**: `backup_config` covers settings + `mcp.json` only (and deliberately
   excludes the API key). The database, memory files, skills and attachments are
   the actual value.
@@ -499,6 +499,39 @@ Ordered by how often the author would actually reach for it.
 - **Test**: a round trip into a temp dir restores a chat, its messages and an
   attachment.
 - **Stop**: a fresh profile can be restored from one file.
+- **Done (2026-10-12).** `src-tauri/src/backup.rs` owns it: `ITEMS` is the list
+  of what a profile *is*, `write` zips them, `extract` unpacks into a scratch
+  folder, and `replace_items` puts that over the live root. One zip replaces the
+  old one JSON file. No new dependency — `zip` 8 with `deflate` was already in
+  the tree for reading `.docx`/`.xlsx`, which is the whole requirement for a
+  container of DEFLATE'd files.
+  - Carried: `deskseek.db`, `MEMORY.md`, `memory/`, `skills/`, `design/`,
+    `prompts/`, `documents/`, `CHATLOG/`, `settings.json`, `mcp.json`. Not
+    carried: `browser/` (the automation profile — re-creatable, and never the
+    user's own data) and the API key (the keychain, as before).
+  - **The database is the awkward part**, and it is why this is a module rather
+    than ten more lines in `commands.rs`: it is held open for the life of the
+    app, so it can neither be copied accurately nor overwritten in place without
+    care. `db::checkpoint` flushes the WAL before the *write* (in WAL mode the
+    newest commits are in `deskseek.db-wal`, exactly what a backup is for), and
+    `db::swap_file` parks the connection on an in-memory database to release the
+    handle, removes the stale `-wal`/`-shm` sidecars, copies the file in, and
+    reopens. Keeping that SQLite knowledge in `db.rs` rather than leaking
+    `rusqlite` into `commands.rs` is the "one file owns each rule" line.
+  - **All-or-nothing**: the archive is unpacked into `restore-<uuid>/` first, so
+    a truncated or foreign file leaves the profile untouched. `extract` checks
+    every entry with `enclosed_name()`, because an archive arrives from elsewhere
+    and a hand-made one must not write across the disk.
+  - `backup_config`/`restore_config` became `backup_profile`/`restore_profile`
+    (command, `api.ts`, palette labels) — the old names would have been a lie
+    about a scope that grew by an order of magnitude.
+  - **The window reloads after a restore.** The running UI's chats, transcripts
+    and stored shells all belong to the database that was just replaced;
+    re-fetching every one of them by hand is the long way to `location.reload()`.
+  - **Tests**: a full round trip (a chat with a message, `MEMORY.md`, a skill, a
+    filed document, and a `browser/` folder that must *not* survive), a
+    replace-rather-than-overlay test, and a hostile `../` entry that must stay
+    inside the destination.
 
 ### 3.4 [S] Maintenance the database needs
 - **Why**: `file_checkpoints` grows for ever and artifact versions are never

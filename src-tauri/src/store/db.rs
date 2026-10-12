@@ -414,6 +414,40 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Flushes the write-ahead log into the main file.
+///
+/// WAL mode keeps recent commits in `deskseek.db-wal`, so a copy of just the
+/// database file can be missing everything since the last checkpoint — which is
+/// exactly the writing a backup is meant to preserve.
+pub fn checkpoint(conn: &Connection) {
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+}
+
+/// Puts a restored database file in place of the live one.
+///
+/// The connection cannot simply be reopened on a file that was replaced
+/// underneath it: on Windows an open file cannot be overwritten at all, and the
+/// connection is held for the life of the app. So it is parked on an in-memory
+/// database first — which releases the handle — then the file and its WAL
+/// sidecars are swapped, and the restored file is opened in its place.
+///
+/// The caller must hold the `db` lock: for the moment between the park and the
+/// reopen, this connection is not the profile.
+pub fn swap_file(conn: &mut Connection, live: &Path, restored: &Path) -> Result<(), String> {
+    checkpoint(conn);
+    *conn = Connection::open_in_memory().map_err(|e| e.to_string())?;
+    // The sidecars belong to the database that is going away; left behind they
+    // would be replayed over the restored file.
+    for suffix in ["-wal", "-shm"] {
+        let sidecar = Path::new(&format!("{}{suffix}", live.display())).to_path_buf();
+        let _ = std::fs::remove_file(sidecar);
+    }
+    std::fs::copy(restored, live)
+        .map_err(|e| format!("could not restore the database: {e}"))?;
+    *conn = open(live).map_err(|e| format!("the restored database could not be opened: {e}"))?;
+    Ok(())
+}
+
 /// Every chat of a section, archived ones included: the sidebar is what splits
 /// them, and a tab restored from the last session has to find its chat even when
 /// it is archived.
