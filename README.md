@@ -25,6 +25,13 @@ Both sections are functional:
 - **Tool steps fold away** — a turn that reads twelve files is one collapsible *N steps* line
   rather than twelve cards. Open it to see each call; a failed step, or a screenshot, opens the
   group by itself
+- **A long conversation stays quick** — the transcript draws its newest 60 turns and offers a
+  *Show N earlier messages* line above them, every row is skipped unless its own content changed,
+  and streamed text is committed once a frame rather than once a token. It used to do the
+  opposite of all three: a 500-turn chat re-parsed every answer's Markdown on every token, which
+  measured at ~2.1 ms a row on this machine — about 640 ms per token for a 300-row transcript,
+  against a 16.7 ms frame budget. Honest limit: 60 rows is a plain window, not a virtualiser, so
+  a chat of thousands of turns reveals in 60-row steps instead of scrolling seamlessly
 - **It can ask you a question** — when it genuinely cannot proceed without a decision only you can
   make, it calls `ask_user` and the run waits for your answer in the composer instead of guessing;
   every question offers a few options and always lets you type your own

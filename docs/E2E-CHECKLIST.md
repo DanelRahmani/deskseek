@@ -55,6 +55,19 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] `/compact` summarises and the context meter drops
 - [ ] `/summarise` proposes entries and opens *Settings → Memory* with them
 
+## Long conversations
+
+- [ ] With an answer streaming, the text keeps arriving smoothly — no stutter, and scrolling
+      stays responsive while it grows
+- [ ] A chat with more than 60 transcript rows opens on the newest ones, with a *Show N earlier
+      messages* line above them; clicking it adds a screenful above without jumping the view and
+      never removes a row from the bottom
+- [ ] The line disappears once everything is revealed, and a newly opened chat starts windowed
+      again (the window is per conversation, not remembered)
+- [ ] Switching between a long chat and a short one leaves the short one showing all of it
+- [ ] A 500-turn chat can be opened and scrolled: the newest answer is at the bottom, and the
+      oldest turn is reachable by revealing, not lost
+
 ## Conversations
 
 - [ ] The arrow on a sidebar row moves a chat into *Archived (n)* at the bottom

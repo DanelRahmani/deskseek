@@ -198,6 +198,40 @@ export default function App() {
     setSessions((prev) => ({ ...prev, [chatId]: fn(prev[chatId] ?? IDLE) }));
   }, []);
 
+  // Text arrives token by token and every commit re-renders the transcript, so
+  // the deltas are held here and committed once a frame instead. A fast stream
+  // then costs a render per frame rather than one per token, which is the whole
+  // reason a long chat used to stutter.
+  const pendingDeltas = useRef<Record<string, { content: string; reasoning: string }>>({});
+  const deltaFrame = useRef<number | null>(null);
+
+  const flushDeltas = useCallback(() => {
+    deltaFrame.current = null;
+    const batch = pendingDeltas.current;
+    pendingDeltas.current = {};
+    const ids = Object.keys(batch);
+    if (ids.length === 0) return;
+    setSessions((prev) => {
+      const next = { ...prev };
+      for (const id of ids) {
+        const rt = next[id];
+        // No stream means the turn ended between the delta and this frame; the
+        // text is stored by then and the transcript is about to be reloaded, so
+        // dropping it here loses nothing. Keeping it would put a dead turn's
+        // tokens at the head of the next one.
+        if (!rt?.stream) continue;
+        next[id] = {
+          ...rt,
+          stream: {
+            content: rt.stream.content + batch[id].content,
+            reasoning: rt.stream.reasoning + batch[id].reasoning,
+          },
+        };
+      }
+      return next;
+    });
+  }, []);
+
   const { tabs, panes, focus, splitAt } = shell;
   const activeId = panes[focus] ?? null;
 
@@ -413,17 +447,10 @@ export default function App() {
     let unlisten: Array<() => void> = [];
     Promise.all([
       onDelta((e) => {
-        patch(e.chatId, (rt) =>
-          rt.stream
-            ? {
-                ...rt,
-                stream: {
-                  content: rt.stream.content + (e.kind === "content" ? e.text : ""),
-                  reasoning: rt.stream.reasoning + (e.kind === "reasoning" ? e.text : ""),
-                },
-              }
-            : rt,
-        );
+        const held = (pendingDeltas.current[e.chatId] ??= { content: "", reasoning: "" });
+        if (e.kind === "content") held.content += e.text;
+        else held.reasoning += e.text;
+        if (deltaFrame.current === null) deltaFrame.current = requestAnimationFrame(flushDeltas);
       }),
       onTool((e) => {
         patch(e.chatId, (rt) => {
@@ -535,8 +562,9 @@ export default function App() {
     return () => {
       disposed = true;
       unlisten.forEach((f) => f());
+      if (deltaFrame.current !== null) cancelAnimationFrame(deltaFrame.current);
     };
-  }, [patch, attachPaths, refreshChats]);
+  }, [patch, attachPaths, refreshChats, flushDeltas]);
 
   /**
    * Open settings, optionally on one section. Memory used to be a side panel of

@@ -2,7 +2,8 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
-Phase 3 (3.1–3.6). Items 4–6 have not been started.
+Phase 3 (3.1–3.6). Phase 4 is **in progress**: 4.1 is done, 4.2–4.4 have not been
+started, and Phase 5–6 have not been started.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -654,7 +655,7 @@ Ordered by how often the author would actually reach for it.
 
 ## Phase 4 — Performance and scale
 
-### 4.1 [M] Transcript rendering for long conversations
+### 4.1 [M] Transcript rendering for long conversations ✅
 - **Why**: chat view maps every message; a 500-turn chat pays for all of it on
   every delta.
 - **Do**: virtualise or window the transcript, and batch stream deltas on
@@ -664,6 +665,45 @@ Ordered by how often the author would actually reach for it.
   can be asserted.
 - **Stop**: a long chat streams smoothly and does not re-render the whole list per
   delta.
+- **Done (2026-10-12).**
+  - **Measured first, with the fixture the plan asked for.** A temporary harness
+    rendered a realistic answer (heading, list, fenced block) through
+    `react-markdown` + GFM under `renderToStaticMarkup`: **~2.1 ms a row** for a
+    300-row transcript, i.e. ~640 ms of Markdown parsing per re-render against a
+    16.7 ms frame budget. Every streamed token triggered one of those. That number
+    is the whole justification for the three changes below, and it is why the
+    window is sized at 60 and not at 300.
+  - **Three changes, each removing a different order of magnitude.**
+    1. `windowTranscript` (pure, in `transcript.ts`) draws the newest
+       `TRANSCRIPT_WINDOW` (60) items with a *Show N earlier messages* line above
+       them, so mounting a long chat is bounded work instead of 300 parses.
+    2. `Markdown`, `Bubble` and `ToolStepGroup` are `memo`d. A streaming frame
+       changes only the live answer, which is drawn outside the transcript, so
+       every stored row bails out on the shallow compare — the per-frame parse
+       count drops from *all rows* to *zero*.
+    3. Deltas are collected in `pendingDeltas` and committed once per
+       `requestAnimationFrame`, so a fast stream costs a render per frame rather
+       than one per token. The auto-scroll effect keys off `stream.content`, so it
+       also went from one `scrollIntoView` per token to one per frame.
+  - **Deviations, and why.** The plan offered "virtualise **or** window": windowing
+    won, because variable-height rows (a table, a diagram, an open step group) make
+    real virtualisation an estimate-and-correct scroll algorithm, and the memo
+    above is what actually removes the per-frame cost. A *sliding* window was also
+    rejected in favour of a growing one — reveal only ever adds above the reader,
+    so the scroll anchor holds and no row can vanish from under the pointer.
+  - **The frame flush cannot leak a token into the next turn.** It skips a chat
+    whose `stream` is already `null`, which is the state a finished turn leaves —
+    so text that arrives after `done` is dropped, not prepended to the next
+    answer. Nothing is lost by that: the text is stored by then and the transcript
+    is reloaded from the database.
+  - **Tests**: `transcript.check.ts` now builds a **500-message** fixture (100
+    turns of question → two calls → two results → answer) and asserts the fold
+    (300 items), then walks `limit` from 1 to the full length asserting
+    `hidden + shown === total`, that the newest item is never dropped, and that
+    the shown count is exactly `min(limit, total)` — an off-by-one here loses a
+    turn silently. Plus: the default window sits exactly at the cut with no gap,
+    a reveal is monotonic and adds *above* the previous first item, and revealing
+    everything leaves nothing hidden.
 
 ### 4.2 [M] Real search in the file tree
 - **Why**: the box filters what has been loaded, which is not what it looks like

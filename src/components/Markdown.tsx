@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import ReactMarkdown, { type Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { copyText } from "../lib/clipboard";
@@ -53,7 +53,13 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
-export function Markdown({ children }: { children: string }) {
+/**
+ * Memoised on the text itself: a streaming turn re-renders the chat on every
+ * frame, and without this each of those frames re-parses every other answer's
+ * Markdown. The props are a single string, so the default shallow compare is
+ * exactly the right test — the same text cannot render differently.
+ */
+export const Markdown = memo(function Markdown({ children }: { children: string }) {
   // highlight.js is the largest thing in the bundle (~600 kB, 127 kB gzipped) and
   // most answers contain no code. It is fetched on the first message that has a
   // fenced block, so a window of prose never pays for it. The cost is one frame
@@ -127,4 +133,4 @@ export function Markdown({ children }: { children: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

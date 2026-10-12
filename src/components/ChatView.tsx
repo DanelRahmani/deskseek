@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import type {
   ApprovalEvent,
@@ -15,7 +15,7 @@ import type {
 } from "../types";
 import { loadDraft, saveDraft } from "../lib/draft";
 import { tasksFrom } from "../lib/tasks";
-import { buildTranscript } from "../lib/transcript";
+import { buildTranscript, windowTranscript, TRANSCRIPT_WINDOW } from "../lib/transcript";
 import { CopyButton, Markdown } from "./Markdown";
 import { IconButton } from "./Icon";
 import { formatTokens } from "../lib/context";
@@ -248,6 +248,17 @@ export function ChatView({
   // Tracks which draft the user dismissed the menu for, so Esc stays dismissed
   // until they type something new.
   const [dismissedFor, setDismissedFor] = useState<string | null>(null);
+  // How much of the transcript is drawn. It only ever grows, so revealing older
+  // turns cannot lose the reader's place, and it resets when the chat does —
+  // otherwise a window opened in a 500-turn chat would follow you to a new one.
+  const [shownLimit, setShownLimit] = useState(TRANSCRIPT_WINDOW);
+  useEffect(() => {
+    setShownLimit(TRANSCRIPT_WINDOW);
+  }, [chat?.id]);
+  const { shown, hidden } = useMemo(
+    () => windowTranscript(transcript, shownLimit),
+    [transcript, shownLimit],
+  );
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -519,7 +530,16 @@ export function ChatView({
             </div>
           )}
 
-          {transcript.map((item) =>
+          {hidden > 0 && (
+            <button
+              onClick={() => setShownLimit((n) => n + TRANSCRIPT_WINDOW)}
+              className="mx-auto rounded-md px-3 py-1.5 text-xs text-neutral-500 transition hover:bg-neutral-800 hover:text-neutral-300"
+            >
+              Show {hidden} earlier {hidden === 1 ? "message" : "messages"}
+            </button>
+          )}
+
+          {shown.map((item) =>
             item.kind === "message" ? (
               <Bubble
                 key={item.message.id}
@@ -820,7 +840,14 @@ export function ChatView({
   );
 }
 
-function Bubble({
+/**
+ * One stored row. Memoised because a streaming turn re-renders this whole view
+ * every frame; only the message whose props actually changed — the live answer
+ * is drawn outside the transcript, so normally none of them — is rendered
+ * again. The callbacks are `undefined` for almost every row, which is what
+ * makes the default shallow compare enough.
+ */
+const Bubble = memo(function Bubble({
   message,
   onEdit,
   onRetry,
@@ -963,4 +990,4 @@ function Bubble({
       )}
     </div>
   );
-}
+});

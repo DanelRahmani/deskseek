@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import type { ToolRun } from "../types";
 import { ToolCallCard } from "./ToolCallCard";
 import { Icon } from "./Icon";
@@ -12,7 +12,13 @@ import { Icon } from "./Icon";
  * screenshot, which is for the user's eyes rather than the model's — opens the
  * group, because those are the cases worth seeing without a click.
  */
-export function ToolStepGroup({ steps }: { steps: ToolRun[] }) {
+/**
+ * Memoised on the array's identity, which the transcript rebuild gives a group
+ * only when the stored messages or the live runs actually changed — not when a
+ * delta merely arrived. A group already on screen therefore costs nothing while
+ * the answer below it streams.
+ */
+export const ToolStepGroup = memo(function ToolStepGroup({ steps }: { steps: ToolRun[] }) {
   const failed = steps.filter((s) => s.status === "error").length;
   const running = steps.filter((s) => s.status === "running");
   const last = running[running.length - 1];
@@ -65,4 +71,4 @@ export function ToolStepGroup({ steps }: { steps: ToolRun[] }) {
       )}
     </div>
   );
-}
+});

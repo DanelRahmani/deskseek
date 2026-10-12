@@ -9,7 +9,8 @@
  *
  * Kept pure and outside the component so the pairing (which tool a result
  * belongs to, and whether a live run is the same one already stored) can be
- * checked without a browser — see transcript.check.ts.
+ * checked without a browser — see transcript.check.ts. The window that bounds
+ * how much of a long chat is drawn lives here for the same reason.
  */
 import type { MessageRow, ToolRun } from "../types";
 
@@ -146,4 +147,30 @@ export function buildTranscript(messages: MessageRow[], tools: ToolRun[]): Trans
   const items = fromMessages(messages);
   if (tools.length) mergeLive(items, tools);
   return items;
+}
+
+/**
+ * How much of a transcript is drawn at once. A 500-turn chat is a lot of
+ * Markdown to parse, and all of it was mounted on every visit; the newest end
+ * is the end anyone is reading, so that is what is drawn.
+ *
+ * ponytail: a plain window, not a virtualiser. Variable-height answers (a
+ * table, a diagram, a folded step group) make real virtualisation an
+ * estimate-and-correct scroll algorithm, and this app has one screen of a chat
+ * open at a time. If the row count ever matters for something other than
+ * drawing, that is the moment to measure heights properly.
+ */
+export const TRANSCRIPT_WINDOW = 60;
+
+/**
+ * The newest items, plus how many were left out. `shown` is a real window: the
+ * caller grows it, so revealing older turns is a single click and the scroll
+ * anchor holds the reader's place.
+ */
+export function windowTranscript(
+  items: TranscriptItem[],
+  limit: number,
+): { shown: TranscriptItem[]; hidden: number } {
+  if (limit >= items.length) return { shown: items, hidden: 0 };
+  return { shown: items.slice(items.length - limit), hidden: items.length - limit };
 }
