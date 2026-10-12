@@ -884,7 +884,13 @@ export default function App() {
         ]);
         if (chatId) setMessagesByChat((prev) => ({ ...prev, [chatId as string]: msgs }));
       } catch (e) {
-        if (chatId) patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
+        if (chatId) {
+          patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
+          // A run that died mid-answer leaves the part that arrived as a stored
+          // message. Fetching it is what puts that text on screen instead of the
+          // error clearing the stream away with it.
+          await loadMessages(chatId);
+        }
       } finally {
         if (chatId) patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
       }
@@ -1182,6 +1188,9 @@ export default function App() {
       await loadMessages(chatId);
     } catch (e) {
       patch(chatId, (rt) => ({ ...rt, error: rt.error ?? String(e) }));
+      // Same reason as `send`: the half that arrived is stored, so it has to be
+      // fetched back before the stream is thrown away.
+      await loadMessages(chatId);
     } finally {
       patch(chatId, (rt) => ({ ...rt, busy: false, stream: null }));
     }

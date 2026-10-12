@@ -1547,14 +1547,42 @@ pub async fn run(
             .await
         {
             Ok(outcome) => outcome,
-            Err(e) => {
-                let message = e.to_string();
+            Err(failure) => {
+                // Write down whatever arrived before the connection died, before
+                // the error. A partial answer the user can read — and ask to
+                // continue from — beats a blank bubble with an error under it, and
+                // this is the only chance to keep it: the accumulator is gone
+                // after this arm.
+                if let Some(partial) = failure.partial {
+                    let text = partial.content.as_ref().and_then(|c| c.as_text());
+                    let reasoning = partial.reasoning_content;
+                    let said_something = text.as_deref().is_some_and(|t| !t.trim().is_empty())
+                        || reasoning.as_deref().is_some_and(|r| !r.trim().is_empty());
+                    if said_something {
+                        let conn = state.db.lock().unwrap();
+                        let row = db::insert_message(
+                            &conn,
+                            chat_id,
+                            "assistant",
+                            text.as_deref(),
+                            reasoning.as_deref(),
+                            None,
+                            None,
+                            None,
+                        )
+                        .map_err(|e| e.to_string())?;
+                        db::touch_chat(&conn, chat_id).map_err(|e| e.to_string())?;
+                        last_message_id = row.id;
+                    }
+                }
+                let message = failure.message;
                 let _ = app.emit(
                     EVENT_ERROR,
                     serde_json::json!({ "chatId": chat_id, "message": message }),
                 );
                 // A done event in every path, so a background session's tab can
-                // clear its running indicator.
+                // clear its running indicator. `network` and `error` are told
+                // apart here rather than in the UI, which would have to guess.
                 let _ = app.emit(
                     EVENT_DONE,
                     serde_json::json!({
@@ -1562,7 +1590,7 @@ pub async fn run(
                         "messageId": last_message_id,
                         "usage": null,
                         "costUsd": null,
-                        "finishReason": "error",
+                        "finishReason": if failure.transport { "network" } else { "error" },
                     }),
                 );
                 return Err(message);

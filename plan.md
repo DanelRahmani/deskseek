@@ -1,8 +1,14 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is **done**: 2.1–2.9 have all
-landed. Items 3–6 have not been started.
+Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
+Phase 3 (3.1–3.6). Items 4–6 have not been started.
+
+What is *not* covered by those ✓s: the E2E checklist has not been walked end to
+end in a real window since Phase 1, so the newer lines (the crash screen and its
+draft, the interrupted-run banner, backup/restore, the database sweep, the
+decision log, a pulled network) are written down and armed but unrun. Only a
+window can confirm them; none is reachable from `cargo test`.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
@@ -611,13 +617,38 @@ Ordered by how often the author would actually reach for it.
     trip and newest-first ordering, the log surviving `delete_chat`, and its own
     ceiling.
 
-### 3.6 [M] Network resilience
+### 3.6 [M] Network resilience ✅
 - **Why**: a dropped connection mid-stream is indistinguishable from the model
   going quiet.
 - **Do**: distinguish transport failure from a model error, retry with backoff on
   transient statuses, and say which it was. Keep the partial answer.
 - **Stop**: pulling the network mid-run produces one clear message and no lost
   text.
+- **Done (2026-10-12).**
+  - `client.rs` gained `Interruption { transport, message, partial }` in place of
+    `anyhow::Error` on the streaming path — `anyhow` cannot be matched on, and the
+    distinction *is* the feature. `transport: true` for a connection that failed
+    or a stream that died; `false` for a request the API refused.
+  - **Retry only where a retry is free.** `MAX_ATTEMPTS` (3) with `backoff`
+    (1s, 2s), and only for `408`, `429` and 5xx (`is_transient`): those say the
+    endpoint was busy or broken, which is worth a second look, while a `400` or a
+    `401` is final and retrying it just costs the user time. The retry wraps the
+    *send and the status* only — **never the stream**, because replaying a stream
+    that already emitted tokens would say everything twice.
+  - **The partial answer is kept.** A mid-stream failure returns what the
+    accumulator had, and `agent.rs` writes it as an assistant message *before*
+    raising the error. Previously the `?` dropped the accumulator and the UI's
+    `finally` cleared `stream`, so a dropped connection lost text the user had
+    already read. It is inserted when content *or* reasoning arrived, since a
+    stream that dies mid-thinking is still text the user was watching.
+  - `finishReason` is now `network` or `error`, decided in the backend rather than
+    guessed at in the UI. The words name which it was: *"Could not reach DeepSeek
+    (3 tries)"* against *"DeepSeek refused the request (401)"*.
+  - Frontend: `send` and `resend` now `await loadMessages` in their `catch` — the
+    stored partial is what the transcript shows instead of the stream being
+    cleared away with an error under it.
+  - **Tests**: the retry rule itself (`is_transient` over both sets of statuses),
+    the backoff growing, and a stop before any answer keeping nothing.
 
 ---
 

@@ -250,6 +250,17 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] *Try again* re-renders and recovers; *Reload the window* reloads from disk with the draft
       still there
 - [ ] If a bug throws anywhere else, the same screen appears — a **blank window is a failure**
+
+## The network dropping
+
+- [ ] Ask a long question, then unplug the network (or stop the Wi-Fi) while the answer is
+      streaming: the chat keeps the text that had already arrived and shows one message saying the
+      connection dropped — not a blank bubble
+- [ ] With the network still down, send another message: it says it could not reach DeepSeek, and
+      nothing is left spinning
+- [ ] Ask "carry on" with the network back: the model continues from the partial answer
+- [ ] Point the base URL at something that answers `401` (Settings → Access) and send: the message
+      names the refusal rather than blaming the connection, and it does not retry three times first
 - [ ] Send a message in a coding chat, then kill the app from Task Manager while the run is
       working, and reopen: that chat shows the **interrupted** banner
 - [ ] On a run that changed files, the banner also offers *Put its files back*, which restores

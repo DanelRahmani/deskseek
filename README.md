@@ -592,6 +592,21 @@ composer is the exception it protects: a half-typed message is mirrored into `se
 it comes back after *Try again* and after a reload. You can produce a crash on purpose to see the
 screen — `localStorage.setItem("deskseek.crash", "1")`, then reload.
 
+**When the connection drops mid-answer**
+
+A network failure is not the model refusing, and the two are told apart rather than collapsed into
+"something went wrong":
+
+- **Before the first token, nothing has been said** — so the request is sent again, up to three
+  times with a growing wait, and only when the endpoint was busy or briefly broken (`408`, `429`,
+  `5xx`). A `400` or a `401` is final, because retrying it just costs you time.
+- **Once tokens have arrived, a retry would say everything twice** — so the run stops there. The
+  part that arrived is written into the chat *before* the error is raised, so a dropped connection
+  costs you nothing that was already on screen: the text stays, and you can say "carry on".
+
+The message names which one it was — *"Could not reach DeepSeek (3 tries)"* or *"DeepSeek refused
+the request (401)"* — because they call for different things from you.
+
 **Connectors (MCP servers)**
 
 Managed in **Customise → Connectors** (`/mcp`). DeskSeek is an MCP *client*. Servers you configure
