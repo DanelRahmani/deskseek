@@ -12,7 +12,7 @@ file to that shape — including that a section is marked `unreleased` only whil
 there is unreleased work, so a released top section is as valid as an unreleased
 one.
 
-## 0.4.0 — unreleased
+## 0.4.0 — 2026-10-12
 
 - Web search sets itself up: one button in the setup screen builds a local SearXNG container, writes the config it needs, and points the app at it
 - Every empty panel now names the action that fills it, instead of only saying there is nothing there
