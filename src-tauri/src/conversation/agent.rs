@@ -827,6 +827,51 @@ fn argument(args: &Value, key: &str) -> String {
         .to_string()
 }
 
+/// Searches earlier conversations, and only the ones this chat may see.
+///
+/// The scope is the one `db::search_messages_scoped` was built for: a coding
+/// chat reads its own workspace folder — which is also what a project is, since
+/// a project's chats share its folder — and a chat-mode conversation, having no
+/// folder to draw a line at, reads that section. Neither can reach another
+/// folder's chats, which is the whole reason the model gets a narrower search
+/// than the sidebar does.
+fn search_history(state: &AppState, chat_id: &str, args: &Value) -> Result<String, String> {
+    let query = argument(args, "query");
+    if query.is_empty() {
+        return Err("search_history needs a query".to_string());
+    }
+    let limit = args
+        .get("limit")
+        .and_then(Value::as_u64)
+        .unwrap_or(8)
+        .clamp(1, 20) as i64;
+
+    let conn = state.db.lock().unwrap();
+    let chat = db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?;
+    let workspace = chat.workspace.as_deref();
+    let hits = db::search_messages_scoped(&conn, &query, workspace, Some(&chat.kind), limit)
+        .map_err(|e| e.to_string())?;
+
+    let searched = match workspace {
+        Some(folder) => format!("in {folder}"),
+        None => "in your chat-mode conversations".to_string(),
+    };
+    if hits.is_empty() {
+        return Ok(format!(
+            "No earlier message matches \"{query}\" {searched}. Only this chat's own place is \
+             searched, not every conversation."
+        ));
+    }
+    let mut out = format!(
+        "{} earlier message(s) matching \"{query}\" {searched}:\n",
+        hits.len()
+    );
+    for hit in &hits {
+        out.push_str(&format!("\n[{} · {}]\n{}\n", hit.chat_title, hit.role, hit.snippet));
+    }
+    Ok(out)
+}
+
 /// A skill by id, or by name when the model was told one rather than shown it.
 ///
 /// Id first: the catalogue carries ids, but being told "use the terse one"
@@ -901,6 +946,10 @@ async fn run_tool(
 
     if name.starts_with("mcp__") {
         return state.mcp.read().await.call(name, args).await;
+    }
+
+    if name == "search_history" {
+        return search_history(state, chat_id, args);
     }
 
     if name == "ask_user" {

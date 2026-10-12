@@ -2,7 +2,8 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1
-is done, the rest of 2 is the plan. Items 3–6 have not been started.
+and 2.2 are done and pushed, the rest of 2 is the plan. Items 3–6 have not been
+started.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
@@ -171,15 +172,24 @@ Ordered by how often the author would actually reach for it.
 - **Stop**: cost per day is readable for the last 30 days and matches the summed
   chat totals. ✅
 
-### 2.2 [M] Search past conversations from the chat
-- **Why**: `messages_fts` already indexes everything and the sidebar shows hits,
-  but the *model* cannot look. A `search_history` tool turns "what did we decide
-  about X" into a lookup.
-- **Do**: a Read tool over `db::fts_query` (quote every term — a bare `*`/`-`/`:`
-  is FTS5 syntax), scoped to the workspace/project so one client's chat cannot
-  quote another's.
-- **Test**: term-quoting test with hostile input (`*`, `-`, `:`, empty).
-- **Stop**: asking about a past decision returns the message and its chat.
+### 2.2 [M] Search past conversations from the chat ✅ done
+- **Why**: `messages_fts` already indexed everything and the sidebar showed
+  hits, but the *model* could not look. "What did we decide about X" was a guess
+  or a re-ask.
+- **Now**: a `search_history` **Read** tool, so it is offered in both sections
+  and in Plan mode, and never prompts. `db::search_messages_scoped` is the same
+  query as the sidebar's with two optional filters, and the unrestricted
+  `search_messages` became a wrapper around it — one copy of the SQL, so the two
+  cannot drift. The scope comes from the chat: a coding chat reads its own
+  `workspace` folder (which is also what a project is, since a project's chats
+  share its folder) and filters to that section; a chat-mode conversation, having
+  no folder to draw a line at, reads that section. Term quoting is `fts_query`'s,
+  already hostile-input-proof.
+- **Test**: `a_scoped_search_cannot_quote_another_workspace` — three chats across
+  two folders and a chat-mode one, asserting the unrestricted search finds all
+  three while each scope finds exactly its own; plus the hostile-input cases
+  (`*`, `-`, `:`, `""`, a bare `(a)`) through the scoped path too.
+- **Stop**: asking about a past decision returns the message and its chat. ✅
 
 ### 2.3 [M] Prompt library (saved prompts)
 - **Why**: the same requests get retyped. Skills are for *rules*; a prompt is a

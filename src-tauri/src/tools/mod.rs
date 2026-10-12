@@ -481,6 +481,20 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "search_history",
+                "Search what was said in earlier conversations in this same place. Use it when the user refers to something you do not have in this conversation — \"what did we decide about X\", \"the thing we worked out last week\" — instead of guessing or asking again. It searches the conversation history, not the files: for the code or the documents use grep. It is scoped to this conversation's own folder and section, so it cannot read another folder's chats.",
+                params(
+                    json!({
+                        "query": {"type": "string", "description": "Words to look for, as the user would say them"},
+                        "limit": {"type": "integer", "description": "How many matches to return. Default 8, maximum 20."}
+                    }),
+                    &["query"],
+                ),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
                 "write_file",
                 "Create a text file, or replace it entirely if it exists. A .docx, .xlsx, .pptx or .pdf cannot be written this way — use doc_create, sheet_create or slides_create for those.",
                 params(
@@ -1003,6 +1017,9 @@ mod tests {
     fn reads_do_not_need_approval_but_writes_and_commands_do() {
         assert_eq!(class_of("read_file"), ToolClass::Read);
         assert_eq!(class_of("grep"), ToolClass::Read);
+        // Reading the history is a read like any other: it goes through the
+        // scope filter, so it cannot reach outside this chat's own place.
+        assert_eq!(class_of("search_history"), ToolClass::Read);
         assert_eq!(class_of("git_status"), ToolClass::Read);
         assert_eq!(class_of("write_file"), ToolClass::Write);
         assert_eq!(class_of("edit_file"), ToolClass::Write);

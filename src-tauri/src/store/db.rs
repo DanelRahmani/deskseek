@@ -680,9 +680,33 @@ pub struct MessageHit {
 /// rather than repeating a title the user can already see. Results are ordered
 /// by relevance (`bm25`, best first) rather than recency: a search is a lookup,
 /// not a feed.
+///
+/// Unrestricted on purpose: this is the user looking at their own history, from
+/// the sidebar. `search_messages_scoped` is the same search for the *model*,
+/// which has no business reading across folders.
 pub fn search_messages(
     conn: &Connection,
     query: &str,
+    limit: i64,
+) -> rusqlite::Result<Vec<MessageHit>> {
+    search_messages_scoped(conn, query, None, None, limit)
+}
+
+/// The same search, narrowed by the caller.
+///
+/// The model searches through this one. A side effect of the split is the point:
+/// the scope is a parameter, so a tool call cannot forget to apply it and the
+/// query exists in exactly one place.
+///
+/// `workspace` narrows to one folder and `kind` to one section. A project's
+/// chats all work in the project's folder, so the folder already *is* the
+/// project scope — adding the project id as a second filter would only be a
+/// narrower way to ask the same question.
+pub fn search_messages_scoped(
+    conn: &Connection,
+    query: &str,
+    workspace: Option<&str>,
+    kind: Option<&str>,
     limit: i64,
 ) -> rusqlite::Result<Vec<MessageHit>> {
     let Some(expr) = fts_query(query) else {
@@ -695,10 +719,12 @@ pub fn search_messages(
          JOIN messages m ON m.rowid = messages_fts.rowid
          JOIN chats c ON c.id = m.chat_id
          WHERE messages_fts MATCH ?1
+           AND (?2 IS NULL OR c.workspace = ?2)
+           AND (?3 IS NULL OR c.kind = ?3)
          ORDER BY bm25(messages_fts)
-         LIMIT ?2",
+         LIMIT ?4",
     )?;
-    let rows = stmt.query_map(params![expr, limit], |r| {
+    let rows = stmt.query_map(params![expr, workspace, kind, limit], |r| {
         Ok(MessageHit {
             chat_id: r.get(0)?,
             chat_title: r.get(1)?,
@@ -1909,6 +1935,52 @@ mod tests {
         // Each of these would be a MATCH parse error if it were not quoted.
         for raw in ["\"stars\"", "a - b", "a:b", "(a)", "**"] {
             search_messages(&conn, raw, 10).unwrap();
+        }
+        // And a query with nothing searchable in it is empty, not an error.
+        for raw in ["", "   ", "a", "*", "-"] {
+            assert!(
+                search_messages_scoped(&conn, raw, None, None, 10).unwrap().is_empty(),
+                "{raw:?} should have found nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn a_scoped_search_cannot_quote_another_workspace() {
+        let conn = mem();
+        // Two clients' folders, and one chat-mode conversation.
+        let mine = create_chat(&conn, "coding", Some("C:/client-a"), "m", true, "high", "manual")
+            .unwrap();
+        let theirs =
+            create_chat(&conn, "coding", Some("C:/client-b"), "m", true, "high", "manual").unwrap();
+        let loose = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        insert_message(&conn, &mine.id, "user", Some("the invoice template"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &theirs.id, "user", Some("their invoice template"), None, None, None, None)
+            .unwrap();
+        insert_message(&conn, &loose.id, "user", Some("my own invoice template"), None, None, None, None)
+            .unwrap();
+
+        // Unrestricted finds all three, which is what the sidebar asks for.
+        assert_eq!(search_messages(&conn, "invoice", 10).unwrap().len(), 3);
+
+        // Scoped to my folder, the other client's conversation is not a result —
+        // and neither is the chat-mode one, which lives in its own place.
+        let scoped = search_messages_scoped(&conn, "invoice", Some("C:/client-a"), Some("coding"), 10)
+            .unwrap();
+        assert_eq!(scoped.len(), 1, "got {scoped:?}");
+        assert_eq!(scoped[0].chat_id, mine.id);
+
+        // A chat-mode chat has no folder to draw a line at, so its scope is the
+        // section: its own history, and none of the coding folders.
+        let loose_hits =
+            search_messages_scoped(&conn, "invoice", None, Some("chat"), 10).unwrap();
+        assert_eq!(loose_hits.len(), 1);
+        assert_eq!(loose_hits[0].chat_id, loose.id);
+
+        // Hostile input goes through the same quoting on this path too.
+        for raw in ["\"*\"", "- : (", "**"] {
+            search_messages_scoped(&conn, raw, Some("C:/client-a"), Some("coding"), 10).unwrap();
         }
     }
 

@@ -91,6 +91,15 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Deleting a project keeps its chats and only unassigns them
 - [ ] The Artifacts list shows an artifact from another chat, and opens it
 
+## Search, here and elsewhere
+
+- [ ] In a coding chat in folder A, asking "what did we decide about X" makes the assistant call
+      `search_history` and answer from an *earlier* chat in that same folder
+- [ ] A chat in folder B can never be quoted by the agent working in folder A, however the
+      question is worded
+- [ ] The same question in a chat-mode conversation searches that section's own history only
+- [ ] A query of `*`, `-` or `:` reports "no earlier message matches" rather than an error
+
 ## Spend
 
 - [ ] *Spend* opens the panel; `/spend` and the palette toggle the same panel

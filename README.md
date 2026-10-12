@@ -184,6 +184,11 @@ Both sections are functional:
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
   ends a run between steps once its cost crosses the figure, and says so in the chat rather than
   going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
+- **The model can look back** — `search_history` lets it search what was said in earlier
+  conversations here, so "what did we decide about X" is a lookup rather than a guess or a re-ask.
+  It searches the messages, not the files (`grep` is for those), and it is **narrower than the
+  sidebar's search on purpose**: a coding chat reads its own folder and a chat-mode conversation
+  reads that section, so one folder's agent can never quote another's
 - **Regenerate, and edit-and-resend** — the copy icon under the newest answer sits next to
   **Retry**, which asks the same question again, and *Edit* under your own last message changes it
   and asks again. Either way everything after that turn is dropped first, so the model is never
@@ -192,8 +197,8 @@ Both sections are functional:
 **Coding**
 
 - Point a task at a **folder** it may work in
-- Tools: `read_file`, `list_dir`, `glob`, `grep`, `write_file`, `edit_file`, `run_command`,
-  `git_status`, `git_diff`, `git_log`, `git_commit`, `git_push`
+- Tools: `read_file`, `list_dir`, `glob`, `grep`, `search_history`, `write_file`, `edit_file`,
+  `run_command`, `git_status`, `git_diff`, `git_log`, `git_commit`, `git_push`
 - **Every write and every command asks first** — allow once, allow for the session, allow
   always for that folder, or deny. Reads run freely. The *always* answers live in
   **Settings → Commands → Always allowed, per folder**, where each one can be taken back — the
