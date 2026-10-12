@@ -272,6 +272,7 @@ pub fn run() {
             commands::list_tool_permissions,
             commands::revoke_tool_permission,
             commands::tool_grants,
+            commands::spend_report,
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,

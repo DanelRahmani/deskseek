@@ -31,6 +31,7 @@ export function buildPalette(
     { id: "projects", label: "Projects", hint: "Grouped chats with one folder" },
     { id: "artifacts", label: "Artifacts", hint: "Every artifact, from every chat" },
     { id: "scheduled", label: "Scheduled tasks", hint: "Recurring prompts on a calendar" },
+    { id: "spend", label: "Spend", hint: "What the last turns cost, by day and model" },
     { id: "files", label: "Show or hide the file tree", hint: "Action" },
     { id: "split", label: "Split into two panes", hint: "Action" },
     { id: "backup", label: "Back up settings and MCP servers", hint: "Action" },

@@ -37,6 +37,7 @@ import type {
   Settings,
   ShotEvent,
   SkillView,
+  SpendReport,
   ToolGrant,
   ToolEvent,
   ToolLog,
@@ -222,6 +223,9 @@ export const api = {
   deleteScheduled: (id: string) => invoke<void>("delete_scheduled", { id }),
   /** Run a task now without moving when it next runs on its own. */
   runScheduledNow: (id: string) => invoke<string>("run_scheduled_now", { id }),
+
+  /** What the last `days` of turns cost, grouped by day, model and chat. */
+  spendReport: (days: number) => invoke<SpendReport>("spend_report", { days }),
 };
 
 /**

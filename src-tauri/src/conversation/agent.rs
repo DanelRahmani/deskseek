@@ -1444,6 +1444,24 @@ pub async fn run(
             // an error later in the run does not lose what was already paid for.
             let conn = state.db.lock().unwrap();
             let _ = db::add_chat_cost(&conn, chat_id, cost);
+            // And into the history, in the same breath and under the same
+            // condition: the spend view and the chat's total are two readings of
+            // one number, and a round priced at nothing would be a silent
+            // disagreement between them. The row is keyed by the run, so the
+            // rounds of this turn add up in one place.
+            let _ = db::record_turn_usage(
+                &conn,
+                chat_id,
+                &run_id,
+                &db::TurnUsage {
+                    model: &chat.model,
+                    prompt_tokens: outcome.usage.prompt_tokens,
+                    completion_tokens: outcome.usage.completion_tokens,
+                    cache_hit_tokens: outcome.usage.prompt_cache_hit_tokens,
+                    cache_miss_tokens: outcome.usage.prompt_cache_miss_tokens,
+                    cost_usd: cost,
+                },
+            );
         }
         last_usage = Some(outcome.usage.clone());
         last_finish = outcome.finish_reason.clone();

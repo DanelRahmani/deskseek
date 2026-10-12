@@ -1221,6 +1221,31 @@ pub fn tool_grants(state: State<'_, AppState>) -> Result<Vec<ToolGrant>, String>
         .collect())
 }
 
+// ------------------------------------------------------------------- spend
+
+/// The longest window the panel may ask for. A cap rather than trust, because
+/// the argument arrives from the webview: an unbounded one would let a single
+/// call ask for every row ever written and hand the answer back as JSON.
+const MAX_SPEND_DAYS: u32 = 365;
+const DEFAULT_SPEND_DAYS: u32 = 30;
+/// The dearest conversations to name. The panel is a glance, and a list of every
+/// chat ever used is not one.
+const SPEND_CHAT_LIMIT: usize = 10;
+
+/// What the last `days` of turns cost, grouped by day, model and chat.
+///
+/// One command, one round trip: the panel opens and is complete.
+#[tauri::command]
+pub fn spend_report(
+    state: State<'_, AppState>,
+    days: Option<u32>,
+) -> Result<db::SpendReport, String> {
+    let days = days.unwrap_or(DEFAULT_SPEND_DAYS).clamp(1, MAX_SPEND_DAYS);
+    let since = db::now_ts() - i64::from(days) * 86_400;
+    let conn = state.db.lock().unwrap();
+    db::spend_report(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
+}
+
 // --------------------------------------------------------------- messaging
 
 #[tauri::command]

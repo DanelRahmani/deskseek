@@ -127,6 +127,7 @@ export const COMMANDS = [
   { name: "/projects", description: "Projects: a folder and the chats in it" },
   { name: "/artifacts", description: "Every artifact, from every chat" },
   { name: "/scheduled", description: "Recurring prompts on a calendar" },
+  { name: "/spend", description: "What the last turns cost, by day and model" },
   { name: "/setup", description: "Reopen the setup screen" },
   { name: "/files", description: "Show the file tree" },
   { name: "/folder", description: "Pick the folder for a coding task" },

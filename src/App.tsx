@@ -44,6 +44,7 @@ import type { CustomiseSection } from "./components/CustomiseDialog";
 import { ProjectsPanel } from "./components/ProjectsPanel";
 import { ArtifactsGallery } from "./components/ArtifactsGallery";
 import { ScheduledPanel } from "./components/ScheduledPanel";
+import { SpendPanel } from "./components/SpendPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
 import { ArtifactPanel } from "./components/ArtifactPanel";
@@ -74,7 +75,8 @@ type Panel =
   | "context"
   | "projects"
   | "artifacts"
-  | "scheduled";
+  | "scheduled"
+  | "spend";
 
 /** Everything that belongs to one conversation's live turn. */
 interface SessionRuntime {
@@ -100,7 +102,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /projects · /artifacts · /scheduled · /setup · /folder · /new · /export · /rewind · /help";
+  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -635,6 +637,10 @@ export default function App() {
           case "/scheduled":
           case "/schedule":
             setPanel((current) => (current === "scheduled" ? "none" : "scheduled"));
+            return;
+          case "/spend":
+          case "/usage":
+            setPanel((current) => (current === "spend" ? "none" : "spend"));
             return;
           case "/setup":
             setShowSetup(true);
@@ -1174,6 +1180,9 @@ export default function App() {
         case "scheduled":
           setPanel((current) => (current === "scheduled" ? "none" : "scheduled"));
           return;
+        case "spend":
+          setPanel((current) => (current === "spend" ? "none" : "spend"));
+          return;
         case "files":
           setPanel((current) => (current === "files" ? "none" : "files"));
           return;
@@ -1344,6 +1353,7 @@ export default function App() {
         onScheduled={() =>
           setPanel((current) => (current === "scheduled" ? "none" : "scheduled"))
         }
+        onSpend={() => setPanel((current) => (current === "spend" ? "none" : "spend"))}
         keyMask={keyMask}
         runningIds={runningIds}
         unreadIds={unreadIds}
@@ -1471,6 +1481,15 @@ export default function App() {
         <ScheduledPanel
           onClose={() => setPanel("none")}
           onChanged={() => void refreshChats(kindRef.current)}
+        />
+      )}
+      {panel === "spend" && (
+        <SpendPanel
+          onClose={() => setPanel("none")}
+          onOpenChat={(id) => {
+            setPanel("none");
+            void selectChat(id);
+          }}
         />
       )}
       {panel === "context" && activeId && (

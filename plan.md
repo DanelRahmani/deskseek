@@ -1,9 +1,13 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and on the working tree** (not yet committed). Phases 2–6 are
-the plan, not a promise — each item is independently shippable and the order is
-the author's own priority, not a schedule.
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1
+is done, the rest of 2 is the plan. Items 3–6 have not been started.
+
+Each item is independently shippable and the order is the author's own priority,
+not a schedule. A `✅` on an item means its Stop condition is met and its Test
+runs in the gate; the detail under it is what was actually built, which is
+sometimes not what the plan guessed.
 
 ## How to read an item
 
@@ -143,18 +147,29 @@ defects the owner reported. All of it is on the working tree, gated, uncommitted
 
 Ordered by how often the author would actually reach for it.
 
-### 2.1 [L] Usage and cost history, and a spend view
-- **Why**: `chats.cost_usd` is a running total with no history; the live usage is
-  only ever the last turn. Nothing can answer "what did this cost me this month".
-- **Do**: a **turn-level** table (chat, run, model, prompt/completion tokens,
-  cache-hit/miss tokens, cost, `created_at`) rather than a column on `messages`.
-  New table in the SCHEMA **and** created for existing databases, with the
-  rebuild/upgrade test. A panel over it (per chat, per day, per model). Reuse the
-  existing `cost_limit_usd` reasoning rather than inventing a second budget rule.
-- **Test**: an upgrade test on a real temp file that lacks the column; an
-  aggregation test with hand-built rows (one-off rows only).
+### 2.1 [L] Usage and cost history, and a spend view ✅ done
+- **Why**: `chats.cost_usd` is a running total with no dates; the live usage is
+  only ever the last turn. Nothing could answer "what did this cost me this
+  month".
+- **Now**: `turn_usage`, one row per **turn**, keyed by `UNIQUE(run_id)`.
+  `db::record_turn_usage` *upserts* after each round, called right next to
+  `add_chat_cost` under the same condition — so a run that is stopped or errors
+  still counts for what it really spent, and the history and the chat's total are
+  two readings of one number rather than two stories. `db::spend_report(since)`
+  groups it by local day, by model and by chat (joined to `chats` for the title);
+  the command caps the window at 365 days and names the ten dearest
+  conversations. `SpendPanel` (sidebar, `/spend`, palette) shows the total, a bar
+  per day, then by model and by conversation — no chart dependency, the bar is a
+  div.
+- **Test**: `every_round_of_a_turn_lands_in_one_row` (three rounds, one row, three
+  rounds recorded), `spend_is_grouped_by_day_model_and_chat` (rows placed days
+  apart so the local-day boundary never enters into it, comparing exact binary
+  fractions), and `an_older_database_gains_the_usage_table` on a **real temp
+  file** — the new table arrives from the schema batch's `CREATE TABLE IF NOT
+  EXISTS`, and that batch is all-or-nothing, so it is worth proving it still
+  applies to a database written before the table existed.
 - **Stop**: cost per day is readable for the last 30 days and matches the summed
-  chat totals.
+  chat totals. ✅
 
 ### 2.2 [M] Search past conversations from the chat
 - **Why**: `messages_fts` already indexes everything and the sidebar shows hits,

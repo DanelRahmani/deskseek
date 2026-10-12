@@ -206,6 +206,34 @@ CREATE TABLE IF NOT EXISTS file_checkpoints (
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_chat ON file_checkpoints(chat_id, created_at);
 
+-- What one turn cost. `chats.cost_usd` is a running total with no dates, and a
+-- usage column on `messages` would be one row per API round rather than per
+-- turn, so neither can answer "what did this cost me this month".
+--
+-- `run_id` is the agent run's own id and is UNIQUE on purpose: the row is
+-- upserted as each round of the turn finishes, which is what keeps one turn to
+-- one row however the run ended. Written at the same moment and under the same
+-- condition as `add_chat_cost`, so the history and the chat's total agree.
+CREATE TABLE IF NOT EXISTS turn_usage (
+    id                TEXT PRIMARY KEY,
+    chat_id           TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+    run_id            TEXT NOT NULL UNIQUE,
+    model             TEXT NOT NULL,
+    -- API round-trips inside this turn: 3 means two tool loops and a final answer.
+    rounds            INTEGER NOT NULL DEFAULT 1,
+    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    -- Kept apart from the prompt total because they are billed at different
+    -- rates; `prompt_tokens` is the sum of these two when the API reports both.
+    cache_hit_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd          REAL NOT NULL DEFAULT 0,
+    created_at        INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_turn_usage_time ON turn_usage(created_at);
+CREATE INDEX IF NOT EXISTS idx_turn_usage_chat ON turn_usage(chat_id, created_at);
+
 -- A named container: a folder to work in and the chats that belong to it. The
 -- chats are the members, so deleting a project must never delete them — see
 -- `delete_project`.
@@ -1460,6 +1488,189 @@ pub fn rewind_last_run(conn: &Connection, chat_id: &str) -> Result<Vec<String>, 
     Ok(restored)
 }
 
+// ------------------------------------------------------------ usage history
+
+/// One API round's usage, as the agent loop hands it over.
+///
+/// `rounds` is 1 for a normal call: the caller adds one round at a time and the
+/// store accumulates, so it never has to hold the whole turn in memory.
+pub struct TurnUsage<'a> {
+    pub model: &'a str,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub cache_hit_tokens: u32,
+    pub cache_miss_tokens: u32,
+    pub cost_usd: f64,
+}
+
+/// Adds one round to its turn's row, creating the row on the first round.
+///
+/// An upsert rather than an append, and called next to `add_chat_cost` under the
+/// same condition, so a run that is stopped or errors half-way leaves exactly
+/// what it spent — in the history as well as in the chat's running total. That
+/// agreement is the whole point: a spend view that disagrees with the chat it is
+/// describing is worse than no spend view.
+pub fn record_turn_usage(
+    conn: &Connection,
+    chat_id: &str,
+    run_id: &str,
+    round: &TurnUsage<'_>,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO turn_usage
+             (id, chat_id, run_id, model, rounds, prompt_tokens, completion_tokens,
+              cache_hit_tokens, cache_miss_tokens, cost_usd, created_at)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT(run_id) DO UPDATE SET
+             rounds            = rounds + 1,
+             prompt_tokens     = prompt_tokens + excluded.prompt_tokens,
+             completion_tokens = completion_tokens + excluded.completion_tokens,
+             cache_hit_tokens  = cache_hit_tokens + excluded.cache_hit_tokens,
+             cache_miss_tokens = cache_miss_tokens + excluded.cache_miss_tokens,
+             cost_usd          = cost_usd + excluded.cost_usd,
+             model             = excluded.model",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            chat_id,
+            run_id,
+            round.model,
+            round.prompt_tokens,
+            round.completion_tokens,
+            round.cache_hit_tokens,
+            round.cache_miss_tokens,
+            round.cost_usd,
+            now_ts(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// One day's spend, summed over every turn that finished that day.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DaySpend {
+    /// `YYYY-MM-DD`, in local time — the day the user would name.
+    pub day: String,
+    pub cost_usd: f64,
+    pub turns: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelSpend {
+    pub model: String,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSpend {
+    pub chat_id: String,
+    pub title: String,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+/// Everything the spend panel shows, in one round trip.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SpendReport {
+    /// The window these figures cover, as a Unix timestamp.
+    pub since: i64,
+    pub total_usd: f64,
+    pub turns: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    /// Newest day first, and only days that actually had spend.
+    pub days: Vec<DaySpend>,
+    /// Most expensive first.
+    pub models: Vec<ModelSpend>,
+    pub chats: Vec<ChatSpend>,
+}
+
+/// Spend since `since`, grouped the three ways the panel asks for it.
+///
+/// A day is a *local* day: the column is Unix seconds, and a spend view that
+/// buckets by UTC midnight would put an evening's work on tomorrow's row for
+/// anyone east of Greenwich.
+pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlite::Result<SpendReport> {
+    let (total_usd, turns, prompt_tokens, completion_tokens) = conn.query_row(
+        "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*),
+                COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0)
+         FROM turn_usage WHERE created_at >= ?1",
+        [since],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+
+    let days = {
+        let mut stmt = conn.prepare(
+            "SELECT date(created_at, 'unixepoch', 'localtime') AS day,
+                    SUM(cost_usd), COUNT(*), SUM(prompt_tokens), SUM(completion_tokens)
+             FROM turn_usage WHERE created_at >= ?1
+             GROUP BY day ORDER BY day DESC",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(DaySpend {
+                day: r.get(0)?,
+                cost_usd: r.get(1)?,
+                turns: r.get(2)?,
+                prompt_tokens: r.get(3)?,
+                completion_tokens: r.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let models = {
+        let mut stmt = conn.prepare(
+            "SELECT model, SUM(cost_usd), COUNT(*) FROM turn_usage WHERE created_at >= ?1
+             GROUP BY model ORDER BY SUM(cost_usd) DESC",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(ModelSpend {
+                model: r.get(0)?,
+                cost_usd: r.get(1)?,
+                turns: r.get(2)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let chats = {
+        // Joined to `chats` for the title: the panel shows conversations by name,
+        // and a deleted chat's rows are gone with it (the foreign key cascades).
+        let mut stmt = conn.prepare(
+            "SELECT t.chat_id, c.title, SUM(t.cost_usd), COUNT(*)
+             FROM turn_usage t JOIN chats c ON c.id = t.chat_id
+             WHERE t.created_at >= ?1
+             GROUP BY t.chat_id ORDER BY SUM(t.cost_usd) DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![since, chat_limit as i64], |r| {
+            Ok(ChatSpend {
+                chat_id: r.get(0)?,
+                title: r.get(1)?,
+                cost_usd: r.get(2)?,
+                turns: r.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    Ok(SpendReport {
+        since,
+        total_usd,
+        turns,
+        prompt_tokens,
+        completion_tokens,
+        days,
+        models,
+        chats,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2027,5 +2238,137 @@ mod tests {
         let conn = mem();
         create_scheduled(&conn, "  ", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
         assert_eq!(list_scheduled(&conn).unwrap()[0].title, "Scheduled task");
+    }
+
+    fn round(model: &str, prompt: u32, completion: u32, cost: f64) -> TurnUsage<'_> {
+        TurnUsage {
+            model,
+            prompt_tokens: prompt,
+            completion_tokens: completion,
+            cache_hit_tokens: 0,
+            cache_miss_tokens: prompt,
+            cost_usd: cost,
+        }
+    }
+
+    #[test]
+    fn every_round_of_a_turn_lands_in_one_row() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+
+        // Three rounds of one turn: two tool loops and the answer.
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 100, 20, 0.25)).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 200, 30, 0.5)).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 50, 10, 0.25)).unwrap();
+
+        let report = spend_report(&conn, 0, 10).unwrap();
+        assert_eq!(report.turns, 1, "three rounds of one turn must not be three turns");
+        assert_eq!(report.prompt_tokens, 350);
+        assert_eq!(report.completion_tokens, 60);
+        assert_eq!(report.total_usd, 1.0);
+
+        // The round count is what says the row is a turn and not a call.
+        let rounds: i64 = conn
+            .query_row("SELECT rounds FROM turn_usage", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rounds, 3);
+    }
+
+    #[test]
+    fn spend_is_grouped_by_day_model_and_chat() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let now = now_ts();
+
+        // Rows days apart, so the local-day boundaries never enter into it: two
+        // turns today, one three days ago, one outside a 30-day window. The costs
+        // are exact binary fractions, so the sums can be compared exactly.
+        for (run, days_ago, model, cost) in [
+            ("run-1", 0, "flash", 0.5),
+            ("run-2", 0, "pro", 0.25),
+            ("run-3", 3, "pro", 0.125),
+            ("run-4", 40, "flash", 1.0),
+        ] {
+            record_turn_usage(&conn, &chat.id, run, &round(model, 1_000, 100, cost)).unwrap();
+            conn.execute(
+                "UPDATE turn_usage SET created_at = ?2 WHERE run_id = ?1",
+                params![run, now - days_ago * 86_400],
+            )
+            .unwrap();
+        }
+
+        // Everything, and then the same thing through a 30-day window.
+        let all = spend_report(&conn, 0, 10).unwrap();
+        assert_eq!(all.turns, 4);
+        assert_eq!(all.days.len(), 3, "today, three days ago, and 40 days ago");
+        assert_eq!(all.total_usd, 1.875);
+
+        let windowed = spend_report(&conn, now - 30 * 86_400, 10).unwrap();
+        assert_eq!(windowed.turns, 3, "the 40-day-old turn is out of the window");
+        assert_eq!(windowed.days.len(), 2);
+        assert_eq!(windowed.total_usd, 0.875);
+        // Newest day first, so the panel does not have to sort.
+        assert!(windowed.days[0].day > windowed.days[1].day);
+
+        // Per model, dearest first: one `flash` turn (0.5) beats two `pro` ones.
+        assert_eq!(windowed.models.len(), 2);
+        assert_eq!(windowed.models[0].model, "flash");
+        assert_eq!(windowed.models[0].cost_usd, 0.5);
+        assert_eq!(windowed.models[1].turns, 2);
+
+        // Per chat, with the title a person recognises.
+        assert_eq!(windowed.chats.len(), 1);
+        assert_eq!(windowed.chats[0].chat_id, chat.id);
+        assert_eq!(windowed.chats[0].turns, 3);
+    }
+
+    #[test]
+    fn an_older_database_gains_the_usage_table() {
+        // The new table arrives with `CREATE TABLE IF NOT EXISTS` inside the
+        // schema batch rather than from an ALTER, so it is worth proving the
+        // batch still applies to a file written before it existed — the batch is
+        // all-or-nothing, and one bad statement would take every table with it.
+        let dir = std::env::temp_dir().join(format!("deskseek-usage-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("deskseek.db");
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch(
+                "CREATE TABLE chats (
+                    id           TEXT PRIMARY KEY,
+                    title        TEXT NOT NULL,
+                    kind         TEXT NOT NULL DEFAULT 'chat',
+                    workspace    TEXT,
+                    model        TEXT NOT NULL,
+                    thinking     INTEGER NOT NULL DEFAULT 1,
+                    effort       TEXT NOT NULL DEFAULT 'high',
+                    permission_mode TEXT NOT NULL DEFAULT 'manual',
+                    cost_usd     REAL NOT NULL DEFAULT 0,
+                    agent_mode   TEXT NOT NULL DEFAULT 'standard',
+                    archived     INTEGER NOT NULL DEFAULT 0,
+                    project_id   TEXT,
+                    folder       TEXT,
+                    created_at   INTEGER NOT NULL,
+                    updated_at   INTEGER NOT NULL
+                );
+                INSERT INTO chats (id, title, kind, model, created_at, updated_at)
+                    VALUES ('old-1', 'From before usage existed', 'chat', 'flash', 1, 1);",
+            )
+            .unwrap();
+        }
+
+        let conn = open(&path).expect("an older database must still open");
+
+        let chat = get_chat(&conn, "old-1").unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("flash", 10, 5, 0.25)).unwrap();
+        let report = spend_report(&conn, 0, 10).unwrap();
+        assert_eq!(report.turns, 1);
+        assert_eq!(report.total_usd, 0.25);
+        // The chat's own title comes from the join, which also proves `chats`
+        // survived the batch on this file.
+        assert_eq!(report.chats[0].title, "From before usage existed");
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -91,6 +91,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Deleting a project keeps its chats and only unassigns them
 - [ ] The Artifacts list shows an artifact from another chat, and opens it
 
+## Spend
+
+- [ ] *Spend* opens the panel; `/spend` and the palette toggle the same panel
+- [ ] A turn just run appears in the window, and its figure matches that chat's sidebar total
+- [ ] The bars size by share of the busiest day, and switching 7 / 30 / 90 days re-reads
+- [ ] A conversation in *By conversation* opens that chat when clicked
+- [ ] A turn stopped half-way is still counted, for what it spent up to the stop
+
 ## Scheduling and notifications
 
 - [ ] *Scheduled* opens the panel; `/scheduled` toggles the same panel

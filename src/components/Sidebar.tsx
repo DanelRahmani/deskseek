@@ -25,6 +25,8 @@ interface Props {
   onProjects: () => void;
   onArtifacts: () => void;
   onScheduled: () => void;
+  /** What the last turns cost: the spend panel. */
+  onSpend: () => void;
   keyMask: string | null;
   /** Chats with a run in flight, so a background turn is visible at a glance. */
   runningIds: string[];
@@ -59,6 +61,7 @@ export function Sidebar({
   onProjects,
   onArtifacts,
   onScheduled,
+  onSpend,
   keyMask,
   runningIds,
   unreadIds,
@@ -346,6 +349,12 @@ export function Sidebar({
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
         >
           Scheduled
+        </button>
+        <button
+          onClick={onSpend}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
+        >
+          Spend
         </button>
         <button
           onClick={onSettings}

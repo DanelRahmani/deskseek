@@ -510,6 +510,47 @@ export interface GuardEvent {
   escalated?: boolean;
 }
 
+/** One day's spend. `day` is `YYYY-MM-DD` in local time. */
+export interface DaySpend {
+  day: string;
+  cost_usd: number;
+  turns: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+}
+
+export interface ModelSpend {
+  model: string;
+  cost_usd: number;
+  turns: number;
+}
+
+export interface ChatSpend {
+  chat_id: string;
+  title: string;
+  cost_usd: number;
+  turns: number;
+}
+
+/**
+ * What a window of turns cost, grouped the three ways the panel shows it. One
+ * shape for one round trip, so the panel cannot show a total from one moment and
+ * a breakdown from another.
+ */
+export interface SpendReport {
+  /** The window these figures cover, as a Unix timestamp. */
+  since: number;
+  total_usd: number;
+  turns: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  /** Newest day first, and only days that actually had spend. */
+  days: DaySpend[];
+  /** Dearest first. */
+  models: ModelSpend[];
+  chats: ChatSpend[];
+}
+
 /** A tool call the UI is rendering. */
 export interface ToolRun {
   id: string;

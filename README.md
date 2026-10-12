@@ -175,6 +175,12 @@ Both sections are functional:
   fix is next to the warning rather than a command you have to remember
 - **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
   real usage as every turn ends
+- **Spend** (*Spend* in the sidebar, or `/spend`) — the same figures over a window: the total,
+  then a bar per day, then the same money by model and by conversation. One row is written per
+  **turn**, added to as the run goes, so a turn you stopped half-way still appears for what it
+  really spent — which is also what makes this agree with the per-chat totals rather than
+  telling a second, quieter story. It is deliberately a list and not a chart, and the prices are
+  the published rates for the model and the hour, so treat it as an estimate of your bill
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
   ends a run between steps once its cost crosses the figure, and says so in the chat rather than
   going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
