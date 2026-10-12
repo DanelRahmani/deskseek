@@ -174,6 +174,8 @@ export const api = {
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   /** Best-effort launch of Docker Desktop; the engine answers much later. */
   startDocker: () => invoke<void>("start_docker"),
+  /** Bring the local SearXNG container up and point web_search at it. */
+  installSearxng: () => invoke<string>("install_searxng"),
 
   listArtifacts: (chatId: string) => invoke<Artifact[]>("list_artifacts", { chatId }),
   /** Every artifact, from every chat — what the gallery lists. */

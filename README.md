@@ -430,7 +430,8 @@ can never fire for the wrong key.
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
-  JavaScript-built pages work), and `web_search` queries a **SearXNG** instance
+  JavaScript-built pages work), and `web_search` queries a **SearXNG** instance — the setup
+  screen will stand one up for you on Docker
 - All three are read-only, so they never prompt; turn them off in **Settings → Browsing**
 - `browser_open` and `browser_extract` are reads too — the same lookup, spread over two calls
   when a page needs poking at — so they prompt for nothing either
@@ -729,16 +730,20 @@ quietly leaving them broken:
 | Piece | Needed for | Required? |
 | --- | --- | --- |
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
-| SearXNG instance | `web_search` | No — the other browsing tools work without it |
+| SearXNG instance | `web_search` | No — the setup screen can build one on Docker, and the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
 | *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_click`, `ui_type`) | No — off by default |
 
 The same screen also chooses where commands run, and shows which rung that setting currently
 resolves to.
 
-DeskSeek **never installs either one for you**. It detects what is present, links to the
+DeskSeek **never installs Docker or WSL2 for you**. It detects what is present, links to the
 official install guides, and uses whatever it finds. A machine without Docker is not broken —
-it just runs commands directly, with the guard as the only protection.
+it just runs commands directly, with the guard as the only protection. SearXNG is the one thing
+it will stand up on request, and even then it is a container on the engine you already have
+rather than software added to the machine: *Set it up for me* — in the setup screen, and in
+*Settings → Browsing* beside the URL field — runs `docker run`, writes the config the instance
+needs, and points the app at it.
 
 It also distinguishes *installed* from *running*, because those are different questions with
 different answers. `docker --version` is a client-only string that succeeds whenever the CLI is
@@ -749,7 +754,8 @@ good Docker install as "not found" — so both are asked, and a stopped engine r
 
 The SearXNG check is honest about the common failure: an instance only answers JSON once
 `json` is in the `formats` list in its `settings.yml`, so a plain HTML instance is reported as
-*not configured* rather than silently returning nothing.
+*not configured* rather than silently returning nothing. The instance DeskSeek builds writes
+that file itself, which is most of why the button exists.
 
 ## Requirements
 
@@ -804,8 +810,8 @@ Contrast Mode), and a button made of one icon has to have a name.
 
 One check is not about the code at all. `src/lib/changelog.check.ts` holds
 [`CHANGELOG.md`](CHANGELOG.md) to the shape the release workflow reads it by —
-newest first, one dated section per version, exactly one section marked unreleased
-at the top — and pins the reader that turns a tag into release notes, because a
+newest first, one dated section per version, a section marked unreleased only while
+there is unreleased work — and pins the reader that turns a tag into release notes, because a
 release that quietly ships with no notes is the failure that replaced retyping them
 at tag time.
 

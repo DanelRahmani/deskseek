@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
+import { SearxngInstall } from "./SearxngInstall";
 import type { EnvProbe, SandboxMode, Settings } from "../types";
 
 interface Props {
@@ -17,7 +18,7 @@ type State = "ok" | "warn" | "todo";
 /// Shown on first run (and again via `/setup`). Two of the three things
 /// DeskSeek can do well need something installed that we cannot install for
 /// you, so the honest move is to ask rather than quietly leave them broken.
-const SEARXNG_COMPOSE = `docker run -d --name searxng -p 8888:8080 \\
+const SEARXNG_COMPOSE = `docker run -d --name searxng -p 127.0.0.1:8888:8080 \\
   -v searxng:/etc/searxng searxng/searxng`;
 
 /// Ordered from least to most isolating, which is also the order they are
@@ -68,6 +69,14 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
     } finally {
       setBusy(false);
     }
+  };
+
+  // Called once the container is up. The URL was written on the Rust side, so read
+  // the settings back rather than assuming what they now say.
+  const afterInstall = async (url: string) => {
+    setUrl(url);
+    onSaved(await api.getSettings());
+    await refresh();
   };
 
   const finish = async () => {
@@ -148,8 +157,8 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
             <>
               The <code className="text-neutral-400">web_search</code> tool queries a SearXNG
               instance — DeskSeek does not ship one and does not use a paid search API. Without
-              it, the other two browsing tools still work. Self-host it, or point this at an
-              instance you trust:
+              it, the other two browsing tools still work. This screen can set one up for you on
+              Docker, or you can point it at an instance you already trust:
               <pre className="mt-2 overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-[11px] text-neutral-400">
                 {SEARXNG_COMPOSE}
               </pre>
@@ -160,25 +169,28 @@ export function SetupPanel({ settings, onOpenSettings, onSaved, onClose }: Props
             </>
           }
           action={
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="http://localhost:8888"
-                className="min-w-40 flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
-              />
-              <button onClick={saveSearch} disabled={busy} className={button}>
-                Test &amp; save
-              </button>
-              <button
-                onClick={() => {
-                  navigator.clipboard?.writeText(SEARXNG_COMPOSE);
-                  setCopied(true);
-                }}
-                className={quiet}
-              >
-                {copied ? "Copied" : "Copy"}
-              </button>
+            <div className="flex flex-col items-start gap-2">
+              {!searchOk && <SearxngInstall probe={probe} onDone={afterInstall} />}
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="http://localhost:8888"
+                  className="min-w-40 flex-1 rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-200 outline-hidden focus:border-neutral-700"
+                />
+                <button onClick={saveSearch} disabled={busy} className={button}>
+                  Test &amp; save
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard?.writeText(SEARXNG_COMPOSE);
+                    setCopied(true);
+                  }}
+                  className={quiet}
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
             </div>
           }
         />

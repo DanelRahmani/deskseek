@@ -93,6 +93,7 @@ Changing behaviour in this app is usually changing one of these.
 | The "one markdown file per named thing" store, including the id that may never climb out of its folder | `store/files.rs` |
 | The profile (`MEMORY.md`) versus one file per category | `memory.rs`, `memory_files.rs` |
 | Whether a finish becomes an OS toast | `notify.rs` |
+| Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |
 | The workspace watcher, and its refcounted roots | `fs_watch.rs` |
 | What a backup carries, and what it deliberately leaves out | `backup.rs` |

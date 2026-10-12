@@ -8,10 +8,13 @@ retyped at tag time.
 The heading is `## <version> — <date>`, and the version is the tag without its
 `v`. Add to the top section as you go; at release time the word `unreleased`
 becomes the date and nothing else changes. `src/lib/changelog.check.ts` holds the
-file to that shape.
+file to that shape — including that a section is marked `unreleased` only while
+there is unreleased work, so a released top section is as valid as an unreleased
+one.
 
 ## 0.4.0 — unreleased
 
+- Web search sets itself up: one button in the setup screen builds a local SearXNG container, writes the config it needs, and points the app at it
 - Every empty panel now names the action that fills it, instead of only saying there is nothing there
 - The focus ring survives Windows High Contrast Mode — `outline-hidden` in place of `outline-none`, which removed it
 - The four overlays are named dialogs that put focus back on the control that opened them, and Escape closes them

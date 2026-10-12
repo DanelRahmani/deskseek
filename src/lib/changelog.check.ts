@@ -6,7 +6,7 @@
  *
  * Two failures are worth a check here, and both are silent without one. A heading
  * that drifts out of the shape — a hyphen instead of the em dash, a version out of
- * order, two sections marked unreleased — still reads fine to a person and stops
+ * order, a second section marked unreleased — still reads fine to a person and stops
  * the release step finding the section at all. And a reader that returns too much
  * would paste the *next* version's notes into this release's body, which is the
  * one place nobody proof-reads.
@@ -95,8 +95,12 @@ for (const heading of headings) {
 }
 
 const unreleased = headings.filter((h) => h.when === "unreleased");
-need(unreleased.length === 1, `${unreleased.length} sections marked unreleased, wanted exactly one`);
-need(headings[0]?.when === "unreleased", "the unreleased section is not the first one");
+// At *most* one, and not exactly one: dating the section is the release, so a file
+// that has just been released legitimately has none until the next change lands.
+need(unreleased.length <= 1, `${unreleased.length} sections marked unreleased, wanted at most one`);
+if (unreleased.length === 1) {
+  need(headings[0]?.when === "unreleased", "the unreleased section is not the first one");
+}
 
 for (const heading of headings) {
   if (heading.when === "unreleased") continue;
@@ -122,7 +126,9 @@ if (failures.length > 0) {
 }
 
 const released = headings.filter((h) => h.when !== "unreleased").map((h) => h.version);
+const standing =
+  unreleased.length === 1 ? `${unreleased[0].version} unreleased` : "nothing unreleased";
 console.log(
-  `changelog.check.ts: all checks passed (${headings.length} sections, ${unreleased[0]?.version} unreleased ` +
-    `over ${released.join(", ")}, and no tag's notes take the next version's with them)`,
+  `changelog.check.ts: all checks passed (${headings.length} sections, ${standing}, ` +
+    `released: ${released.join(", ")}, and no tag's notes take the next version's with them)`,
 );

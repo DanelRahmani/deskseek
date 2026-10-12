@@ -2,11 +2,11 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
-Phase 3 (3.1–3.6). **Phase 4 is done** (4.1–4.4). **Phases 5 and 6 are done and
-on the working tree together** (5.1–5.4, 6.1–6.4), uncommitted: 5.2's file tree
-keys landed with 5.3, because the tree's roles and its keys are one edit to the
-same recursion. The next release is **0.4.0**, and `CHANGELOG.md`'s top section is
-what its tag will print.
+Phase 3 (3.1–3.6). **Phase 4** (4.1–4.4) and **Phases 5–6** (5.1–5.4, 6.1–6.4) are
+done and committed as `7eb16c2`, still local; 5.2's file tree keys landed with 5.3,
+because the tree's roles and its keys are one edit to the same recursion. **Phase 7
+is on the working tree, uncommitted.** The next release is **0.4.0**, and
+`CHANGELOG.md`'s top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -1072,6 +1072,64 @@ Ordered by how often the author would actually reach for it.
   is the one that is certainly wrong. Left as a note rather than a guess — whoever
   bumps it should verify the minimum on that version rather than on this machine's
   24.
+
+---
+
+## Phase 7 — Setup that finishes the job
+
+### 7.1 [S] A button that stands SearXNG up ✅
+- **Why**: `web_search` needs a SearXNG instance, and the setup screen asked the
+  user to leave the app, run a docker command, edit a YAML file inside a volume, and
+  paste a URL back in. Every step was documented, and the whole errand fell on the
+  person least able to debug it — while the screen promised something the app could
+  do itself.
+- **Now**: `src-tauri/src/searxng.rs` owns everything about the container (image,
+  port, name, the config it runs on) and `commands::install_searxng` owns the app's
+  side of it: where the config lives, and that the setting follows *only* once the
+  instance actually answers. `components/SearxngInstall.tsx` is the one control, used by
+  the setup screen **and** by *Settings → Browsing* beside the URL field: the first-run
+  screen is where somebody starts, but a person whose `web_search` has stopped working
+  looks where the URL already is, and a button on only one of the two screens is a button
+  half the users cannot find. It is disabled with the reason when Docker is not answering,
+  with **Start Docker Desktop** beside it when the engine is installed but asleep.
+  Two decisions inside it are worth the words:
+  - **The config is ours, not the image's.** A fresh SearXNG answers HTML and
+    refuses `format=json`, so a perfectly healthy instance fails `web_search` with
+    the reason buried in a file inside a docker volume — the failure the screen
+    already warned about, and the one everybody hits first. We write `settings.yml`
+    into a folder we own and bind-mount it, four lines over
+    `use_default_settings: true`. Written once and never rewritten, so a tuning the
+    user makes there is kept.
+  - **Published on loopback only** (`127.0.0.1:8888`), and the copy-paste command
+    in the screen was corrected to match. `-p 8888:8080` puts an unauthenticated
+    search instance on the local network, which is not what "install it for me"
+    should mean.
+  Success is decided by the instance *answering* (`browse::searxng_ready`), not by
+  docker's exit code: a container that starts and then dies has the second answer
+  wrong. Docker's own output is only ever used to explain a failure.
+- **Why not ship it**: SearXNG is a Python application, so bundling it means an
+  embedded runtime or a per-platform sidecar, in a release that already builds three
+  OSes — and it is **AGPL-3.0**, a real licensing obligation to carry in exchange
+  for saving one `docker run`. The container is the honest middle: nothing ships
+  with the app, and the image updates with a pull rather than with a release of
+  DeskSeek. A headless browser would not help either: `browser_read` already drives
+  the Edge or Chrome that is on the machine, and a browser fetches pages rather than
+  searching for them.
+- **Test**: `searxng.rs`'s own tests, all pure. The config carries `json` as a
+  *list* nested under `search` — the nesting the loader accepts and the API ignores,
+  which is the failure the file exists to prevent; a fresh secret is not the shipped
+  placeholder and differs every time; the container is named and bound to our
+  folder; the published port is loopback; the published port and the URL are the
+  same number; and `exists()` reads a status as a status and a failure sentence as
+  *not there* rather than as a container worth starting.
+- **Stop**: `web_search` works after one click on a machine with Docker running. ✅
+  Run on a real machine the same day: the button built `deskseek-searxng` (Up,
+  `127.0.0.1:8888->8080/tcp`), wrote `searxng/settings.yml`, and saved the URL into
+  settings. `GET /search?q=deskseek&format=json` — the exact request the tool makes
+  — answered `200` with 14 results. The only thing not exercised is the model's own
+  choice to call the tool, which is model behaviour rather than code; the
+  checklist's "a question that needs current facts makes the assistant call
+  `web_search`" line is the last box to tick.
 
 ---
 

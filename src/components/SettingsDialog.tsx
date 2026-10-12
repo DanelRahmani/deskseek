@@ -5,6 +5,7 @@ import { THEMES, isHexColour } from "../lib/theme";
 import { SHORTCUTS } from "../lib/shortcuts";
 import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
+import { SearxngInstall } from "./SearxngInstall";
 import { MemorySection } from "./MemorySection";
 import { Icon } from "./Icon";
 import { when } from "../lib/time";
@@ -512,6 +513,19 @@ export function SettingsDialog({
   };
 
   /**
+   * Called once a SearXNG container is up.
+   *
+   * The URL was written on the Rust side, so read it back rather than saving the
+   * form: the form is a working copy, and writing it here would both risk undoing
+   * the install and silently commit whatever else is half-typed.
+   */
+  const afterInstall = async (url: string) => {
+    setForm((f) => ({ ...f, searxngUrl: url }));
+    onSaved(await api.getSettings(), keyMask);
+    await refreshProbe();
+  };
+
+  /**
    * Picking a theme saves it straight away rather than waiting for the Save
    * button: a theme you cannot see until you press Save is not a theme picker,
    * and the app repaints from the settings this hands back to it.
@@ -965,10 +979,15 @@ export function SettingsDialog({
               </p>
 
               <div className="border-t border-neutral-800 pt-4">
+                {!probe?.searxngOk && (
+                  <div className="mb-3">
+                    <SearxngInstall probe={probe} onDone={afterInstall} />
+                  </div>
+                )}
                 <label className="block text-xs text-neutral-500">SearXNG URL</label>
                 <input
                   className={inputCls}
-                  placeholder="http://localhost:8080"
+                  placeholder="http://localhost:8888"
                   value={form.searxngUrl}
                   onChange={(e) => set("searxngUrl", e.target.value)}
                   spellCheck={false}

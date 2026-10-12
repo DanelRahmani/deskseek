@@ -32,6 +32,14 @@ nothing, or throws.
 - [ ] An invalid API key is rejected with a readable message, not a stack trace
 - [ ] Entering a valid key and closing setup lands on an empty chat
 - [ ] `/setup` reopens the same screen with the saved values
+- [ ] *Settings → Browsing* offers the same *Set it up for me*, and pressing it there fills the URL field and the row stops offering itself
+- [ ] With Docker stopped, *Set it up for me* is disabled and the note beside it says why, and *Start Docker Desktop* launches it
+- [ ] With Docker running, *Set it up for me* builds the container and the SearXNG row turns to *SearXNG answering*; a `settings.yml` appears in the app's `searxng` folder
+- [ ] Pressing it a second time starts the container it already made rather than building a second one, and does not overwrite that `settings.yml`
+- [ ] Deleting that `settings.yml` and pressing again writes a new one with a different `secret_key`
+- [ ] A question that needs current facts makes the assistant call `web_search` and cite what it read
+- [ ] The instance is **not** reachable from another machine on the same network (it binds `127.0.0.1`), and port 8888 is already in use by something else ⇒ the failure names the port rather than hanging
+- [ ] With the network unplugged, *Set it up for me* fails with docker's own reason rather than a bare error
 
 ## Chat
 

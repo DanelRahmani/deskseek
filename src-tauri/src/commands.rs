@@ -17,6 +17,7 @@ use crate::mcp::{McpServer, ServerStatus, ToolLog};
 use crate::memory;
 use crate::notify;
 use crate::schedule;
+use crate::searxng;
 use crate::skills;
 use crate::store::{
     db, keychain,
@@ -2075,6 +2076,29 @@ pub fn start_docker() -> Result<(), String> {
         .spawn()
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Stand a local SearXNG instance up, and point `web_search` at it.
+///
+/// `searxng.rs` owns everything about the container; this owns the app's side of
+/// it — where the config lives, and that the setting follows *only* once the
+/// instance actually answers. Saving the URL first would leave a screen reading
+/// "SearXNG answering" over an instance that never came up.
+///
+/// Returns the URL rather than a probe: the caller re-probes with
+/// `probe_environment`, which is what the screen already trusts, so a button that
+/// worked looks exactly like someone pasting the URL in by hand.
+#[tauri::command]
+pub async fn install_searxng(state: State<'_, AppState>) -> Result<String, String> {
+    let url = searxng::ensure_running(&state.paths.searxng_dir(), &state.http).await?;
+
+    let mut settings = state.settings.lock().unwrap().clone();
+    settings.searxng_url = url.clone();
+    crate::store::settings::save(&state.paths.settings_file(), &settings)
+        .map_err(|e| e.to_string())?;
+    *state.settings.lock().unwrap() = settings;
+
+    Ok(url)
 }
 
 /// Show a file or folder in the system file manager.

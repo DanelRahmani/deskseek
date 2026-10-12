@@ -78,6 +78,15 @@ impl AppPaths {
         self.root.join("browser")
     }
 
+    /// The local SearXNG instance's config, bind-mounted into its container.
+    ///
+    /// A folder we own rather than a named docker volume, because the file in it
+    /// is the difference between an instance that answers JSON and one that does
+    /// not — see `searxng.rs`, which also owns what goes in it.
+    pub fn searxng_dir(&self) -> PathBuf {
+        self.root.join("searxng")
+    }
+
     /// Where chat-mode documents live by default. A chat can point elsewhere.
     pub fn documents_dir(&self) -> PathBuf {
         self.root.join("documents")
@@ -115,6 +124,7 @@ mod tests {
         assert_eq!(p.skills_dir().file_name().unwrap(), "skills");
         assert_eq!(p.design_dir().file_name().unwrap(), "design");
         assert_eq!(p.prompts_dir().file_name().unwrap(), "prompts");
+        assert_eq!(p.searxng_dir().file_name().unwrap(), "searxng");
         assert_ne!(p.skills_dir(), p.design_dir());
     }
 

@@ -13,6 +13,7 @@ mod prompts;
 mod questions;
 mod runs;
 mod schedule;
+mod searxng;
 mod skills;
 mod store;
 mod tools;
@@ -265,6 +266,7 @@ pub fn run() {
             commands::context_breakdown,
             commands::reveal_path,
             commands::start_docker,
+            commands::install_searxng,
             commands::list_artifacts,
             commands::get_artifact,
             commands::save_artifact_version,
