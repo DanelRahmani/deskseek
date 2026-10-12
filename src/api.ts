@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import type {
   ApprovalEvent,
+  ApprovalRecord,
   Artifact,
   ArtifactDetail,
   ArtifactEvent,
@@ -157,6 +158,8 @@ export const api = {
     invoke<void>("revoke_tool_permission", { workspace, tool }),
   /** Every stored "always allow" grant, so it can be seen and taken back. */
   toolGrants: () => invoke<ToolGrant[]>("tool_grants"),
+  /** The last decisions the app made on the user's behalf, newest first. */
+  recentDecisions: () => invoke<ApprovalRecord[]>("recent_decisions"),
 
   documentsDir: () => invoke<string>("documents_dir"),
   /** Write a whole chat to a Markdown file in the documents folder. */

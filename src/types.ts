@@ -105,7 +105,27 @@ export interface ScheduledFiredEvent {
 export interface ToolGrant {
   workspace: string;
   tool: string;
-}/** One message that matched a full-text search, with its match in context. */
+}
+
+/**
+ * One line of the approval audit trail: a decision the app made on the user's
+ * behalf, with the hash of the arguments it was made about.
+ */
+export interface ApprovalRecord {
+  id: string;
+  chatId: string;
+  /** The chat's title, joined rather than copied. */
+  chatTitle: string;
+  tool: string;
+  /** `allowed` | `denied` | `blocked`. */
+  decision: string;
+  /** How or why: `once`, `session`, `always`, `stopped`, the guard's reason… */
+  note: string;
+  argsDigest: string;
+  createdAt: number;
+}
+
+/** One message that matched a full-text search, with its match in context. */
 export interface MessageHit {
   chatId: string;
   chatTitle: string;

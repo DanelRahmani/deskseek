@@ -198,6 +198,11 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] In *Skip*, ordinary commands run unattended; only the catastrophic tier is
       still refused
 - [ ] The guard is described as a heuristic in the banner, not as a sandbox
+- [ ] Allow a `write_file`, deny a `run_command`, and let an `rm -rf /` be blocked in *Auto*:
+      *Settings → Tools → Recent decisions* lists all three, newest first, with the right word
+      (`allowed` / `denied` / `blocked`) and a reason beside each
+- [ ] Deleting the chat a decision was made in leaves that line in the list, unnamed rather than
+      removed
 
 ## Where commands run
 

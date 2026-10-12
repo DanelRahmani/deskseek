@@ -7,7 +7,8 @@ import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
 import { MemorySection } from "./MemorySection";
 import { Icon } from "./Icon";
-import type { EnvProbe, ModelInfo, Settings, ToolGrant } from "../types";
+import { when } from "../lib/time";
+import type { ApprovalRecord, EnvProbe, ModelInfo, Settings, ToolGrant } from "../types";
 
 /**
  * The stored "always allow" grants.
@@ -64,6 +65,62 @@ function Grants() {
     </ul>
   );
 }
+
+/**
+ * The last decisions the app made on the user's behalf, newest first.
+ *
+ * `Grants` answers "what is switched on now"; this answers "what happened" —
+ * the half that leaves no other trace, because a denial and a guard refusal both
+ * produce no tool result to look back at. The arguments are a hash, not the
+ * arguments themselves: an approval can cover a command carrying a secret.
+ */
+function Decisions() {
+  const [rows, setRows] = useState<ApprovalRecord[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .recentDecisions()
+      .then(setRows)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  if (error) return <p className="mt-2 text-[11px] text-red-400">{error}</p>;
+  if (rows.length === 0) {
+    return (
+      <p className="mt-2 text-[11px] text-neutral-600">
+        Nothing has been allowed or refused yet.
+      </p>
+    );
+  }
+  return (
+    <ul className="mt-2 space-y-1">
+      {rows.map((row) => (
+        <li key={row.id} className="flex items-baseline gap-2 text-xs">
+          <span className={`w-16 shrink-0 ${DECISION_TONE[row.decision] ?? "text-neutral-400"}`}>
+            {row.decision}
+          </span>
+          <span className="shrink-0 font-mono text-neutral-300">{row.tool}</span>
+          <span className="truncate text-neutral-500" title={row.note}>
+            {row.note}
+          </span>
+          <span
+            className="ml-auto shrink-0 text-neutral-600"
+            title={`${row.chatTitle || "deleted chat"} · ${row.argsDigest}`}
+          >
+            {when(row.createdAt)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+const DECISION_TONE: Record<string, string> = {
+  allowed: "text-sky-400",
+  denied: "text-red-400",
+  blocked: "text-amber-400",
+};
 
 interface Props {
   settings: Settings;
@@ -1166,6 +1223,16 @@ export function SettingsDialog({
                   restart. Nothing else is: the other decisions last as long as the app is running.
                 </p>
                 <Grants />
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Recent decisions</label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  What you were asked and what you said, newest first — including the ones the
+                  guard refused without asking. An allowed or refused call leaves no tool result
+                  anywhere, so this is where it is recorded.
+                </p>
+                <Decisions />
               </section>
             </>
           )}

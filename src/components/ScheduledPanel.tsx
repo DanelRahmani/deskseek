@@ -4,6 +4,7 @@ import type { ScheduledDraft } from "../api";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { Icon, IconButton } from "./Icon";
 import { QuestionPrompt, answerFrom } from "./QuestionPrompt";
+import { when } from "../lib/time";
 import type { ParkedRequest, ProjectRow, ScheduledTask } from "../types";
 
 interface Props {
@@ -34,17 +35,6 @@ function describe(task: ScheduledTask): string {
     return `The ${NTHS[task.nth - 1]} ${WEEKDAYS[task.weekday]} of the month at ${task.time}`;
   }
   return `Every day at ${task.time}`;
-}
-
-/** A stored timestamp as a local, readable moment. */
-function when(ts: number): string {
-  return new Date(ts * 1000).toLocaleString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 const BLANK: ScheduledDraft = {

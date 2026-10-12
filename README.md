@@ -305,6 +305,16 @@ boundary.** It catches the patterns a confused or prompt-injected model reaches 
 sandbox, and a missing match is not proof of safety. The real containment is the workspace path
 sandbox plus the API key being stripped from every child process.
 
+**Every decision is written down.** *Settings → Tools* lists the last hundred, newest first: what
+you were asked, what you said, and the refusals the guard made without asking. It is there because
+of a gap — a call you *allowed* leaves a tool result in the transcript, but one you *denied*, or
+one the guard blocked, leaves nothing at all, so the only record of it would otherwise be your
+memory. The arguments are stored as a short hash rather than as themselves, because an approval can
+cover a command carrying a secret and a log you read back later is not the place to keep one; the
+hash is enough to tell two approvals of the same tool apart. Unlike every other table, the log has
+**no foreign key to the chat**: deleting a conversation must not erase what it was allowed to do,
+so a decision about a chat you deleted stays, unnamed.
+
 **Where commands run**
 
 A shell command does not have to run on your machine. Under *Where commands run* in `/setup` there

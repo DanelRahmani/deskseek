@@ -1514,6 +1514,22 @@ pub fn tool_grants(state: State<'_, AppState>) -> Result<Vec<ToolGrant>, String>
         .collect())
 }
 
+/// How many decisions the panel lists. A cap for the same reason the spend
+/// window has one: the argument comes from the webview, and a list of everything
+/// ever decided is not a panel.
+const RECENT_DECISIONS_LIMIT: usize = 100;
+
+/// The last decisions the app made on the user's behalf, newest first.
+///
+/// `tool_grants` answers "what is switched on now"; this answers "what happened",
+/// which is the half that leaves no other trace — a denial and a guard refusal
+/// both produce no tool result.
+#[tauri::command]
+pub fn recent_decisions(state: State<'_, AppState>) -> Result<Vec<db::ApprovalRecord>, String> {
+    let conn = state.db.lock().unwrap();
+    db::recent_decisions(&conn, RECENT_DECISIONS_LIMIT).map_err(|e| e.to_string())
+}
+
 // ------------------------------------------------------------------- spend
 /// The longest window the panel may ask for. A cap rather than trust, because
 /// the argument arrives from the webview: an unbounded one would let a single

@@ -307,6 +307,7 @@ pub fn run() {
             commands::list_tool_permissions,
             commands::revoke_tool_permission,
             commands::tool_grants,
+            commands::recent_decisions,
             commands::spend_report,
             commands::maintain_db,
             commands::send_message,

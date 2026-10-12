@@ -570,7 +570,7 @@ Ordered by how often the author would actually reach for it.
     rule is per artifact, not global), and a prune of nothing being a no-op that
     does not vacuum.
 
-### 3.5 [S] Guard and approval audit trail
+### 3.5 [S] Guard and approval audit trail ✅
 - **Why**: "what have I allowed" exists (`db::all_allowed_tools`) but individual
   decisions vanish.
 - **Do**: an append-only line per approval decision (tool, args digest, answer,
@@ -578,6 +578,38 @@ Ordered by how often the author would actually reach for it.
 - **Test**: the classifier's own tests extended with the catastrophic cases from
   the README.
 - **Stop**: a decision can be looked up after the fact.
+- **Done (2026-10-12).**
+  - **What was actually missing was the *answer*.** Every tool *call* is in the
+    transcript already; an approval leaves no trace of its own, and a denial or a
+    guard refusal leaves nothing at all. So the log records exactly those:
+    `allowed` / `denied` / `blocked`, with the how-or-why in a `note` (`once`,
+    `session`, `always`, `stopped`, `denied`, or the guard's reason). An
+    auto-approved call that never asked is not logged — the transcript has it,
+    with its arguments.
+  - `approval_log` is the **one table with no foreign key to `chats`**, and the
+    comment says why: an audit trail that a chat deletion can erase is not one.
+    The join is a LEFT, so a decision about a deleted chat reads as unnamed. Its
+    own `RETURNING`-free `prune` case keeps the newest `DECISIONS_KEPT` (1000) —
+    append-only is not a reason to keep a year of it.
+  - **Arguments are a digest, not the arguments** (`approvals::args_digest`,
+    FNV-1a 64-bit, no dependency): an approval can cover a command carrying a
+    secret, and a log you read back later is not where one should live. It still
+    tells two `write_file` approvals apart, which is what it is for.
+  - Written at both decision points in `agent.rs` — `approve` (with `stopped`
+    distinguished from `denied` by whether the cancel actually fired) and the
+    `guard::classify` branch of the run loop.
+  - Surface: *Settings → Tools* gained a **Recent decisions** list under the
+    grants (a hundred, newest first). `Grants` answers what is switched on; this
+    answers what happened. `when()` moved to `src/lib/time.ts` so the panel and
+    the Scheduled panel format a moment the same way rather than twice.
+  - **Tests**: the classifier's own — and better than the plan asked for. Rather
+    than adding more sample commands, it walks the `CATASTROPHIC` and `SUSPICIOUS`
+    tables themselves and asserts **every needle can actually fire**, which is the
+    failure mode a sample never catches: a needle with the wrong spacing is a rule
+    that silently never refuses anything. Plus every `UPLOAD_TOOLS × UPLOAD_FLAGS`
+    pair, since exfiltration needs both halves to match. On the DB side: the round
+    trip and newest-first ordering, the log surviving `delete_chat`, and its own
+    ceiling.
 
 ### 3.6 [M] Network resilience
 - **Why**: a dropped connection mid-stream is indistinguishable from the model

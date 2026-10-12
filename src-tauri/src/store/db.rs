@@ -139,6 +139,37 @@ CREATE TABLE IF NOT EXISTS tool_permissions (
     PRIMARY KEY (workspace, tool)
 );
 
+-- One line per decision the app made on the user's behalf, written as it
+-- happens. `tool_permissions` answers "what is switched on now"; this answers
+-- "what happened then" — and the *answer* is the part that leaves no trace
+-- anywhere else, because a denial and a guard refusal both produce no tool
+-- result of their own. The calls themselves are already in the transcript; this
+-- is the other half.
+--
+-- `chat_id` deliberately has **no foreign key**, alone among these tables: the
+-- record has to outlive the thing it was about, or deleting a chat would erase
+-- the evidence of what it was allowed to do. The join is a LEFT one for the same
+-- reason, and a gone chat simply reads as unnamed.
+--
+-- `args_digest` is a hash rather than the arguments: an approval can cover a
+-- command carrying a secret, and an audit trail is not the place to keep one. It
+-- is enough to tell two approvals of the same tool apart.
+CREATE TABLE IF NOT EXISTS approval_log (
+    id          TEXT PRIMARY KEY,
+    chat_id     TEXT NOT NULL,
+    tool        TEXT NOT NULL,
+    -- `allowed` | `denied` | `blocked` (the guard refused without asking).
+    decision    TEXT NOT NULL,
+    -- How or why: `once`, `session`, `always`, `stopped`, `denied`, or the
+    -- guard's own reason for a block.
+    note        TEXT NOT NULL DEFAULT '',
+    args_digest TEXT NOT NULL DEFAULT '',
+    workspace   TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_approval_log_time ON approval_log(created_at);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     id              TEXT PRIMARY KEY,
     chat_id         TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
@@ -1253,6 +1284,85 @@ pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, Str
     rows.collect()
 }
 
+// ------------------------------------------------------------- approvals log
+
+/// A decision as it is written down: `allowed`, `denied` or `blocked`.
+///
+/// A bare string rather than an enum, because it only ever crosses to the UI and
+/// the three words are the schema.
+pub const ALLOWED: &str = "allowed";
+pub const DENIED: &str = "denied";
+pub const BLOCKED: &str = "blocked";
+
+/// One line of the audit trail, as the settings panel lists it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalRecord {
+    pub id: String,
+    pub chat_id: String,
+    /// The chat's title, joined rather than copied.
+    pub chat_title: String,
+    pub tool: String,
+    pub decision: String,
+    pub note: String,
+    pub args_digest: String,
+    pub created_at: i64,
+}
+
+/// Writes one decision down. Append-only: nothing edits or removes a line except
+/// the retention prune, so the record cannot disagree with itself.
+pub fn log_decision(
+    conn: &Connection,
+    chat_id: &str,
+    tool: &str,
+    decision: &str,
+    note: &str,
+    args_digest: &str,
+    workspace: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO approval_log
+             (id, chat_id, tool, decision, note, args_digest, workspace, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            uuid::Uuid::new_v4().to_string(),
+            chat_id,
+            tool,
+            decision,
+            note,
+            args_digest,
+            workspace,
+            now_ts()
+        ],
+    )?;
+    Ok(())
+}
+
+/// The most recent decisions, newest first, for the panel that shows them.
+pub fn recent_decisions(conn: &Connection, limit: usize) -> rusqlite::Result<Vec<ApprovalRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.chat_id, COALESCE(c.title, ''), a.tool, a.decision, a.note,
+                a.args_digest, a.created_at
+           FROM approval_log a
+           LEFT JOIN chats c ON c.id = a.chat_id
+          ORDER BY a.created_at DESC, a.rowid DESC
+          LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit as i64], |r| {
+        Ok(ApprovalRecord {
+            id: r.get(0)?,
+            chat_id: r.get(1)?,
+            chat_title: r.get(2)?,
+            tool: r.get(3)?,
+            decision: r.get(4)?,
+            note: r.get(5)?,
+            args_digest: r.get(6)?,
+            created_at: r.get(7)?,
+        })
+    })?;
+    rows.collect()
+}
+
 // ---------------------------------------------------------------- projects
 
 /// A named container: a folder to work in, the chats that belong to it, and the
@@ -2036,6 +2146,13 @@ const CHECKPOINT_RUNS_KEPT: i64 = 10;
 /// ago is not something anyone opens.
 const ARTIFACT_VERSIONS_KEPT: i64 = 20;
 
+/// How many approval decisions to keep.
+///
+/// The log is append-only by design, so it is the one table whose growth is not
+/// a bug — but "append-only" is not a reason to keep a year of it. A thousand
+/// lines is far more than anyone reads back.
+const DECISIONS_KEPT: i64 = 1000;
+
 /// A prune only pays for a `VACUUM` past this many rows. `VACUUM` rewrites the
 /// whole file, so doing it for a handful of rows would make the cure cost more
 /// than the disease.
@@ -2047,11 +2164,12 @@ const VACUUM_AFTER_ROWS: usize = 500;
 pub struct PruneReport {
     pub checkpoints: usize,
     pub versions: usize,
+    pub decisions: usize,
 }
 
 impl PruneReport {
     pub fn total(&self) -> usize {
-        self.checkpoints + self.versions
+        self.checkpoints + self.versions + self.decisions
     }
 }
 
@@ -2094,9 +2212,19 @@ pub fn prune(conn: &Connection) -> rusqlite::Result<PruneReport> {
           )",
         params![ARTIFACT_VERSIONS_KEPT],
     )?;
+    let decisions = conn.execute(
+        "DELETE FROM approval_log
+          WHERE id NOT IN (
+              SELECT id FROM approval_log
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT ?1
+          )",
+        params![DECISIONS_KEPT],
+    )?;
     Ok(PruneReport {
         checkpoints,
         versions,
+        decisions,
     })
 }
 
@@ -2819,6 +2947,65 @@ mod tests {
         let report = prune(&conn).unwrap();
         assert_eq!(report.total(), 0);
         assert!(!vacuum_if_worth_it(&conn, report.total()), "nothing to reclaim");
+    }
+
+    #[test]
+    fn a_decision_is_written_down_and_read_back_newest_first() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
+            .unwrap();
+        log_decision(&conn, &chat.id, "run_command", ALLOWED, "once", "aaaa", "C:/proj").unwrap();
+        log_decision(&conn, &chat.id, "write_file", DENIED, "denied", "bbbb", "C:/proj").unwrap();
+        // A guard refusal never reaches a prompt, and that is exactly why it has
+        // to be written down somewhere.
+        log_decision(&conn, &chat.id, "run_command", BLOCKED, "formatting the system drive", "cccc", "C:/proj")
+            .unwrap();
+
+        // All three land in the same second, so "newest first" is insertion
+        // order here — the same tie the prune has to break.
+        let rows = recent_decisions(&conn, 10).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].decision, BLOCKED);
+        assert_eq!(rows[0].note, "formatting the system drive");
+        assert_eq!(rows[2].decision, ALLOWED);
+        assert_eq!(rows[2].note, "once");
+        assert_eq!(rows[2].chat_title, chat.title, "the title is joined, not copied");
+        assert_eq!(rows[2].args_digest, "aaaa");
+        // The limit is a limit, not the whole table.
+        assert_eq!(recent_decisions(&conn, 2).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn the_log_outlives_the_chat_it_was_about() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        log_decision(&conn, &chat.id, "write_file", ALLOWED, "always", "aaaa", "").unwrap();
+
+        delete_chat(&conn, &chat.id).unwrap();
+
+        // The one deliberate exception to "deleting a chat takes everything with
+        // it": an audit trail you can erase is not one.
+        let rows = recent_decisions(&conn, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].decision, ALLOWED);
+        assert_eq!(rows[0].chat_title, "", "the chat is gone, so it reads as unnamed");
+    }
+
+    #[test]
+    fn the_append_only_log_still_has_a_ceiling() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        for n in 0..1001 {
+            log_decision(&conn, &chat.id, "write_file", ALLOWED, "once", &format!("{n:04}"), "")
+                .unwrap();
+        }
+
+        let report = prune(&conn).unwrap();
+        assert_eq!(report.decisions, 1, "one row past the ceiling");
+        let rows = recent_decisions(&conn, 5000).unwrap();
+        assert_eq!(rows.len(), 1000);
+        // The newest survived, which is the end anyone reads from.
+        assert_eq!(rows[0].args_digest, "1000");
     }
 
     #[test]

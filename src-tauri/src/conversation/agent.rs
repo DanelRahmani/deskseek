@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use crate::api::client::{Client, StreamEvent};
 use crate::api::models;
 use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
-use crate::approvals::Decision;
+use crate::approvals::{self, Decision};
 use crate::conversation::assemble::{build_messages, memory_block, system_with_memory, Turn};
 use crate::runs::Cancel;
 use crate::store::{
@@ -821,23 +821,38 @@ async fn approve(
         _ = cancel.cancelled() => Decision::Deny,
         decision = rx => decision.unwrap_or(Decision::Deny),
     };
-    let allowed = match decision {
+    let (allowed, note) = match decision {
         Decision::Session => {
             state.approvals.grant_session(&ws_key, tool);
-            true
+            (true, "session")
         }
         Decision::Always => {
             let conn = state.db.lock().unwrap();
             let _ = db::allow_tool(&conn, &ws_key, tool);
-            true
+            (true, "always")
         }
-        other => other.allows(),
+        Decision::Once => (true, "once"),
+        // A refusal and a run stopped while the prompt was up arrive here the
+        // same way; the note is what tells them apart in the log afterwards.
+        Decision::Deny if cancel.is_cancelled() => (false, "stopped"),
+        Decision::Deny => (false, "denied"),
     };
     // The park is over either way — answered from the chat or the panel, or
     // abandoned by a cancel. Forgetting is idempotent, so both ends may do it.
+    // And the answer is written down: a denial leaves no tool result anywhere, so
+    // this is the only place it exists.
     {
         let conn = state.db.lock().unwrap();
         let _ = db::forget_parked(&conn, &request_id);
+        let _ = db::log_decision(
+            &conn,
+            chat_id,
+            tool,
+            if allowed { db::ALLOWED } else { db::DENIED },
+            note,
+            &approvals::args_digest(args),
+            &ws_key,
+        );
     }
     allowed
 }
@@ -1694,6 +1709,20 @@ pub async fn run(
                                         "mode": mode.as_str(),
                                     }),
                                 );
+                                // A refusal produces no tool result, so this line
+                                // is the only record that it was ever tried.
+                                {
+                                    let conn = state.db.lock().unwrap();
+                                    let _ = db::log_decision(
+                                        &conn,
+                                        chat_id,
+                                        &name,
+                                        db::BLOCKED,
+                                        reason,
+                                        &approvals::args_digest(&args),
+                                        &ws.to_string_lossy(),
+                                    );
+                                }
                                 if mode == guard::PermissionMode::Auto && strikes >= MAX_STRIKES {
                                     mode = guard::PermissionMode::Manual;
                                     let _ = app.emit(
