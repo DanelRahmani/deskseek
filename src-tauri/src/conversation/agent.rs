@@ -13,7 +13,10 @@ use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::Decision;
 use crate::conversation::assemble::{build_messages, memory_block, system_with_memory, Turn};
 use crate::runs::Cancel;
-use crate::store::{db, keychain, settings::Settings};
+use crate::store::{
+    db, keychain,
+    settings::{Instruction, Settings},
+};
 use crate::tools::{self, browser, desktop, docs, exec, guard, sandbox_exec, ToolClass};
 use crate::{notify, AppState};
 
@@ -245,6 +248,26 @@ pub(crate) fn part(label: impl Into<String>, group: &str, chars: usize) -> Promp
         label: label.into(),
         group: group.to_string(),
         chars,
+    }
+}
+
+/// Appends instruction blocks to the prompt and records each as a measured part.
+///
+/// One function so the global list and a project's list cannot drift apart: both
+/// apply the same rule — switched on, and scoped to this kind of chat or to both.
+fn push_instructions(
+    base: &mut String,
+    parts: &mut Vec<PromptPart>,
+    instructions: &[Instruction],
+    scope: &str,
+) {
+    for instruction in instructions
+        .iter()
+        .filter(|i| i.enabled && (i.scope == "both" || i.scope == scope))
+    {
+        let text = format!("\n\n# {}\n\n{}", instruction.name, instruction.body);
+        parts.push(part(instruction.name.clone(), "instructions", text.chars().count()));
+        base.push_str(&text);
     }
 }
 
@@ -537,14 +560,21 @@ publishing, `rm -rf /`) are still refused — a refusal is final, so do not retr
         parts.push(part("Project context", "system", project_context));
     }
 
-    for instruction in settings
-        .instructions
-        .iter()
-        .filter(|i| i.enabled && (i.scope == "both" || i.scope == scope))
-    {
-        let text = format!("\n\n# {}\n\n{}", instruction.name, instruction.body);
-        parts.push(part(instruction.name.clone(), "instructions", text.chars().count()));
-        base.push_str(&text);
+    push_instructions(&mut base, &mut parts, &settings.instructions, scope);
+
+    // A project's own rules apply to every chat in it: they are set on the
+    // project rather than the chat, so a conversation inherits them without
+    // anything being copied into it. Same shape as the global list, same filter.
+    if let Some(project_id) = chat.project_id.as_deref() {
+        let owned = {
+            let conn = state.db.lock().unwrap();
+            db::get_project(&conn, project_id)
+                .ok()
+                .flatten()
+                .map(|p| p.instructions)
+                .unwrap_or_default()
+        };
+        push_instructions(&mut base, &mut parts, &owned, scope);
     }
 
     // Spell out how memory works so the model never guesses at a file name or
@@ -1766,5 +1796,42 @@ mod tests {
         // folder called "-3f2a1b0c", and a path in the title cannot escape.
         assert_eq!(folder_name("///", "3f2a1b0c"), "chat-3f2a1b0c");
         assert_eq!(folder_name("../..", "abcdefgh"), "chat-abcdefgh");
+    }
+
+    #[test]
+    fn only_switched_on_instructions_in_scope_reach_the_prompt() {
+        let rules = vec![
+            Instruction {
+                id: "a".to_string(),
+                name: "Both".to_string(),
+                scope: "both".to_string(),
+                body: "Applies everywhere.".to_string(),
+                enabled: true,
+            },
+            Instruction {
+                id: "b".to_string(),
+                name: "Coding only".to_string(),
+                scope: "coding".to_string(),
+                body: "Not in a chat.".to_string(),
+                enabled: true,
+            },
+            Instruction {
+                id: "c".to_string(),
+                name: "Switched off".to_string(),
+                scope: "both".to_string(),
+                body: "Nothing should carry this.".to_string(),
+                enabled: false,
+            },
+        ];
+        let (mut base, mut parts) = (String::new(), Vec::new());
+        push_instructions(&mut base, &mut parts, &rules, "chat");
+
+        assert!(base.contains("# Both"));
+        assert!(!base.contains("# Coding only"), "a coding rule leaked into a chat prompt");
+        assert!(!base.contains("# Switched off"));
+        // Every measured part is text that really was appended — the panel cannot
+        // describe a prompt other than the one being sent.
+        let measured: usize = parts.iter().map(|p| p.chars).sum();
+        assert_eq!(measured, base.chars().count());
     }
 }

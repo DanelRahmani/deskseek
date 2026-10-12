@@ -17,7 +17,10 @@ use crate::memory;
 use crate::notify;
 use crate::schedule;
 use crate::skills;
-use crate::store::{db, keychain, settings::Settings};
+use crate::store::{
+    db, keychain,
+    settings::{Instruction, Settings},
+};
 use crate::tools::{browse, desktop, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
 use crate::AppState;
 
@@ -1221,6 +1224,56 @@ pub fn set_chat_project(
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::set_chat_project(&conn, &chat_id, project_id.as_deref()).map_err(|e| e.to_string())
+}
+
+/// Replaces a project's rules. Every chat in the project inherits them on its
+/// next turn, so nothing has to be copied into the chats themselves.
+#[tauri::command]
+pub fn set_project_instructions(
+    state: State<'_, AppState>,
+    id: String,
+    instructions: Vec<Instruction>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_project_instructions(&conn, &id, &instructions).map_err(|e| e.to_string())
+}
+
+/// Spend per project, all-time. One query for every project the panel lists.
+#[tauri::command]
+pub fn project_spend(state: State<'_, AppState>) -> Result<Vec<db::ProjectSpend>, String> {
+    let conn = state.db.lock().unwrap();
+    db::project_spend(&conn).map_err(|e| e.to_string())
+}
+
+/// What the assistant has remembered about a project.
+///
+/// A project's chats share its folder, and a memory learned in that folder is
+/// filed under `project-<folder name>` — so the project's memory is that one
+/// file. A project with no folder has no shared file (each chat keeps its own),
+/// which is why an empty answer here is honest rather than a bug.
+#[tauri::command]
+pub fn project_memory(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> Result<Vec<MemoryEntryView>, String> {
+    let folder = {
+        let conn = state.db.lock().unwrap();
+        db::get_project(&conn, &project_id)
+            .map_err(|e| e.to_string())?
+            .and_then(|p| p.folder)
+    };
+    let Some(folder) = folder else {
+        return Ok(Vec::new());
+    };
+    let category = crate::memory_files::project_category(Some(std::path::Path::new(&folder)))
+        .unwrap_or_default();
+    Ok(crate::memory_files::read(&state.paths.memory_dir(), &category)
+        .into_iter()
+        .map(|e| MemoryEntryView {
+            date: e.date,
+            text: e.text,
+        })
+        .collect())
 }
 
 /// Every artifact in every chat — what the gallery lists.

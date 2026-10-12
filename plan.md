@@ -1,7 +1,7 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.6
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.7
 are done, the rest of 2 is the plan. Items 3–6 have not been started.
 
 Each item is independently shippable and the order is the author's own priority,
@@ -330,13 +330,38 @@ Ordered by how often the author would actually reach for it.
   estimated character width, so a very long series name can overrun the next
   swatch.
 
-### 2.7 [M] Projects grow up
-- **Why**: a project is a name + folder + membership. It has no instructions and
-  no view of its own memory, though chat memory is already filed per project.
-- **Do**: per-project instructions (the existing scoped-instruction machinery), a
-  project memory view, and a project-level cost total.
-- **Stop**: a project's instructions apply to every chat in it without touching
-  each chat.
+### 2.7 [M] Projects grow up ✅
+- **Was**: a project was a name, a folder and a membership. It had no rules of
+  its own and no view of the memory learned inside it, though that memory was
+  already filed per project.
+- **Rules reuse the scoped-instruction machinery, which is the point**: a project
+  holds a `Vec<Instruction>` in a JSON column (`projects.instructions`), and
+  `agent.rs` feeds it through the *same* `push_instructions` helper as the global
+  list — switched on, and scoped to this kind of chat or to both. One rule, one
+  filter, so a project rule cannot behave differently from a global one. Editing
+  a project's rules deliberately does **not** bump `updated_at`, or the list
+  (ordered by it) would reshuffle on every keystroke.
+- **The memory view reads the file the writer would have written**:
+  `project_memory` resolves the project's *folder* through
+  `memory_files::project_category` and reads that one file, so the panel cannot
+  invent a category the write path would not have used. A project with no folder
+  has no shared file — each chat keeps its own — and the panel says so rather
+  than showing another project's notes.
+- **The cost total is a `project_id` join**: `db::project_spend` groups
+  `turn_usage` one level above `spend_report`'s per-chat grouping. All-time, not a
+  window, because "what has this project cost me" is a total — and the same rows
+  the sidebar's per-chat totals come from, so the two agree.
+- **Test**: `a_projects_instructions_round_trip_without_resorting_the_list` (the
+  round trip *and* the `updated_at` guard),
+  `project_spend_adds_up_a_projects_chats_and_leaves_others_out` (one-off costs,
+  so the total is arithmetic that cannot drift), the shared filter's own
+  `only_switched_on_instructions_in_scope_reach_the_prompt` (scope respected, and
+  every measured part is text that was really appended), and the older upgrade
+  test extended with a pre-2.7 `projects` table so the `ALTER` is exercised on a
+  real file rather than only on a fresh `CREATE TABLE`.
+- **Stop**: a project's rules apply to every chat in it without touching each
+  chat — and a chat moved out stops seeing them, which is the point of holding
+  them on the project.
 
 ### 2.8 [M] Scheduled tasks that can reach a decision
 - **Why**: 1.6 made the wait visible; it is still a wait. The user has to open the

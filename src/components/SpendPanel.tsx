@@ -13,7 +13,7 @@ interface Props {
 const RANGES = [7, 30, 90];
 
 /** `$0.0040` is noise; `$0.004` is the number. Cents once it is worth cents. */
-function money(usd: number): string {
+export function money(usd: number): string {
   if (usd === 0) return "$0";
   if (usd < 0.01) return `$${usd.toFixed(4)}`;
   return `$${usd.toFixed(2)}`;

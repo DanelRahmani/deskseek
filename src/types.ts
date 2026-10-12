@@ -45,8 +45,20 @@ export interface ProjectRow {
   id: string;
   name: string;
   folder: string | null;
+  /**
+   * Rules every chat in the project inherits — set on the project rather than
+   * copied into each chat, so one edit reaches all of them. Empty means none.
+   */
+  instructions: Instruction[];
   created_at: number;
   updated_at: number;
+}
+
+/** All-time spend across a project's chats, from `project_spend`. */
+export interface ProjectSpend {
+  projectId: string;
+  costUsd: number;
+  turns: number;
 }
 
 /**

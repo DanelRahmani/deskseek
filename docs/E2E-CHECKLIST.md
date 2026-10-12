@@ -94,6 +94,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] An instruction edited in the hub is still there after reopening Settings
 - [ ] *New project…* picks a folder; a chat started in it works there
 - [ ] Deleting a project keeps its chats and only unassigns them
+- [ ] A project's **Rules** reach every chat in it: a `both` rule on a chat *and* a coding chat, a
+      `coding` rule on the coding chat but not the chat, and a switched-off rule on neither
+- [ ] Moving a chat out of the project stops the rules reaching it on the next turn, and moving it
+      back brings them
+- [ ] A project's **Memory** shows the entries from `memory/project-<folder name>.md`; a project
+      with no folder says so instead of showing another project's notes
+- [ ] A project's spend line matches the sum of its chats' sidebar totals (all-time) and drops a
+      chat that is moved out
 - [ ] The Artifacts list shows an artifact from another chat, and opens it
 
 ## Prompts

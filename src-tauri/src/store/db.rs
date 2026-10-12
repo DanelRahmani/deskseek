@@ -5,6 +5,8 @@ use std::path::Path;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
+use super::settings::Instruction;
+
 pub fn now_ts() -> i64 {
     chrono::Utc::now().timestamp()
 }
@@ -268,6 +270,10 @@ CREATE TABLE IF NOT EXISTS projects (
     -- Where a new chat in this project starts. Optional: a project can be a
     -- grouping alone.
     folder     TEXT,
+    -- Per-project rule blocks: a JSON array of `settings::Instruction`. A project
+    -- owns its own rules, so they live here rather than in the settings blob, and
+    -- every chat in the project inherits them without being touched.
+    instructions TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -349,6 +355,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // yet"; the first file operation decides it, so an existing chat keeps
     // reading the shared documents folder until it next touches a file.
     let _ = conn.execute("ALTER TABLE chats ADD COLUMN folder TEXT", []);
+    // A project's own instruction blocks arrived with 2.7. An older database
+    // gets an empty array, which is exactly "no project rules yet".
+    let _ = conn.execute(
+        "ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
 
     conn.execute_batch(SCHEMA)?;
 
@@ -1176,26 +1188,36 @@ pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, Str
 
 // ---------------------------------------------------------------- projects
 
-/// A named container: a folder to work in, and the chats that belong to it.
+/// A named container: a folder to work in, the chats that belong to it, and the
+/// rules every chat in it inherits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectRow {
     pub id: String,
     pub name: String,
     /// The folder new chats in this project start in. Optional.
     pub folder: Option<String>,
+    /// Instruction blocks injected into every chat in the project. Empty means
+    /// none, which is what every project had before 2.7.
+    #[serde(default)]
+    pub instructions: Vec<Instruction>,
     pub created_at: i64,
     pub updated_at: i64,
 }
 
-const PROJECT_COLS: &str = "id, name, folder, created_at, updated_at";
+const PROJECT_COLS: &str = "id, name, folder, instructions, created_at, updated_at";
 
 fn project_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ProjectRow> {
+    // A malformed blob reads as "no instructions" rather than failing the whole
+    // list: the panel is the way back to a good value, and losing sight of the
+    // other projects over it would be worse than losing the rules.
+    let raw: String = r.get(3)?;
     Ok(ProjectRow {
         id: r.get(0)?,
         name: r.get(1)?,
         folder: r.get(2)?,
-        created_at: r.get(3)?,
-        updated_at: r.get(4)?,
+        instructions: serde_json::from_str(&raw).unwrap_or_default(),
+        created_at: r.get(4)?,
+        updated_at: r.get(5)?,
     })
 }
 
@@ -1227,6 +1249,7 @@ pub fn create_project(
         id,
         name: name.to_string(),
         folder: folder.map(str::to_string),
+        instructions: Vec::new(),
         created_at: ts,
         updated_at: ts,
     })
@@ -1274,6 +1297,62 @@ pub fn set_chat_project(
         params![id, project_id],
     )?;
     Ok(())
+}
+
+/// One project, or `None` when it has been deleted.
+pub fn get_project(conn: &Connection, id: &str) -> rusqlite::Result<Option<ProjectRow>> {
+    let mut stmt = conn.prepare(&format!("SELECT {PROJECT_COLS} FROM projects WHERE id = ?1"))?;
+    stmt.query_row([id], project_row).optional()
+}
+
+/// Replaces a project's instruction blocks.
+///
+/// Deliberately does not touch `updated_at`: the project list is ordered by it,
+/// so editing a rule must not reshuffle the list — the same reason renaming a
+/// chat does not bump the chat's own timestamp.
+pub fn set_project_instructions(
+    conn: &Connection,
+    id: &str,
+    instructions: &[Instruction],
+) -> rusqlite::Result<()> {
+    let json = serde_json::to_string(instructions).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "UPDATE projects SET instructions = ?2 WHERE id = ?1",
+        params![id, json],
+    )?;
+    Ok(())
+}
+
+/// One project's all-time spend, summed across the chats that belong to it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSpend {
+    pub project_id: String,
+    pub cost_usd: f64,
+    pub turns: i64,
+}
+
+/// Spend per project, in one query.
+///
+/// `spend_report` already groups a chat's turns; this is the same rows grouped
+/// one level up through `chats.project_id`. All-time rather than a window,
+/// because "what has this project cost me" is a total — and it is the same
+/// number the sidebar shows per chat, added together.
+pub fn project_spend(conn: &Connection) -> rusqlite::Result<Vec<ProjectSpend>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.project_id, COALESCE(SUM(t.cost_usd), 0), COUNT(*)
+         FROM chats c JOIN turn_usage t ON t.chat_id = c.id
+         WHERE c.project_id IS NOT NULL
+         GROUP BY c.project_id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(ProjectSpend {
+            project_id: r.get(0)?,
+            cost_usd: r.get(1)?,
+            turns: r.get(2)?,
+        })
+    })?;
+    rows.collect()
 }
 
 // ---------------------------------------------------------- scheduled tasks
@@ -1952,9 +2031,21 @@ mod tests {
                     created_at   INTEGER NOT NULL,
                     updated_at   INTEGER NOT NULL
                 );
+                -- And a project as it was before it could hold instructions, so
+                -- the `instructions` ALTER is exercised on a real file rather
+                -- than only on a fresh `CREATE TABLE`.
+                CREATE TABLE projects (
+                    id         TEXT PRIMARY KEY,
+                    name       TEXT NOT NULL,
+                    folder     TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
                 INSERT INTO chats
                     (id, title, kind, model, created_at, updated_at)
-                    VALUES ('old-1', 'A chat from before', 'chat', 'm', 1, 1);",
+                    VALUES ('old-1', 'A chat from before', 'chat', 'm', 1, 1);
+                INSERT INTO projects (id, name, created_at, updated_at)
+                    VALUES ('p-1', 'Before 2.7', 1, 1);",
             )
             .unwrap();
         }
@@ -1971,6 +2062,13 @@ mod tests {
         assert!(kept.project_id.is_none());
         assert!(kept.folder.is_none());
 
+        // The `instructions` ALTER ran on the upgraded file: the old project kept
+        // its name and gained an empty rule list rather than a malformed one.
+        let projects = list_projects(&conn).unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "Before 2.7");
+        assert!(projects[0].instructions.is_empty());
+
         // The index that actually failed must really exist now. "Did not crash"
         // would also be satisfied by the batch silently skipping it.
         let built: i64 = conn
@@ -1986,7 +2084,9 @@ mod tests {
         // an in-memory schema.
         let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
         set_chat_project(&conn, &chat.id, None).unwrap();
-        assert!(list_projects(&conn).unwrap().is_empty());
+        // The pre-2.7 project is still there — the upgrade adds a column, it does
+        // not empty the table — and the new call paths run against the file.
+        assert_eq!(list_projects(&conn).unwrap().len(), 1);
         assert!(list_scheduled(&conn).unwrap().is_empty());
         create_scheduled(&conn, "t", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
         assert_eq!(list_scheduled(&conn).unwrap().len(), 1);
@@ -2571,6 +2671,75 @@ mod tests {
         assert_eq!(list_projects(&conn).unwrap()[0].name, "New project");
         rename_project(&conn, &project.id, "Real name").unwrap();
         assert_eq!(list_projects(&conn).unwrap()[0].name, "Real name");
+    }
+
+    #[test]
+    fn a_projects_instructions_round_trip_without_resorting_the_list() {
+        let conn = mem();
+        let project = create_project(&conn, "Client work", Some("/repo")).unwrap();
+        assert!(project.instructions.is_empty());
+
+        let rules = vec![
+            Instruction {
+                id: "tone".to_string(),
+                name: "Tone".to_string(),
+                scope: "both".to_string(),
+                body: "Answer in Dutch.".to_string(),
+                enabled: true,
+            },
+            Instruction {
+                id: "parked".to_string(),
+                name: "Parked".to_string(),
+                scope: "coding".to_string(),
+                body: "Not yet.".to_string(),
+                enabled: false,
+            },
+        ];
+        let before = get_project(&conn, &project.id).unwrap().unwrap().updated_at;
+        set_project_instructions(&conn, &project.id, &rules).unwrap();
+
+        let read = get_project(&conn, &project.id).unwrap().unwrap();
+        assert_eq!(read.instructions.len(), 2);
+        assert_eq!(read.instructions[0].name, "Tone");
+        assert!(!read.instructions[1].enabled);
+        // The list is ordered by `updated_at`, so an edit that bumped it would
+        // reshuffle the projects every time a rule was typed.
+        assert_eq!(read.updated_at, before, "set_project_instructions bumped updated_at");
+    }
+
+    #[test]
+    fn project_spend_adds_up_a_projects_chats_and_leaves_others_out() {
+        let conn = mem();
+        let project = create_project(&conn, "Client work", None).unwrap();
+        let inside_a = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let inside_b = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let outside = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        set_chat_project(&conn, &inside_a.id, Some(&project.id)).unwrap();
+        set_chat_project(&conn, &inside_b.id, Some(&project.id)).unwrap();
+
+        // One-off costs, so the total is arithmetic that cannot drift.
+        for (chat, cost) in [(&inside_a, 0.25), (&inside_b, 0.75), (&outside, 9.0)] {
+            record_turn_usage(
+                &conn,
+                &chat.id,
+                &uuid::Uuid::new_v4().to_string(),
+                &TurnUsage {
+                    model: "m",
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    cache_hit_tokens: 0,
+                    cache_miss_tokens: 0,
+                    cost_usd: cost,
+                },
+            )
+            .unwrap();
+        }
+
+        let spend = project_spend(&conn).unwrap();
+        assert_eq!(spend.len(), 1, "only the project with a member should appear");
+        assert_eq!(spend[0].project_id, project.id);
+        assert_eq!(spend[0].turns, 2);
+        assert!((spend[0].cost_usd - 1.0).abs() < 1e-9, "got {}", spend[0].cost_usd);
     }
 
     #[test]

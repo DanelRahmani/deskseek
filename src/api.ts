@@ -18,7 +18,9 @@ import type {
   FilePreview,
   FsEvent,
   GuardEvent,
+  Instruction,
   MemoryCategoryView,
+  MemoryEntryView,
   MemoryProposal,
   McpReadyEvent,
   McpServer,
@@ -29,6 +31,7 @@ import type {
   NotifyEvent,
   PermissionMode,
   ProjectRow,
+  ProjectSpend,
   PromptView,
   QuestionAnswer,
   QuestionEvent,
@@ -211,6 +214,11 @@ export const api = {
   deleteProject: (id: string) => invoke<void>("delete_project", { id }),
   setChatProject: (chatId: string, projectId: string | null) =>
     invoke<void>("set_chat_project", { chatId, projectId }),
+  setProjectInstructions: (id: string, instructions: Instruction[]) =>
+    invoke<void>("set_project_instructions", { id, instructions }),
+  projectSpend: () => invoke<ProjectSpend[]>("project_spend"),
+  projectMemory: (projectId: string) =>
+    invoke<MemoryEntryView[]>("project_memory", { projectId }),
 
   /** Design systems: their own store and their own switch, so neither list has
    *  to know the other one to avoid switching it off. */

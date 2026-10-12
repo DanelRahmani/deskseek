@@ -113,10 +113,25 @@ Both sections are functional:
   shelf of them costs nothing). Ctrl+K offers them too. One markdown file each in
   `prompts/<name>.md` — **Customise → Prompts** is a convenience over that folder, not the only
   way in, so a prompt can be added or fixed in any editor
-- **Projects** — a named container with a folder, and the conversations that belong to it. *New
-  project…* picks the folder; a chat started inside it works there, and an existing chat can be
-  moved in or out from the panel. Deleting a project keeps its chats — they are only unassigned,
-  which is exactly why it needs no confirmation
+- **Projects** — a named container with a folder, the conversations that belong to it, and the
+  three things every chat in it shares. *New project…* picks the folder; a chat started inside it
+  works there, and an existing chat can be moved in or out from the panel. Deleting a project
+  keeps its chats — they are only unassigned, which is exactly why it needs no confirmation
+  - **Rules** — the project's own instruction blocks, written once and inherited by every chat in
+    it: a client's tone, a house format, a set of terms. They go through the same scope filter as
+    the global instructions in *Settings → Instructions* — a rule can be for `chat`, `coding` or
+    `both` — so one rule set covers the whole project without being retyped into each chat, and an
+    edit reaches every turn in it from then on. A chat moved out of the project stops seeing them,
+    which is the point of holding the rules on the project
+  - **Memory** — a project's chats share its folder, and memory learned in that folder is filed
+    with the project (`project-<folder name>.md`). *Memory* in the panel shows exactly those
+    entries, so what the assistant has learned about a client is in one place. A project without a
+    folder has no shared file — its chats each keep their own memory — and the panel says so
+    rather than showing another project's notes
+  - **Spend** — the project's all-time cost, summed over the turns in its chats. It is the same
+    number the sidebar shows per chat, added together; the *Spend* panel is still the windowed
+    view, for "this month". Honest limit: the memory view is read-only, so forgetting a single
+    entry is still done from *Settings → Memory*
 - **Scheduled tasks** (*Scheduled* in the sidebar, or `/scheduled`) — a prompt that runs itself on
   a calendar: every day at 09:00, every Wednesday at 17:00, or **the first Wednesday of the month**
   at 08:00. There is no cron string to learn; the three fields that describe the schedule *are*
@@ -143,10 +158,10 @@ Both sections are functional:
 - **The system prompt is assembled, not written once** — the base prompt says what you have
   (memory, tools, skills, MCP servers); the app appends the guidance that matches what is actually
   switched on for that chat: planning, artifacts and documents, where a command really runs, the
-  internet, the desktop, MCP, the approval mode, the project's own context files, your scoped
-  instructions, then memory — and the skills this chat has on, whose text joins the prompt as its
-  own section. **Settings → Models & prompt** shows the base prompt; *Context* in a chat shows the
-  assembled result part by part
+  internet, the desktop, MCP, the approval mode, the project's own context files and its rules,
+  your scoped instructions, then memory — and the skills this chat has on, whose text joins the
+  prompt as its own section. **Settings → Models & prompt** shows the base prompt; *Context* in a
+  chat shows the assembled result part by part
 - `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`,
   `/projects`, `/artifacts`, `/scheduled` and `/export`
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
@@ -230,7 +245,8 @@ Both sections are functional:
   interrupting the run; if the agent writes to the file you are reading, it re-reads itself.
   A box above the tree filters it to what you have already opened — nothing is read from disk
   to search, and the folder you want looked in has to be open
-- Project context from `AGENTS.md`, else `.deskseek/context.md`
+- Project context from `AGENTS.md`, else `.deskseek/context.md` — and, in any chat that belongs
+  to a project, the project's own rules, which apply to every chat in it (see *Projects*)
 - A **task list** the model keeps up to date as it works — see the chat section above
 - Tool cards **open themselves when a call fails**, so a broken build is readable without a
   click

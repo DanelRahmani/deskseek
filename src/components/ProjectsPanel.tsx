@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon, IconButton } from "./Icon";
-import type { ChatRow, ProjectRow } from "../types";
+import { InstructionsSection } from "./InstructionsSection";
+import { money } from "./SpendPanel";
+import type { ChatRow, Instruction, MemoryEntryView, ProjectRow, ProjectSpend } from "../types";
 
 interface Props {
   /** The current section's chats. Grouping happens here rather than in App. */
@@ -18,11 +20,13 @@ const quiet =
   "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 
 /**
- * Projects: a named container with a folder, and the chats that belong to it.
+ * Projects: a named container with a folder, the rules every chat in it
+ * inherits, the memory learned inside it, and the chats that belong to it.
  *
- * Membership only. A project does not own a chat's memory or files — the chat's
- * own folder does that, which is why it can be taken out of a project without
- * anything else changing.
+ * Membership is still the loose part. A project does not own a chat's memory or
+ * files — the chat's own folder does that, which is why it can be taken out of a
+ * project without anything else changing. What a project adds is the shared
+ * things: its rules, its folder's memory and what the whole work has cost.
  */
 export function ProjectsPanel({
   chats,
@@ -37,8 +41,21 @@ export function ProjectsPanel({
   const [busy, setBusy] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  /** All-time spend per project, keyed by project id. */
+  const [spend, setSpend] = useState<ProjectSpend[]>([]);
+  /** Edits in flight, before Save. Keyed by project id. */
+  const [rules, setRules] = useState<Record<string, Instruction[]>>({});
+  /** Which project's rules are open, if any. */
+  const [rulesOpen, setRulesOpen] = useState<string | null>(null);
+  /** Which project's memory is open, if any. */
+  const [memoryOpen, setMemoryOpen] = useState<string | null>(null);
+  const [memory, setMemory] = useState<Record<string, MemoryEntryView[]>>({});
 
-  const reload = useCallback(async () => setProjects(await api.listProjects()), []);
+  const reload = useCallback(async () => {
+    const [list, spent] = await Promise.all([api.listProjects(), api.projectSpend()]);
+    setProjects(list);
+    setSpend(spent);
+  }, []);
 
   useEffect(() => {
     reload().catch((e) => setStatus(String(e)));
@@ -105,6 +122,47 @@ export function ProjectsPanel({
 
   const members = (projectId: string) => chats.filter((c) => c.project_id === projectId);
   const unassigned = chats.filter((c) => !c.project_id);
+
+  /** `$1.20 · 4 turns`, or an honest "no spend" when nothing has run yet. */
+  const spendLabel = (id: string) => {
+    const s = spend.find((x) => x.projectId === id);
+    if (!s) return "no spend yet";
+    return `${money(s.costUsd)} · ${s.turns} turn${s.turns === 1 ? "" : "s"}`;
+  };
+
+  const rulesFor = (project: ProjectRow) => rules[project.id] ?? project.instructions;
+  const rulesDirty = (project: ProjectRow) =>
+    JSON.stringify(rulesFor(project)) !== JSON.stringify(project.instructions);
+
+  const saveRules = async (project: ProjectRow) => {
+    const next = rulesFor(project);
+    setBusy(true);
+    try {
+      await api.setProjectInstructions(project.id, next);
+      // Keep the saved copy as the draft, so "saved" and "not dirty" agree.
+      setRules((r) => ({ ...r, [project.id]: next }));
+      await reload();
+      setStatus(`Saved ${next.length} rule${next.length === 1 ? "" : "s"} for "${project.name}".`);
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleMemory = async (project: ProjectRow) => {
+    if (memoryOpen === project.id) {
+      setMemoryOpen(null);
+      return;
+    }
+    setMemoryOpen(project.id);
+    try {
+      const entries = await api.projectMemory(project.id);
+      setMemory((m) => ({ ...m, [project.id]: entries }));
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
 
   return (
     <aside className="flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
@@ -187,6 +245,66 @@ export function ProjectsPanel({
               >
                 {project.folder}
               </button>
+            )}
+
+            <div className="mt-1 flex items-center gap-1 text-[11px] text-neutral-500">
+              <span className="tabular-nums">{spendLabel(project.id)}</span>
+              <button
+                onClick={() => setRulesOpen(rulesOpen === project.id ? null : project.id)}
+                className="rounded px-1.5 py-0.5 text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-200"
+                title="Rules every chat in this project follows"
+              >
+                Rules
+              </button>
+              <button
+                onClick={() => void toggleMemory(project)}
+                className="rounded px-1.5 py-0.5 text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-200"
+                title="What the assistant has remembered about this project"
+              >
+                Memory
+              </button>
+            </div>
+
+            {rulesOpen === project.id && (
+              <div className="mt-2 space-y-2 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
+                <p className="text-[11px] text-neutral-500">
+                  Applied to every chat in this project, without touching the chats.
+                </p>
+                <InstructionsSection
+                  instructions={rulesFor(project)}
+                  onChange={(next) => setRules((r) => ({ ...r, [project.id]: next }))}
+                />
+                <button
+                  onClick={() => void saveRules(project)}
+                  disabled={busy || !rulesDirty(project)}
+                  className="rounded-lg bg-sky-600 px-3 py-1 text-[12px] font-medium text-white transition hover:bg-sky-500 disabled:opacity-40"
+                >
+                  Save rules
+                </button>
+              </div>
+            )}
+
+            {memoryOpen === project.id && (
+              <div className="mt-2 space-y-1 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
+                {!project.folder ? (
+                  <p className="text-[11px] text-neutral-600">
+                    No folder, so this project's chats each keep their own memory.
+                  </p>
+                ) : (memory[project.id] ?? []).length === 0 ? (
+                  <p className="text-[11px] text-neutral-600">
+                    Nothing remembered about this project yet.
+                  </p>
+                ) : (
+                  (memory[project.id] ?? []).map((entry) => (
+                    <div key={entry.text} className="flex items-baseline gap-2">
+                      <span className="min-w-0 flex-1 text-[11px] text-neutral-300">
+                        {entry.text}
+                      </span>
+                      <span className="shrink-0 text-[10px] text-neutral-600">{entry.date}</span>
+                    </div>
+                  ))
+                )}
+              </div>
             )}
 
             <div className="mt-2 space-y-0.5">
