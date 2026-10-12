@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / tasks / artifact / docs / shortcuts / commands / theme)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / docs / shortcuts / commands / theme)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 
@@ -32,6 +32,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
       📁 in the header reveals the same folder — and asking about it gets an answer from its text
 - [ ] Picking the same kind of file with 📎 behaves the same way; dropping a second file with a
       name already in the folder gives `name-2` rather than replacing it
+- [ ] A **dropped image** is in the chat's folder as well as in the message — the 📁 shows it
+- [ ] A **picked** image, and a **picked** small `.md`/`.csv`, are in the folder too: the
+      paperclip and the drop must give the same result, which is what used to differ
+- [ ] An image posted to a chat is *not* described to the model as a file to open — it is shown
+- [ ] A picture over 25 MB, and a picked file over 32 MB, is refused with a message naming the
+      size rather than being added with nothing behind it
+- [ ] A file attached *before* the first message of a brand-new chat is read but not filed
+      (documented, not a bug) — sending first and attaching after files it
 - [ ] Asking for a `.docx`/`.xlsx`/`.pptx` produces a real file **in that chat's folder**, and
       *Open* on the result opens it in Word/Excel/PowerPoint
 - [ ] Two chats on the same subject have separate folders, and a chat renamed afterwards keeps
@@ -39,6 +47,8 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] A chat inside a project still works in the **project's** folder rather than a new per-chat one
 - [ ] `Stop` mid-stream keeps the partial reply and ends the turn
 - [ ] A tool-heavy turn folds into one *N steps* row; opening it shows each call
+- [ ] A `run_command` card says, **before** the command runs, that `/rewind` will not put back
+      files it changes — then `/rewind` afterwards undoes the file edits and not the command
 - [ ] A failing tool step opens its group by itself
 - [ ] The mode and approval controls sit with the composer, and `Shift+Tab` still cycles
 - [ ] `ask_user` shows the question prompt; answering resumes the run
@@ -51,6 +61,9 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] An archived chat keeps its messages, its spend and its folder; `↑` restores it
 - [ ] `Ctrl+K` offers *Archive this chat*, and *Take out of the archive* once it is archived
 - [ ] Restoring does not reorder the list: the chat comes back where it was
+- [ ] Right-click → *Rename* edits the title in place; Enter saves it, Escape abandons it
+- [ ] A renamed chat keeps the new title after a restart and does **not** jump to the top —
+      renaming is not activity, so the list order is untouched
 
 ## Customise, projects and the gallery
 
@@ -64,6 +77,15 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Revising a skill by talking (`replace: true`) keeps its `default: on` flag
 - [ ] *Draft from a folder* writes a design system from a real project
 - [ ] Switching a design system on for a chat names it in the context breakdown
+- [ ] A design system is one markdown file in the app's `design` folder — not a
+      `skills/design-…/SKILL.md` — and the Skills tab never lists it
+- [ ] Asking the assistant to build something while one is switched on applies it
+- [ ] Asking the assistant to record a house style saves it with `create_design_system` and
+      switches it on for that chat; asking again with `replace: true` revises the same file
+- [ ] Asking the assistant to start one from a project folder drafts it with
+      `draft_design_system`; a folder outside the workspace is refused
+- [ ] Saving a design system does not switch a skill off, and saving a skills list does not
+      switch a design system off (they share one table, so this is the guard to check)
 - [ ] An instruction edited in the hub is still there after reopening Settings
 - [ ] *New project…* picks a folder; a chat started in it works there
 - [ ] Deleting a project keeps its chats and only unassigns them
@@ -82,6 +104,9 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Turning *Tell me when something is done* off silences the toast, not the dot
 - [ ] A conversation that finishes in the unfocused pane gets a green sidebar dot,
       cleared when it is opened
+- [ ] A scheduled run that has to ask something — an approval it can never get automatically, or
+      an `ask_user` question — raises a notification and marks the chat, rather than waiting
+      invisibly in a chat nobody has opened
 
 ## Two panes
 
@@ -117,12 +142,17 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] Pinning *Docker* with the engine stopped runs on this machine and says so
 - [ ] A command's output is prefixed with where it ran
 - [ ] A Docker run with no network fails a download and succeeds on this machine
+- [ ] With a long command running, killing DeskSeek from Task Manager ends it too: nothing of the
+      app's is left in Task Manager afterwards (the job object — the one thing no automated test
+      can prove here)
 
 ## Files
 
 - [ ] The file tree loads a folder lazily and reflects a file the agent creates
 - [ ] Clicking a file previews it; a binary file reads as "binary", not garbage
 - [ ] A file written while it is open re-reads itself
+- [ ] The box above the tree filters **what is open** and says so: a name in a folder you have not
+      expanded reports that nothing open matches rather than looking like the file is missing
 
 ## Artifacts
 
@@ -203,4 +233,6 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] The header badge reads *MCP starting…* then *🔌 N MCP tools*
 - [ ] The Logs tab shows a call with redacted arguments and its duration
 - [ ] A server that writes to stderr shows that text in the Logs tab
-- [ ] Stopping the app leaves no orphaned child process
+- [ ] A server returning an image gives a result saying it was returned and is not shown; the
+      reply does not describe a picture the user cannot see
+- [ ] Stopping the app leaves no orphaned child process — and so does killing it from Task Manager

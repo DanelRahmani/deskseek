@@ -11,6 +11,7 @@ import type {
   ComputerStateEvent,
   ContextBreakdown,
   DeltaEvent,
+  DesignView,
   DoneEvent,
   ErrorEvent,
   EnvProbe,
@@ -200,15 +201,18 @@ export const api = {
   setChatProject: (chatId: string, projectId: string | null) =>
     invoke<void>("set_chat_project", { chatId, projectId }),
 
-  /** A design system is a skill with a `design-` id, so the two lists stay apart
-   *  in the UI while storage and injection are the app's existing skill path. */
+  /** Design systems: their own store and their own switch, so neither list has
+   *  to know the other one to avoid switching it off. */
   listDesignSystems: (chatId?: string) =>
-    invoke<SkillView[]>("list_design_systems", { chatId: chatId ?? null }),
+    invoke<DesignView[]>("list_design_systems", { chatId: chatId ?? null }),
   saveDesignSystem: (name: string, body: string) =>
     invoke<string>("save_design_system", { name, body }),
   designSystemFromProject: (folder: string) =>
     invoke<string>("design_system_from_project", { folder }),
   deleteDesignSystem: (id: string) => invoke<void>("delete_design_system", { id }),
+  setChatDesigns: (chatId: string, designIds: string[]) =>
+    invoke<void>("set_chat_designs", { chatId, designIds }),
+  designDir: () => invoke<string>("design_dir"),
 
   /** Recurring tasks and their internal calendar. */
   listScheduled: () => invoke<ScheduledTask[]>("list_scheduled"),

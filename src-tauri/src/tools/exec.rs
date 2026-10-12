@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 use crate::runs::Cancel;
 use crate::tools::sandbox_exec::Plan;
-use crate::tools::{sandbox, sandbox_exec, walk};
+use crate::tools::{job, sandbox, sandbox_exec, walk};
 
 const MAX_READ_BYTES: u64 = 256 * 1024;
 const MAX_RESULT_CHARS: usize = 60_000;
@@ -263,6 +263,9 @@ pub(crate) async fn run_process(
     hide_console(&mut cmd);
 
     let mut child = cmd.spawn().map_err(|e| format!("could not start command: {e}"))?;
+    // Every process this app runs joins the job object, so a hard kill of
+    // DeskSeek cannot leave a build running with nothing left to stop it.
+    job::adopt(&child);
     let mut stdout = child.stdout.take().ok_or("no stdout")?;
     let mut stderr = child.stderr.take().ok_or("no stderr")?;
 

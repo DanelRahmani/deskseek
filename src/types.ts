@@ -319,6 +319,19 @@ export interface MemoryCategoryView {
   entries: MemoryEntryView[];
 }
 
+/**
+ * A stored style reference, in its own store rather than the skills folder.
+ *
+ * Deliberately not a `SkillView`: there is no `default_on` (a design system is
+ * opted into a chat deliberately) and no description of its own.
+ */
+export interface DesignView {
+  id: string;
+  name: string;
+  /** Switched on for the chat the hub is looking at. */
+  enabled: boolean;
+}
+
 export interface SkillView {
   id: string;
   name: string;
@@ -349,6 +362,8 @@ export interface ToolEvent {
   args?: unknown;
   ok?: boolean;
   output?: string;
+  /** A caveat about the call itself, shown on its card before it runs. */
+  note?: string | null;
 }
 
 /**
@@ -504,4 +519,9 @@ export interface ToolRun {
   output?: string;
   /** A `data:` URL picture, for `browser_screenshot`. */
   shot?: string;
+  /**
+   * A caveat about the call itself, from the backend. `run_command` carries one
+   * because a shell command can change files `/rewind` cannot put back.
+   */
+  note?: string;
 }

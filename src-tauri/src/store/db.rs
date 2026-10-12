@@ -465,11 +465,14 @@ pub fn set_chat_model(
     Ok(())
 }
 
+/// Sets a chat's title: from the first turn's text, or by hand from the sidebar.
+///
+/// `updated_at` is deliberately left alone — the same rule archiving and
+/// `set_chat_folder` follow. The list is ordered by recency, and renaming is not
+/// activity: bumping it would shuffle the row to the top as a side effect of the
+/// user typing a better name.
 pub fn rename_chat(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<()> {
-    conn.execute(
-        "UPDATE chats SET title = ?2, updated_at = ?3 WHERE id = ?1",
-        params![id, title, now_ts()],
-    )?;
+    conn.execute("UPDATE chats SET title = ?2 WHERE id = ?1", params![id, title])?;
     Ok(())
 }
 
@@ -1573,6 +1576,20 @@ mod tests {
 
         set_chat_archived(&conn, &shelved.id, false).unwrap();
         assert!(!get_chat(&conn, &shelved.id).unwrap().archived);
+    }
+
+    #[test]
+    fn renaming_a_chat_does_not_reorder_the_sidebar() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        let before = get_chat(&conn, &chat.id).unwrap().updated_at;
+
+        rename_chat(&conn, &chat.id, "A better name").unwrap();
+
+        assert_eq!(get_chat(&conn, &chat.id).unwrap().title, "A better name");
+        // `list_chats` orders by `updated_at DESC`, so a bumped timestamp here
+        // would move the row to the top the moment the user typed its new name.
+        assert_eq!(get_chat(&conn, &chat.id).unwrap().updated_at, before);
     }
 
     #[test]

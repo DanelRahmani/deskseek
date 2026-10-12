@@ -8,6 +8,7 @@ pub mod docs;
 pub mod exec;
 pub mod extract;
 pub mod guard;
+pub mod job;
 pub mod sandbox;
 pub mod sandbox_exec;
 pub mod walk;
@@ -200,11 +201,14 @@ pub struct SkillDraft {
     pub replace: bool,
 }
 
-/// Validates `create_skill`.
+/// Validates a `name` + `body` + optional `description`/`replace` payload.
 ///
-/// A skill with an empty body would join the prompt and change nothing, which is
-/// worse than an error the model can read and correct.
-pub fn parse_skill_draft(args: &serde_json::Value) -> Result<SkillDraft, String> {
+/// Shared by `create_skill` and `create_design_system`: the two write different
+/// stores, but what the model sends is the same shape and an empty body would
+/// join the prompt and change nothing either way — worse than an error it can
+/// read and correct. `tool` names the caller in those errors, so the message
+/// points at the call that was actually made.
+fn parse_written(args: &serde_json::Value, tool: &str) -> Result<SkillDraft, String> {
     let field = |key: &str| {
         args.get(key)
             .and_then(serde_json::Value::as_str)
@@ -214,11 +218,11 @@ pub fn parse_skill_draft(args: &serde_json::Value) -> Result<SkillDraft, String>
     };
     let name = field("name");
     if name.is_empty() {
-        return Err("create_skill needs a name.".to_string());
+        return Err(format!("{tool} needs a name."));
     }
     let body = field("body");
     if body.is_empty() {
-        return Err("create_skill needs a body: the instructions the skill is for.".to_string());
+        return Err(format!("{tool} needs a body: the text itself."));
     }
     Ok(SkillDraft {
         name,
@@ -229,6 +233,19 @@ pub fn parse_skill_draft(args: &serde_json::Value) -> Result<SkillDraft, String>
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false),
     })
+}
+
+/// Validates `create_skill`.
+pub fn parse_skill_draft(args: &serde_json::Value) -> Result<SkillDraft, String> {
+    parse_written(args, "create_skill")
+}
+
+/// Validates `create_design_system`.
+///
+/// A design system has no description of its own, so one sent anyway is ignored
+/// rather than stored as a field nothing reads.
+pub fn parse_design_draft(args: &serde_json::Value) -> Result<SkillDraft, String> {
+    parse_written(args, "create_design_system")
 }
 
 /// Validates `save_memory`.
@@ -531,6 +548,35 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "create_design_system",
+                "Write or revise a design system: the stored style reference you apply when you build or write UI for this user — the type scale, the palette, the spacing, and the rules that hold them together. It is saved to their design systems and switched on for this chat. Use it when the user describes a house style, or once you have worked out from a project what one is. Call it again with the same name and `replace: true` to revise one.",
+                params(
+                    json!({
+                        "name": {"type": "string", "description": "Short name, e.g. \"Axiom House Style\". Becomes the file name."},
+                        "body": {"type": "string", "description": "The system itself, in Markdown: type scale, palette, spacing, rules"},
+                        "replace": {"type": "boolean", "description": "Rewrite a design system of this name that already exists."}
+                    }),
+                    &["name", "body"],
+                ),
+            ),
+            ToolClass::Write,
+        ),
+        (
+            Tool::function(
+                "draft_design_system",
+                "Start a design system from a folder that already has a look: it reads that folder's stylesheets, CSS custom properties, font stacks and dependencies and writes the reference from what is really there. The result is a starting point to revise rather than a finished system — read it back, fill the gaps, and revise it with `create_design_system`. The folder must be inside the workspace.",
+                params(
+                    json!({
+                        "folder": {"type": "string", "description": "Folder to read, relative to the workspace"},
+                        "name": {"type": "string", "description": "Name for the new system. Defaults to the folder's own name."}
+                    }),
+                    &["folder"],
+                ),
+            ),
+            ToolClass::Write,
+        ),
+        (
+            Tool::function(
                 "list_skills",
                 "List the skills installed on this machine, with their ids, and which are switched on for this chat. Call it when the user mentions a skill, or when a job might match one they already have.",
                 params(json!({}), &[]),
@@ -540,10 +586,10 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "use_skill",
-                "Switch a skill on for this chat and read its instructions. Use it when the user names a skill, or when a job clearly matches one from `list_skills` — say which one you are using. What it asks for then applies for the rest of this chat.",
+                "Switch a skill — or a design system from the design-systems list — on for this chat and read its text. Use it when the user names one, or when a job clearly matches one from `list_skills` or from the design systems listed in your prompt; say which one you are using. What it asks for then applies for the rest of this chat.",
                 params(
                     json!({
-                        "id": {"type": "string", "description": "The skill's id, as `list_skills` reports it"}
+                        "id": {"type": "string", "description": "The skill's or design system's id, as the catalogue reports it"}
                     }),
                     &["id"],
                 ),
@@ -1028,6 +1074,34 @@ mod tests {
         }
         // Available in both sections: reading a window is not a coding tool.
         assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "ui_snapshot"));
+    }
+
+    #[test]
+    fn the_things_that_write_a_skill_or_a_design_ask_first() {
+        for name in ["create_skill", "create_design_system", "draft_design_system"] {
+            assert_eq!(class_of(name), ToolClass::Write, "{name}");
+        }
+        // Both sections: a house style is not a coding-only idea, and a chat that
+        // writes a document has as much use for one as a chat that writes a page.
+        for section in ["chat", "coding"] {
+            let names: Vec<String> = tools_for(section)
+                .into_iter()
+                .map(|(t, _)| t.function.name)
+                .collect();
+            for name in ["create_design_system", "draft_design_system"] {
+                assert!(names.contains(&name.to_string()), "{name} missing from {section}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_design_draft_needs_a_name_and_a_body_and_names_its_own_tool() {
+        let ok = parse_design_draft(&json!({"name": "House", "body": "## Rules"})).unwrap();
+        assert_eq!(ok.name, "House");
+        assert!(!ok.replace, "revising is opt-in");
+        // The error has to name the call that was made, not `create_skill`.
+        let error = parse_design_draft(&json!({"name": "House"})).unwrap_err();
+        assert!(error.contains("create_design_system"), "{error}");
     }
 
     #[test]

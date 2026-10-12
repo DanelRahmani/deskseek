@@ -126,6 +126,13 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
           {run.status === "running" ? "running…" : run.status === "ok" ? "done" : "failed"}
         </span>
       </button>
+      {run.note && (
+        // Not a function of `open`: the caveat is the point of the card, and a
+        // warning behind a click is a warning nobody reads.
+        <p className="mt-1.5 border-l-2 border-amber-800/60 pl-2 text-[10px] leading-relaxed text-amber-200/70">
+          {run.note}
+        </p>
+      )}
       {open && run.shot && (
         <img
           src={run.shot}

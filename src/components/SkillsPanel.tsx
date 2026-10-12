@@ -22,11 +22,7 @@ const BUILD_PROMPT =
   "I want to turn something I keep repeating into a skill. Ask me what it should cover — a couple of questions at a time — then draft it and save it with create_skill.";
 
 export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props) {
-  // The full list, design systems included. The toggle has to send *every*
-  // enabled id back, so filtering the stored list here would silently switch the
-  // design systems off; `skills` below is only what this list shows.
-  const [all, setAll] = useState<SkillView[]>([]);
-  const skills = all.filter((s) => !s.id.startsWith("design-"));
+  const [skills, setSkills] = useState<SkillView[]>([]);
   const [dir, setDir] = useState("");
   const [pasted, setPasted] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -37,7 +33,7 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
       api.listSkills(chatId ?? undefined),
       api.skillsDir(),
     ]);
-    setAll(list);
+    setSkills(list);
     setDir(path);
   };
 
@@ -116,8 +112,8 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
       setStatus("Open a chat to choose skills for it.");
       return;
     }
-    const next = all.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
-    setAll(next);
+    const next = skills.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
+    setSkills(next);
     try {
       await api.setChatSkills(
         chatId,

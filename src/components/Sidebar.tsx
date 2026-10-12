@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { ChatRow, MessageHit, SectionKind } from "../types";
 import { Icon } from "./Icon";
 
@@ -14,6 +14,10 @@ interface Props {
   onArchive: (id: string, archived: boolean) => void;
   /** Right-clicked a row: open its menu at the cursor. */
   onContextMenu: (id: string, x: number, y: number) => void;
+  /** The row whose title is being typed, if any — driven by the context menu. */
+  renamingId: string | null;
+  /** Save a hand-typed title, or pass `null` when the edit was abandoned. */
+  onRename: (id: string, title: string | null) => void;
   onSettings: () => void;
   onMemory: () => void;
   /** Opens the Customise hub: skills, connectors, instructions, design systems. */
@@ -47,6 +51,8 @@ export function Sidebar({
   onDelete,
   onArchive,
   onContextMenu,
+  renamingId,
+  onRename,
   onSettings,
   onMemory,
   onCustomise,
@@ -82,6 +88,38 @@ export function Sidebar({
         ? "bg-neutral-800 text-neutral-100"
         : "text-neutral-400 hover:bg-neutral-800/50 hover:text-neutral-200"
     }`;
+
+  // Escape and Enter both blur the box, so blur is the single commit point; the
+  // flag is what tells the abandon case apart from the save case.
+  const cancelled = useRef(false);
+  const commit = (chat: ChatRow, raw: string) => {
+    const next = raw.trim();
+    const abandoned = cancelled.current;
+    cancelled.current = false;
+    // An unchanged or emptied box is the same as pressing Escape — there is
+    // nothing to save, and a blank title is not a title.
+    if (abandoned || !next || next === chat.title) onRename(chat.id, null);
+    else onRename(chat.id, next);
+  };
+
+  /** The row's title, replaced by a one-line editor while it is being renamed. */
+  const titleField = (c: ChatRow, editorCls: string) =>
+    renamingId === c.id ? (
+      <input
+        autoFocus
+        defaultValue={c.title}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") e.currentTarget.blur();
+          if (e.key === "Escape") {
+            cancelled.current = true;
+            e.currentTarget.blur();
+          }
+        }}
+        onBlur={(e) => commit(c, e.currentTarget.value)}
+        className={editorCls}
+      />
+    ) : null;
 
   return (
     <aside className="flex h-full w-64 shrink-0 flex-col border-r border-neutral-800 bg-neutral-900">
@@ -173,19 +211,24 @@ export function Sidebar({
               onContextMenu(c.id, e.clientX, e.clientY);
             }}
           >
-            <button
-              onClick={() => onSelect(c.id)}
-              className="flex flex-1 items-center gap-1.5 truncate text-left"
-              title={c.workspace ?? c.title}
-            >
-              {runningIds.includes(c.id) && (
-                <span
-                  className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sky-400"
-                  title="Working"
-                />
-              )}
-              <span className="truncate">{c.title}</span>
-            </button>
+            {titleField(
+              c,
+              "min-w-0 flex-1 rounded-md border border-neutral-600 bg-neutral-950 px-1.5 py-0.5 text-[13px] text-neutral-100 outline-none",
+            ) ?? (
+              <button
+                onClick={() => onSelect(c.id)}
+                className="flex flex-1 items-center gap-1.5 truncate text-left"
+                title={`${c.workspace ?? c.title} — right-click to rename`}
+              >
+                {runningIds.includes(c.id) && (
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-sky-400"
+                    title="Working"
+                  />
+                )}
+                <span className="truncate">{c.title}</span>
+              </button>
+            )}
             {unreadIds.includes(c.id) && (
               <span
                 className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400"
@@ -241,13 +284,18 @@ export function Sidebar({
                     onContextMenu(c.id, e.clientX, e.clientY);
                   }}
                 >
-                  <button
-                    onClick={() => onSelect(c.id)}
-                    className="flex-1 truncate text-left text-neutral-500"
-                    title={c.workspace ?? c.title}
-                  >
-                    {c.title}
-                  </button>
+                  {titleField(
+                    c,
+                    "min-w-0 flex-1 rounded-md border border-neutral-700 bg-neutral-900 px-1.5 py-0.5 text-[13px] text-neutral-400 outline-none",
+                  ) ?? (
+                    <button
+                      onClick={() => onSelect(c.id)}
+                      className="flex-1 truncate text-left text-neutral-500"
+                      title={`${c.workspace ?? c.title} — right-click to rename`}
+                    >
+                      {c.title}
+                    </button>
+                  )}
                   <button
                     onClick={() => onArchive(c.id, false)}
                     className="hidden shrink-0 rounded px-1 text-neutral-500 hover:text-sky-400 group-hover:block"

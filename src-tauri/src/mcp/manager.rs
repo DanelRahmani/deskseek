@@ -520,6 +520,9 @@ async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String>
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("could not launch '{}': {e}", server.command))?;
+    // rmcp owns the child handle, so it joins the job by pid: a hard kill of the
+    // app then takes the server with it instead of leaving it behind.
+    crate::tools::job::adopt_pid(transport.id());
     if let Some(stderr) = stderr {
         let logs = logs.clone();
         let name = server.name.clone();
@@ -692,16 +695,26 @@ fn unique_name(server: &str, tool: &str, used: &mut HashSet<String>) -> String {
     candidate
 }
 
-/// One string per content block. Images and audio arrive as base64 the model
-/// cannot read here, so they are described instead. ponytail: feed them into the
-/// multimodal pipeline if a server that returns images turns out to matter.
+/// One string per content block.
+///
+/// A tool result reaches the model as text, so a picture or a sound clip a
+/// server returns cannot be *shown* — the multimodal channel is the user's own
+/// attachments, not this one. The block says that plainly, because a bare
+/// `[image returned]` reads as if the picture were on its way and leaves the
+/// model to guess what was in it.
 fn format_blocks(blocks: &[ContentBlock]) -> Vec<String> {
     blocks
         .iter()
         .map(|block| match block {
             ContentBlock::Text(text) => text.text.clone(),
-            ContentBlock::Image(image) => format!("[image returned, {}]", image.mime_type),
-            ContentBlock::Audio(audio) => format!("[audio returned, {}]", audio.mime_type),
+            ContentBlock::Image(image) => format!(
+                "[{} image returned but not shown — a tool result is text-only]",
+                image.mime_type
+            ),
+            ContentBlock::Audio(audio) => format!(
+                "[{} audio returned but not shown — a tool result is text-only]",
+                audio.mime_type
+            ),
             ContentBlock::Resource(embedded) => match &embedded.resource {
                 ResourceContents::TextResourceContents { uri, text, .. } => {
                     format!("[{uri}]\n{text}")
@@ -796,7 +809,12 @@ mod tests {
         ];
         let parts = format_blocks(&blocks);
         assert_eq!(parts[0], "first");
-        assert_eq!(parts[1], "[image returned, image/png]");
+        // It says *why* it is missing, so the model does not promise the user a
+        // picture that nothing can show.
+        assert_eq!(
+            parts[1],
+            "[image/png image returned but not shown — a tool result is text-only]"
+        );
         assert_eq!(parts[2], "second");
     }
 

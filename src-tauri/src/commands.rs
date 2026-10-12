@@ -261,7 +261,7 @@ pub async fn resend_last_turn(
     // This replaces a turn, so it registers a run exactly as send_message does:
     // one live run per chat, and it cancels any turn already in flight.
     let (run_id, cancel) = state.runs.begin(&chat_id);
-    let result = agent::run(app, &state, &chat_id, cancel).await;
+    let result = agent::run(app, &state, &chat_id, cancel, false).await;
     state.runs.finish(&chat_id, run_id);
     result
 }
@@ -902,6 +902,24 @@ pub fn set_skill_default(
     skills::set_default(&state.paths.skills_dir(), &id, default_on).map_err(|e| e.to_string())
 }
 
+/// The list to store when one store's list is saved: what the caller sent, plus
+/// the ids belonging to the *other* store that were already there.
+///
+/// Skills and design systems share the `chat_skills` table, and each surface
+/// knows only its own list — the Skills tab must never show a design system. So
+/// without this, saving one list would switch the other off as a side effect of
+/// an unrelated click. The rule lives here, in the one function both callers go
+/// through, rather than in each caller where it can be forgotten.
+fn keep_other_store(
+    current: &[String],
+    incoming: &[String],
+    mine: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut next: Vec<String> = incoming.iter().filter(|id| mine(id)).cloned().collect();
+    next.extend(current.iter().filter(|id| !mine(id)).cloned());
+    next
+}
+
 #[tauri::command]
 pub fn set_chat_skills(
     state: State<'_, AppState>,
@@ -909,7 +927,26 @@ pub fn set_chat_skills(
     skill_ids: Vec<String>,
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
-    db::set_chat_skills(&conn, &chat_id, &skill_ids).map_err(|e| e.to_string())
+    let current = db::get_chat_skills(&conn, &chat_id).unwrap_or_default();
+    let next = keep_other_store(&current, &skill_ids, |id| !crate::design::is_design(id));
+    db::set_chat_skills(&conn, &chat_id, &next).map_err(|e| e.to_string())
+}
+
+/// The same, for the design systems switched on in a chat.
+///
+/// A separate command rather than one shared "set the enabled ids": each side
+/// then speaks only for its own store, and neither has to know the other's list
+/// to avoid destroying it.
+#[tauri::command]
+pub fn set_chat_designs(
+    state: State<'_, AppState>,
+    chat_id: String,
+    design_ids: Vec<String>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    let current = db::get_chat_skills(&conn, &chat_id).unwrap_or_default();
+    let next = keep_other_store(&current, &design_ids, crate::design::is_design);
+    db::set_chat_skills(&conn, &chat_id, &next).map_err(|e| e.to_string())
 }
 
 /// Where skills live, so the panel can show the real path and open it.
@@ -1043,10 +1080,21 @@ pub fn list_all_artifacts(state: State<'_, AppState>) -> Result<Vec<db::Artifact
 
 // ----------------------------------------------------------- design systems
 
-/// The design systems: the skills whose id carries the `design-` prefix. Same
-/// shape as `SkillView`, so the panel renders them with the skills list's rules.
+/// One design system as the hub lists it: enough for a row and its switch.
+///
+/// Deliberately not a `SkillView`. A design system has no `default_on` — it is
+/// opted into a chat deliberately — and no description of its own, and giving it
+/// both to reuse a shape would be inventing two facts to save a struct.
+#[derive(Serialize)]
+pub struct DesignView {
+    pub id: String,
+    pub name: String,
+    /// Switched on for the chat that asked, if one did.
+    pub enabled: bool,
+}
+
 #[tauri::command]
-pub fn list_design_systems(state: State<'_, AppState>, chat_id: Option<String>) -> Vec<SkillView> {
+pub fn list_design_systems(state: State<'_, AppState>, chat_id: Option<String>) -> Vec<DesignView> {
     let enabled: Vec<String> = match chat_id {
         Some(id) => {
             let conn = state.db.lock().unwrap();
@@ -1054,38 +1102,19 @@ pub fn list_design_systems(state: State<'_, AppState>, chat_id: Option<String>) 
         }
         None => Vec::new(),
     };
-    skills::discover(&state.paths.skills_dir())
+    crate::design::list(&state.paths.design_dir())
         .into_iter()
-        .filter(|s| crate::design::is_design(&s.id))
-        .map(|s| SkillView {
+        .map(|s| DesignView {
             enabled: enabled.contains(&s.id),
-            default_on: s.default_on,
             id: s.id,
             name: s.name,
-            description: s.description,
         })
         .collect()
 }
 
-/// Writes a design system as a skill of that name, overwriting one that already
-/// exists. Overwriting is the point here rather than a risk: this is the
-/// authoring surface, so Save has to be able to save twice.
-fn write_design(root: &std::path::Path, name: &str, body: &str) -> Result<String, String> {
-    let id = crate::design::id_for(name);
-    let dir = root.join(&id);
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let raw = skills::compose(
-        name,
-        "A design system: apply it whenever you build UI.",
-        // A design system is opted into a chat deliberately, so saving one never
-        // makes it a standing default.
-        false,
-        body,
-    );
-    std::fs::write(dir.join("SKILL.md"), raw).map_err(|e| e.to_string())?;
-    Ok(id)
-}
-
+/// Writes a design system from the hub's form, overwriting one of that name.
+/// Overwriting is the point here rather than a risk: this is the authoring
+/// surface, so Save has to be able to save twice.
 #[tauri::command]
 pub fn save_design_system(
     state: State<'_, AppState>,
@@ -1098,7 +1127,7 @@ pub fn save_design_system(
     if body.trim().is_empty() {
         return Err("There is nothing to save yet.".to_string());
     }
-    write_design(&state.paths.skills_dir(), &name, &body)
+    crate::design::write(&state.paths.design_dir(), &name, &body)
 }
 
 /// Draft one from a folder that already has a look, then store it.
@@ -1116,21 +1145,20 @@ pub fn design_system_from_project(
         .and_then(|n| n.to_str())
         .unwrap_or("design system");
     let draft = crate::design::draft_from_project(path);
-    write_design(&state.paths.skills_dir(), name, &draft)
+    crate::design::write(&state.paths.design_dir(), name, &draft)
 }
 
-/// Removes a design system's folder. Guarded to the prefix, so this cannot be
-/// pointed at an ordinary skill — or at anything else.
+/// Removes one design system's file. The id guard is `design::file_for`'s, not
+/// repeated here — one place to get the rule right.
 #[tauri::command]
 pub fn delete_design_system(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    if !crate::design::is_design(&id) || id.contains(['/', '\\']) || id.contains("..") {
-        return Err("That is not a design system id.".to_string());
-    }
-    let dir = state.paths.skills_dir().join(&id);
-    if !dir.is_dir() {
-        return Err(format!("No design system called \"{id}\"."));
-    }
-    std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
+    crate::design::remove(&state.paths.design_dir(), &id)
+}
+
+/// Where design systems live, so the hub can show the real path.
+#[tauri::command]
+pub fn design_dir(state: State<'_, AppState>) -> String {
+    state.paths.design_dir().display().to_string()
 }
 
 // ------------------------------------------------------------ permissions
@@ -1203,7 +1231,7 @@ pub async fn send_message(
     text: String,
     attachments: Option<Vec<Attachment>>,
 ) -> Result<(), String> {
-    start_turn(app, &state, &chat_id, &text, attachments.unwrap_or_default()).await
+    start_turn(app, &state, &chat_id, &text, attachments.unwrap_or_default(), false).await
 }
 
 /// The body of `send_message`, callable outside a command context.
@@ -1212,12 +1240,17 @@ pub async fn send_message(
 /// of its own, so a task that fired at 09:00 gets the same project scope, the
 /// same mode and the same tool gating as a message the user typed — and a bug in
 /// one cannot make the other behave differently.
+///
+/// `unattended` says the user did not press send. It changes nothing about what
+/// the run may do; it only makes a prompt the run parks on raise a notification,
+/// so a scheduled task cannot sit in silence waiting to be noticed.
 pub async fn start_turn(
     app: AppHandle,
     state: &AppState,
     chat_id: &str,
     text: &str,
     attachments: Vec<Attachment>,
+    unattended: bool,
 ) -> Result<(), String> {
     keychain::get_api_key()?.ok_or("No API key set")?;
 
@@ -1263,7 +1296,7 @@ pub async fn start_turn(
 
     // One live run per chat: registering cancels any turn already in flight.
     let (run_id, cancel) = state.runs.begin(chat_id);
-    let result = agent::run(app.clone(), state, chat_id, cancel).await;
+    let result = agent::run(app.clone(), state, chat_id, cancel, unattended).await;
     state.runs.finish(chat_id, run_id);
     // Tell someone who is not looking. `notify` decides whether that is a toast
     // at all; this only reports what happened.
@@ -1469,7 +1502,7 @@ pub async fn fire_scheduled(
     // No toast here: `start_turn` reports when the run *finishes*, which is the
     // moment the user asked to hear about. The event above is what says it
     // started, for the UI that is already open.
-    start_turn(app.clone(), state, &chat_id, &task.prompt, Vec::new()).await?;
+    start_turn(app.clone(), state, &chat_id, &task.prompt, Vec::new(), true).await?;
     Ok(chat_id)
 }
 
@@ -1750,6 +1783,13 @@ fn inlined_document(name: &str, path: &Path, size: u64) -> Option<String> {
 /// and otherwise named so it can be read on demand — the file is in the chat's
 /// folder either way, so nothing is lost by waiting until something needs it.
 fn attached_text(path: &Path, mime: &str, size: u64) -> String {
+    // An image is the one attachment the model is *shown* rather than told: the
+    // caller already holds the bytes to downscale, so there is nothing to
+    // describe and no `read_file` to suggest — for a PNG that would answer
+    // "binary file" anyway.
+    if mime.starts_with("image/") {
+        return String::new();
+    }
     let name = file_name_of(path);
     if crate::tools::extract::is_extractable(&name) {
         if let Some(text) = inlined_document(&name, path, size) {
@@ -1774,10 +1814,11 @@ fn attached_text(path: &Path, mime: &str, size: u64) -> String {
 /// Add a dropped file to the chat.
 ///
 /// A native drop hands the webview a *path*, not a `File`, and the webview
-/// cannot read the disk itself — so the file is handled here. A picture comes
-/// back as a `data:` URL for the model to look at (the frontend downscales it);
-/// everything else is copied into the chat's own folder, and what the model can
-/// read of it is returned with it.
+/// cannot read the disk itself — so the file is handled here. Every file is
+/// copied into the chat's own folder, and what the model can read of it is
+/// returned with it. A picture is *also* returned as a `data:` URL, because an
+/// image is the one thing the model can be shown rather than told (the frontend
+/// downscales it before it is sent).
 #[tauri::command]
 pub fn attach_path(
     state: State<'_, AppState>,
@@ -1796,12 +1837,19 @@ pub fn attach_path(
         if size > MAX_IMAGE_BYTES {
             return Err(format!("{name} is larger than 25 MB."));
         }
+        // A picture is filed like every other attachment — the chat owns what the
+        // user put in it — so a screenshot in a conversation is in that
+        // conversation's folder rather than only in a message row.
+        let stored = match chat_id.as_deref() {
+            Some(id) => adopt_file(&state, id, file)?.1,
+            None => name.clone(),
+        };
         let bytes = std::fs::read(file).map_err(|e| e.to_string())?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
         return Ok(Attachment {
             data_url: format!("data:{mime};base64,{encoded}"),
             text: String::new(),
-            name,
+            name: stored,
             mime,
         });
     }
@@ -2179,8 +2227,9 @@ pub async fn mcp_restart(
 
 #[cfg(test)]
 mod tests {
-    use super::{chat_markdown, title_from};
+    use super::{attached_text, chat_markdown, keep_other_store, title_from};
     use crate::store::db;
+    use std::path::Path;
 
     fn chat() -> db::ChatRow {
         db::ChatRow {
@@ -2215,6 +2264,57 @@ mod tests {
             attachments_json: attachments.map(str::to_string),
             created_at: 0,
         }
+    }
+
+    /// The two stores share `chat_skills`, and each surface knows only its own
+    /// list — so saving one must not switch the other off.
+    #[test]
+    fn saving_one_list_never_switches_the_other_store_off() {
+        let current = vec!["concise".to_string(), "design-house-style".to_string()];
+
+        // The Skills tab saves its list: a skill it dropped goes, and the design
+        // system it never showed stays.
+        let after_skills = keep_other_store(&current, &["terse".to_string()], |id| {
+            !crate::design::is_design(id)
+        });
+        assert_eq!(
+            after_skills,
+            vec!["terse".to_string(), "design-house-style".to_string()]
+        );
+
+        // And the other way round.
+        let after_designs =
+            keep_other_store(&current, &["design-docs".to_string()], crate::design::is_design);
+        assert_eq!(
+            after_designs,
+            vec!["design-docs".to_string(), "concise".to_string()]
+        );
+
+        // A design id sent to the skills list is not that list's to switch on,
+        // so it is dropped rather than honoured.
+        let smuggled =
+            keep_other_store(&[], &["design-x".to_string()], |id| !crate::design::is_design(id));
+        assert!(smuggled.is_empty(), "{smuggled:?}");
+    }
+
+    /// An image is shown to the model, not described to it.
+    ///
+    /// The file still reaches the chat's folder — that half is the frontend
+    /// rule in `filing.ts` — but nothing about it belongs in the text the model
+    /// receives, and a sentence telling it to `read_file` a picture it has just
+    /// been handed would be a lie as well as noise.
+    #[test]
+    fn an_image_is_never_described_as_a_file_to_open() {
+        assert_eq!(
+            attached_text(Path::new("shot.png"), "image/png", 10),
+            "",
+            "an image is filed and shown, never named for reading"
+        );
+        let told = attached_text(Path::new("mystery.bin"), "application/octet-stream", 10);
+        assert!(
+            told.contains("is in this chat's folder"),
+            "an opaque file is still named for the model: {told}"
+        );
     }
 
     #[test]

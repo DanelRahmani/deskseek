@@ -80,6 +80,17 @@ pdf-extract = "0.12"
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", features = ["windows-native"] }
+# The job object that takes every child process with it when DeskSeek dies, so a
+# killed app cannot leave a build running invisibly (tools/job.rs). Already in
+# the tree transitively, so a direct line adds no crate to the build — only the
+# feature flags below. Pinned to the version already resolved on purpose: a wider
+# range would resolve to a second copy of it.
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
 # Reading the desktop's accessibility tree. `input` is a hard requirement of the
 # crate's `control` feature, but nothing in this build *calls* it: the tools
 # exposed can look, not touch. Acting arrives with the kill switch it needs.

@@ -17,7 +17,7 @@ import {
   onShot,
   onTool,
 } from "./api";
-import { filesToAttachments, pathToAttachment } from "./lib/attachments";
+import { pathToAttachment, toAttachment } from "./lib/attachments";
 import type {
   ApprovalEvent,
   ArtifactDetail,
@@ -138,6 +138,9 @@ export default function App() {
   // in the UI advertises.
   const [sheet, setSheet] = useState(false);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // The row whose title is being edited in the sidebar. Owned here because the
+  // menu that starts it lives at the root, above the list.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // Full-text results for the sidebar's search box. The query itself lives in
@@ -380,7 +383,13 @@ export default function App() {
           const at = rt.tools.findIndex((t) => t.id === e.id);
           const tools = [...rt.tools];
           if (e.phase === "requested") {
-            const run: ToolRun = { id: e.id, tool: e.tool, args: e.args, status: "running" };
+            const run: ToolRun = {
+              id: e.id,
+              tool: e.tool,
+              args: e.args,
+              status: "running",
+              note: e.note ?? undefined,
+            };
             if (at >= 0) tools[at] = run;
             else tools.push(run);
             return { ...rt, tools };
@@ -975,19 +984,43 @@ export default function App() {
 
   const openMenu = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), []);
 
+  /**
+   * Save a hand-typed title. A `null` title is the sidebar saying the edit was
+   * abandoned (Escape), which is a cancel and not a blank name.
+   */
+  const renameChat = useCallback(
+    async (id: string, title: string | null) => {
+      setRenamingId(null);
+      if (title === null) return;
+      try {
+        await api.renameChat(id, title);
+        await refreshChats(kindRef.current);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats],
+  );
+
   const attach = useCallback(async (chatId: string | null, files: FileList | File[]) => {
     // Keyed by the draft, not the chat: files can be attached before a chat
     // exists, and send() picks them up from the same empty-string slot.
     const key = chatId ?? "";
-    try {
-      const added = await filesToAttachments(files, chatId);
-      setAttachmentsByChat((prev) => ({
-        ...prev,
-        [key]: [...(prev[key] ?? []), ...added].slice(0, 8),
-      }));
-    } catch (e) {
-      setError(String(e));
+    const added: Attachment[] = [];
+    for (const file of Array.from(files)) {
+      // One at a time, so a file too large to move reports itself instead of
+      // taking the rest of the drop down with it.
+      try {
+        added.push(await toAttachment(file, chatId));
+      } catch (e) {
+        setError(String(e));
+      }
     }
+    if (added.length === 0) return;
+    setAttachmentsByChat((prev) => ({
+      ...prev,
+      [key]: [...(prev[key] ?? []), ...added].slice(0, 8),
+    }));
   }, []);
 
   const removeAttachment = useCallback((chatId: string | null, index: number) => {
@@ -1298,6 +1331,8 @@ export default function App() {
         onSettings={() => openSettings()}
         onArchive={setArchived}
         onContextMenu={openMenu}
+        renamingId={renamingId}
+        onRename={renameChat}
         onMemory={() => openSettings("memory")}
         onCustomise={() => openCustomise("skills")}
         onProjects={() =>
@@ -1530,6 +1565,7 @@ export default function App() {
               items={[
                 { label: "Open", onSelect: () => void selectChat(menu.id) },
                 { label: "Open in split view", onSelect: () => openInSplit(menu.id) },
+                { label: "Rename", onSelect: () => setRenamingId(menu.id) },
                 {
                   label: row?.archived ? "Take out of the archive" : "Archive",
                   onSelect: () => void setArchived(menu.id, !row?.archived),

@@ -751,8 +751,13 @@ mod tests {
     #[test]
     fn actions_are_spaced_so_a_loop_cannot_run_away() {
         let gate = Gate::default();
-        assert!(gate.wait_turn().is_ok(), "the first action is not held back");
+        // Timed from *before* the first action, because the gap is between two
+        // actions. Measuring from after the first one subtracts the very interval
+        // it means to assert, which left this passing only so long as `sleep`
+        // overshot by more than a busy machine's preemption delay — it failed on
+        // a loaded machine for that reason alone.
         let started = Instant::now();
+        assert!(gate.wait_turn().is_ok(), "the first action is not held back");
         assert!(gate.wait_turn().is_ok());
         assert!(
             started.elapsed() >= MIN_ACTION_GAP,

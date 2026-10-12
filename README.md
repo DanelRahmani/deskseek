@@ -29,12 +29,18 @@ Both sections are functional:
   make, it calls `ask_user` and the run waits for your answer in the composer instead of guessing;
   every question offers a few options and always lets you type your own
 - **Attachments** — drop a file anywhere on the window (an overlay appears), or paste or pick
-  one. An image is downscaled and sent to the model as a multimodal content part. Everything
-  else is copied into **this chat's own folder** first, so the conversation really owns it: a text
-  file is sent as its own text, a Word, Excel, PowerPoint or PDF file has the words lifted out of
-  it, and a document too long to paste is left in the folder with the model told to read it when
-  it needs it. Nothing is captured twice — a file already in the folder is used where it is, and a
-  name that is taken becomes `name-2` rather than replacing the file already there
+  one. **Every file is copied into this chat's own folder**, so the conversation really owns it —
+  a picture as much as a document. A picture is *also* downscaled and sent to the model as a
+  multimodal content part, so the folder keeps the image the user chose while the model is shown
+  a smaller one. A text file is sent as its own text, a Word, Excel, PowerPoint or PDF file has
+  the words lifted out of it, and a document too long to paste is left in the folder with the
+  model told to read it when it needs it. Nothing is captured twice — a file already in the
+  folder is used where it is, and a name that is taken becomes `name-2` rather than replacing the
+  file already there. Two limits, stated rather than discovered: a picture over 25 MB and a picked
+  file over 32 MB are refused with a message that says so, because a picked file has to travel
+  through the window as bytes (a *dropped* one does not, so the ceiling is the picker's); and a
+  file attached to a brand-new conversation before its first message is read but not filed, since
+  the first message is what creates the folder
 - **Agentic by default** — the assistant can read, search, write and edit files in **its own
   folder** — created for the chat the first time it needs one, under `…/documents`
   (configurable), and the 📁 in the header shows you where — so it can produce a document for you
@@ -88,10 +94,19 @@ Both sections are functional:
   - Skills live in **Customise** (the sidebar's *Customise* entry, or `/skills`), together with
     connectors, instructions and design systems
 - **Design systems** — a stored style reference the assistant applies when it builds or writes UI:
-  the type scale, the palette, the spacing, and the rules that hold them together. *Draft from a
-  folder* reads a project that already has a look and writes the reference from what is really in
-  it; or write one from scratch and revise it by saving again. It joins the prompt while it is
-  switched on for a chat, so a page or a document comes out looking like the rest
+  the type scale, the palette, the spacing, and the rules that hold them together. They live in
+  **their own folder**, one markdown file per system (`design/<name>.md`), so they are never a
+  skill with a prefix and the two lists cannot disagree about what they are
+  - **The assistant works with them directly.** They are listed in its prompt with each id and
+    whether this chat has one switched on, so *"use our house style"* needs no explanation:
+    `use_skill` switches one on and hands over its text, `create_design_system` writes or revises
+    one from the conversation, and `draft_design_system` starts one from a project folder that
+    already has a look. Like skills, only the switched-on ones cost anything in the prompt
+  - *Draft from a folder* in **Customise → Design systems** does the same thing from the panel;
+    or write one from scratch and revise it by saving again. It joins the prompt while it is
+    switched on for a chat, so a page or a document comes out looking like the rest
+  - Two switches, on purpose: the checkbox is *this chat*; there is no "always on" for a design
+    system, because applying one is a decision rather than a standing preference
 - **Projects** — a named container with a folder, and the conversations that belong to it. *New
   project…* picks the folder; a chat started inside it works there, and an existing chat can be
   moved in or out from the panel. Deleting a project keeps its chats — they are only unassigned,
@@ -103,11 +118,13 @@ Both sections are functional:
   not become one conversation that grows forever, and the chat appears in the sidebar under the
   task's title. *Run now* fires it without moving when it next runs on its own; *Pause* leaves it
   in the list and stops the clock
-  - Two things are deliberate rather than missing. A run never waits for an approval — nobody is
+  - Three things are deliberate rather than missing. A run never waits for an approval — nobody is
     watching at 09:00 — so a scheduled chat is always in auto; the catastrophic guard still
     applies, and a tool that is never auto-approved (driving a browser, pressing keys) waits for
-    you instead of being clicked unattended. And a window missed while the app was closed fires
-    **once** on the next launch rather than catching up on every missed occurrence
+    you instead of being clicked unattended. That wait is no longer silent: the moment it parks it
+    raises a notification and marks the chat, so an unattended run cannot sit in a chat nobody has
+    opened — and a question it asks does the same. And a window missed while the app was closed
+    fires **once** on the next launch rather than catching up on every missed occurrence
 - **It tells you when it is done** — a conversation that finishes while you are reading another one
   gets a green dot on its sidebar row, cleared the moment you open it; a scheduled task starting,
   or the assistant calling `notify_user` at the end of a long job, raises an **OS notification** as
@@ -192,7 +209,8 @@ Both sections are functional:
   is restored and a file the run created is removed again. It undoes **one run at a time, newest
   first**, because an older run's pre-images are only correct once the runs after it have been
   undone. Two honest limits: a shell command that rewrites files is invisible to it (`npm run
-  build` is not undone), and it says how many files it put back rather than claiming success
+  build` is not undone) — which is why every `run_command` card says so before it runs — and it
+  says how many files it put back rather than claiming success
 
 **Approvals, permission modes and stopping a run**
 
@@ -260,8 +278,11 @@ installed and running if you ask the wrong question.
 
 Best-effort mode is also honest about stopping a run: `Stop` kills the whole process tree rather
 than just the shell it started, so a build does not carry on invisibly after you have stopped it.
-There is a gap — a grandchild whose parent has already exited is reparented and escapes — and the
-code says so where the upgrade path belongs.
+That path has a gap — a grandchild whose parent has already exited is reparented and escapes
+`taskkill` — but nothing escapes the app *ending*. Every process DeskSeek starts joins a Windows
+job object that is killed when the app's last handle to it closes, so a crash, a power cut or a
+kill from Task Manager takes the whole tree with it instead of leaving a build running with
+nobody left to stop it.
 
 **Stop** — while a run is going, the send button becomes *Stop*. It aborts the model stream, kills
 any running child process, and records whatever the model had produced so far. A chat runs one
@@ -479,7 +500,12 @@ are launched as child processes and their tools are offered to the model in **bo
   shortcut is opt-in
 - Server output is treated as data, not instructions
 - Servers start in the background, so a slow `npx` download never blocks the window
-- Child processes are stopped when the app exits
+- **A tool result is text.** When a server returns an image or an audio clip, the model is told
+  exactly that — returned, and not shown, because a tool result cannot carry one — rather than
+  being handed a placeholder that reads like the picture is on its way. The multimodal channel is
+  your own attachments, not this one
+- Servers are stopped when the app exits, **and when it is killed** — they join the same job
+  object as every other child, so nothing of DeskSeek's survives a hard kill
 - The chat header shows a **🔌 N MCP tools** badge once discovery finishes, or *MCP starting…*
   while it is still in flight — with a fresh chat, the first message can otherwise be sent
   before the model has any of those tools

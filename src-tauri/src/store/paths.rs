@@ -48,6 +48,15 @@ impl AppPaths {
         self.root.join("skills")
     }
 
+    /// One markdown file per design system, named after its id.
+    ///
+    /// Its own folder rather than the skills one: they are a different thing, and
+    /// sharing a folder is exactly what made the catalogue the model read and the
+    /// list the Skills tab showed disagree.
+    pub fn design_dir(&self) -> PathBuf {
+        self.root.join("design")
+    }
+
     /// Which MCP servers to run. Hand-editable, so it lives beside the settings
     /// rather than inside them.
     pub fn mcp_file(&self) -> PathBuf {
@@ -92,6 +101,11 @@ mod tests {
         assert!(p.db_file().starts_with("/data"));
         assert_eq!(p.memory_file().file_name().unwrap(), "MEMORY.md");
         assert_eq!(p.chatlog_dir().file_name().unwrap(), "CHATLOG");
+        // Skills and design systems are separate stores, not one folder with a
+        // prefix telling them apart.
+        assert_eq!(p.skills_dir().file_name().unwrap(), "skills");
+        assert_eq!(p.design_dir().file_name().unwrap(), "design");
+        assert_ne!(p.skills_dir(), p.design_dir());
     }
 
     #[test]

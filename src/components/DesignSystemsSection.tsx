@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
-import type { SkillView } from "../types";
+import type { DesignView } from "../types";
 
 const inputCls =
   "w-full rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 text-sm text-neutral-200 outline-none focus:border-neutral-700";
@@ -26,12 +26,13 @@ const TEMPLATE = `## Typography
  * A design system is a stored style reference the assistant applies when it
  * builds or writes UI.
  *
- * Stored as a skill with a `design-` id, on purpose: turning it on for a chat is
- * then the app's existing skill path, and the model can reach for it by name
- * without a second mechanism to keep in step.
+ * Its own store, its own switch. It used to be a skill with a `design-` id,
+ * which meant this list and the Skills list were one list with a filter on it —
+ * and the assistant's copy of that list had no filter at all. Two stores, two
+ * commands, two lists that cannot disagree.
  */
 export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
-  const [systems, setSystems] = useState<SkillView[]>([]);
+  const [systems, setSystems] = useState<DesignView[]>([]);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [status, setStatus] = useState<string | null>(null);
@@ -83,7 +84,7 @@ export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
     }
   };
 
-  const remove = async (system: SkillView) => {
+  const remove = async (system: DesignView) => {
     setBusy(true);
     try {
       await api.deleteDesignSystem(system.id);
@@ -97,9 +98,9 @@ export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
   };
 
   /**
-   * Switching one on sends every enabled id back, so the ordinary skills have to
-   * be in that set too — hence the full list read here rather than the filtered
-   * one this section shows.
+   * The design systems' own switch. It sends only its own list, because
+   * `set_chat_designs` carries the skills through on the Rust side — the two
+   * stores no longer have to be stitched together here.
    */
   const toggle = async (id: string) => {
     if (!chatId) {
@@ -108,11 +109,10 @@ export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
     }
     setBusy(true);
     try {
-      const all = await api.listSkills(chatId);
-      const next = all
+      const next = systems
         .filter((s) => (s.id === id ? !s.enabled : s.enabled))
         .map((s) => s.id);
-      await api.setChatSkills(chatId, next);
+      await api.setChatDesigns(chatId, next);
       await reload();
     } catch (e) {
       setStatus(String(e));
@@ -159,11 +159,6 @@ export function DesignSystemsSection({ chatId }: { chatId: string | null }) {
             />
             <span>
               <span className="block font-medium text-neutral-200">{system.name}</span>
-              {system.description && (
-                <span className="mt-1 block leading-relaxed text-neutral-500">
-                  {system.description}
-                </span>
-              )}
               <span className="mt-1 block font-mono text-[10px] text-neutral-600">{system.id}</span>
             </span>
           </label>
