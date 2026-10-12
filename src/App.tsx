@@ -1340,18 +1340,56 @@ export default function App() {
 
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
-  // results.
+  // results. A search is ranked by relevance, not by recency, so a common word
+  // puts its most useful hits first — and has more of them than fit, which is
+  // what `moreHits` is for.
   const searchTimer = useRef<number | null>(null);
+  const [moreHits, setMoreHits] = useState(false);
+  // Read by the paging below, which needs how many are already shown without
+  // being a reason to re-render.
+  const hitsRef = useRef<MessageHit[]>([]);
+  hitsRef.current = hits;
+  // The query the list on screen belongs to. A page that lands after the box has
+  // changed must be dropped, not appended to a different search's results.
+  const searchedFor = useRef("");
   const searchMessages = useCallback((query: string) => {
     if (searchTimer.current !== null) window.clearTimeout(searchTimer.current);
     const needle = query.trim();
     if (needle.length < 2) {
+      searchedFor.current = "";
       setHits([]);
+      setMoreHits(false);
       return;
     }
     searchTimer.current = window.setTimeout(() => {
-      api.searchMessages(needle).then(setHits).catch(() => setHits([]));
+      api
+        .searchMessages(needle)
+        .then((page) => {
+          searchedFor.current = needle;
+          setHits(page.hits);
+          setMoreHits(page.more);
+        })
+        .catch(() => {
+          searchedFor.current = "";
+          setHits([]);
+          setMoreHits(false);
+        });
     }, 180);
+  }, []);
+
+  /** The next page of the search already on screen, appended to what is there. */
+  const loadMoreHits = useCallback((query: string) => {
+    const needle = query.trim();
+    const offset = hitsRef.current.length;
+    if (!needle || offset === 0 || needle !== searchedFor.current) return;
+    api
+      .searchMessages(needle, offset)
+      .then((page) => {
+        if (needle !== searchedFor.current) return;
+        setHits((latest) => [...latest, ...page.hits]);
+        setMoreHits(page.more);
+      })
+      .catch(() => setMoreHits(false));
   }, []);
 
   // The palette is global — both sections' chats, most recently used first — so
@@ -1577,7 +1615,9 @@ export default function App() {
         chats={chats}
         activeId={activeId}
         hits={hits}
+        moreHits={moreHits}
         onSearch={searchMessages}
+        onMoreHits={loadMoreHits}
         onSelect={selectChat}
         onNew={newChat}
         onDelete={deleteChat}

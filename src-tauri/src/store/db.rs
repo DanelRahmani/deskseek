@@ -1007,9 +1007,10 @@ pub struct MessageHit {
 pub fn search_messages(
     conn: &Connection,
     query: &str,
+    offset: i64,
     limit: i64,
 ) -> rusqlite::Result<Vec<MessageHit>> {
-    search_messages_scoped(conn, query, None, None, limit)
+    search_messages_scoped(conn, query, None, None, offset, limit)
 }
 
 /// The same search, narrowed by the caller.
@@ -1022,11 +1023,18 @@ pub fn search_messages(
 /// chats all work in the project's folder, so the folder already *is* the
 /// project scope — adding the project id as a second filter would only be a
 /// narrower way to ask the same question.
+///
+/// `offset` pages through a common word's results, which is why the ordering has
+/// a tiebreak: `bm25` alone leaves equally-scored rows in whatever order the
+/// query planner happens to walk, so page two could repeat a row from page one
+/// and drop another entirely. `m.id` is arbitrary but *stable*, which is the
+/// only property paging needs.
 pub fn search_messages_scoped(
     conn: &Connection,
     query: &str,
     workspace: Option<&str>,
     kind: Option<&str>,
+    offset: i64,
     limit: i64,
 ) -> rusqlite::Result<Vec<MessageHit>> {
     let Some(expr) = fts_query(query) else {
@@ -1041,10 +1049,10 @@ pub fn search_messages_scoped(
          WHERE messages_fts MATCH ?1
            AND (?2 IS NULL OR c.workspace = ?2)
            AND (?3 IS NULL OR c.kind = ?3)
-         ORDER BY bm25(messages_fts)
-         LIMIT ?4",
+         ORDER BY bm25(messages_fts), m.id
+         LIMIT ?4 OFFSET ?5",
     )?;
-    let rows = stmt.query_map(params![expr, workspace, kind, limit], |r| {
+    let rows = stmt.query_map(params![expr, workspace, kind, limit, offset.max(0)], |r| {
         Ok(MessageHit {
             chat_id: r.get(0)?,
             chat_title: r.get(1)?,
@@ -2714,14 +2722,14 @@ mod tests {
             .unwrap();
 
         // Both sections, prefix match, and the snippet says why it matched.
-        let hits = search_messages(&conn, "pars", 10).unwrap();
+        let hits = search_messages(&conn, "pars", 0, 10).unwrap();
         assert_eq!(hits.len(), 2, "got {hits:?}");
         assert!(hits.iter().all(|h| h.snippet.contains("[pars")));
         assert!(hits.iter().any(|h| h.chat_kind == "coding"));
 
         // A row with no content is not a hit, and a nonsense query is empty.
-        assert!(search_messages(&conn, "x", 10).unwrap().is_empty());
-        assert!(search_messages(&conn, "absentword", 10).unwrap().is_empty());
+        assert!(search_messages(&conn, "x", 0, 10).unwrap().is_empty());
+        assert!(search_messages(&conn, "absentword", 0, 10).unwrap().is_empty());
     }
 
     #[test]
@@ -2732,12 +2740,14 @@ mod tests {
             .unwrap();
         // Each of these would be a MATCH parse error if it were not quoted.
         for raw in ["\"stars\"", "a - b", "a:b", "(a)", "**"] {
-            search_messages(&conn, raw, 10).unwrap();
+            search_messages(&conn, raw, 0, 10).unwrap();
         }
         // And a query with nothing searchable in it is empty, not an error.
         for raw in ["", "   ", "a", "*", "-"] {
             assert!(
-                search_messages_scoped(&conn, raw, None, None, 10).unwrap().is_empty(),
+                search_messages_scoped(&conn, raw, None, None, 0, 10)
+                    .unwrap()
+                    .is_empty(),
                 "{raw:?} should have found nothing"
             );
         }
@@ -2760,31 +2770,124 @@ mod tests {
             .unwrap();
 
         // Unrestricted finds all three, which is what the sidebar asks for.
-        assert_eq!(search_messages(&conn, "invoice", 10).unwrap().len(), 3);
+        assert_eq!(search_messages(&conn, "invoice", 0, 10).unwrap().len(), 3);
 
         // Scoped to my folder, the other client's conversation is not a result —
         // and neither is the chat-mode one, which lives in its own place.
-        let scoped = search_messages_scoped(&conn, "invoice", Some("C:/client-a"), Some("coding"), 10)
-            .unwrap();
+        let scoped = search_messages_scoped(
+            &conn,
+            "invoice",
+            Some("C:/client-a"),
+            Some("coding"),
+            0,
+            10,
+        )
+        .unwrap();
         assert_eq!(scoped.len(), 1, "got {scoped:?}");
         assert_eq!(scoped[0].chat_id, mine.id);
 
         // A chat-mode chat has no folder to draw a line at, so its scope is the
         // section: its own history, and none of the coding folders.
         let loose_hits =
-            search_messages_scoped(&conn, "invoice", None, Some("chat"), 10).unwrap();
+            search_messages_scoped(&conn, "invoice", None, Some("chat"), 0, 10).unwrap();
         assert_eq!(loose_hits.len(), 1);
         assert_eq!(loose_hits[0].chat_id, loose.id);
 
         // Hostile input goes through the same quoting on this path too.
         for raw in ["\"*\"", "- : (", "**"] {
-            search_messages_scoped(&conn, raw, Some("C:/client-a"), Some("coding"), 10).unwrap();
+            search_messages_scoped(&conn, raw, Some("C:/client-a"), Some("coding"), 0, 10)
+                .unwrap();
         }
     }
 
+    /// The stop condition for 4.4: a common word must not simply hand back the
+    /// newest rows. `bm25` scores a short document that is *about* the term above
+    /// a long one that merely mentions it, so the top hit is the useful one and
+    /// not the most recent one.
     #[test]
-    fn a_rewind_restores_a_file_and_deletes_the_one_the_run_created() {
+    fn a_common_word_puts_the_message_about_it_above_the_one_that_mentions_it() {
         let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        // Oldest first: the long, diluted message is written before the short one,
+        // so recency order and relevance order disagree.
+        insert_message(
+            &conn,
+            &chat.id,
+            "user",
+            Some(
+                "notes about the quarter: the invoice went out late, the invoice \
+                 number was wrong, we chased the invoice twice, and the invoice \
+                 template needs changing",
+            ),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        let short = insert_message(
+            &conn,
+            &chat.id,
+            "user",
+            Some("invoice"),
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let hits = search_messages(&conn, "invoice", 0, 10).unwrap();
+        assert_eq!(hits.len(), 2, "got {hits:?}");
+        assert_eq!(
+            hits[0].message_id, short.id,
+            "the shortest message about the term wins, not the newest: {hits:?}"
+        );
+    }
+
+    /// Paging must be a partition of the ranked list: every page joins onto the
+    /// next with no row repeated and none skipped. That only holds if the order
+    /// is total, which is why the query carries a tiebreak — two rows scored the
+    /// same are otherwise free to swap between calls, and a swap across a page
+    /// boundary shows one row twice and hides another for ever.
+    #[test]
+    fn pages_of_a_search_join_up_without_gaps_or_repeats() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        for _ in 0..7 {
+            // Deliberately identical texts, so every row scores exactly the same.
+            insert_message(&conn, &chat.id, "user", Some("invoice"), None, None, None, None)
+                .unwrap();
+        }
+
+        let all = search_messages(&conn, "invoice", 0, 20).unwrap();
+        assert_eq!(all.len(), 7);
+
+        let mut paged: Vec<String> = Vec::new();
+        for offset in (0..7).step_by(3) {
+            paged.extend(
+                search_messages(&conn, "invoice", offset as i64, 3)
+                    .unwrap()
+                    .into_iter()
+                    .map(|h| h.message_id),
+            );
+        }
+        let ids: Vec<String> = all.into_iter().map(|h| h.message_id).collect();
+        assert_eq!(paged, ids, "paging is the same list in the same order");
+
+        // And the same page asked for twice is the same page, not a reshuffle.
+        let first = search_messages(&conn, "invoice", 0, 2).unwrap();
+        let again = search_messages(&conn, "invoice", 0, 2).unwrap();
+        assert_eq!(
+            first.iter().map(|h| &h.message_id).collect::<Vec<_>>(),
+            again.iter().map(|h| &h.message_id).collect::<Vec<_>>()
+        );
+        // Past the end is empty, not an error.
+        assert!(search_messages(&conn, "invoice", 99, 3).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_rewind_restores_a_file_and_deletes_the_one_the_run_created() {        let conn = mem();
         let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
             .unwrap();
         let dir = std::env::temp_dir().join(format!("deskseek-rewind-{}", uuid::Uuid::new_v4()));

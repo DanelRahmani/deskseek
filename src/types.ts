@@ -132,8 +132,17 @@ export interface MessageHit {
   chatKind: SectionKind;
   messageId: string;
   role: string;
-  /** The matched window, with the search terms bracketed. */
+  /** The matched window, with the search terms bracketed: `the [pars]er lives`. */
   snippet: string;
+}
+
+/**
+ * One page of search results. `more` is the backend saying another page exists,
+ * so the list can offer it without knowing how many hits there are in total.
+ */
+export interface MessagePage {
+  hits: MessageHit[];
+  more: boolean;
 }
 
 export type PermissionMode = "manual" | "auto" | "skip";

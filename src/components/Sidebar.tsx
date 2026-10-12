@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import type { ChatRow, MessageHit, SectionKind } from "../types";
+import { searchTerms, snippetParts } from "../lib/snippet";
 import { Icon } from "./Icon";
 
 interface Props {
@@ -34,8 +35,12 @@ interface Props {
   unreadIds: string[];
   /** Messages matching the search box, from every conversation. */
   hits: MessageHit[];
+  /** Whether the backend has another page of them. */
+  moreHits: boolean;
   /** The raw box text; the owner debounces and runs the full-text query. */
   onSearch: (query: string) => void;
+  /** Ask for the next page of the search already on screen. */
+  onMoreHits: (query: string) => void;
 }
 
 const SECTIONS: { id: SectionKind; label: string }[] = [
@@ -66,9 +71,14 @@ export function Sidebar({
   runningIds,
   unreadIds,
   hits,
+  moreHits,
   onSearch,
+  onMoreHits,
 }: Props) {
   const [query, setQuery] = useState("");
+  // Derived from the box rather than kept alongside it: the box is already the
+  // single source for the list below, and a second copy could disagree with it.
+  const terms = searchTerms(query);
   // Collapsed by default: the archive exists to be out of the way, and the count
   // on the summary row is enough to say it is not empty.
   const [showArchived, setShowArchived] = useState(false);
@@ -191,10 +201,29 @@ export function Sidebar({
                   </span>
                 </span>
                 <span className="mt-0.5 line-clamp-2 block text-[11px] text-neutral-500">
-                  {hit.snippet}
+                  {/* The backend marks the matched words with brackets; drawn
+                      as-is the row would read `[pars]er`. They become emphasis
+                      here, and a bracket that is the message's own stays put. */}
+                  {snippetParts(hit.snippet, terms).map((part, at) =>
+                    part.match ? (
+                      <mark key={at} className="rounded-sm bg-sky-500/20 text-sky-200">
+                        {part.text}
+                      </mark>
+                    ) : (
+                      <span key={at}>{part.text}</span>
+                    ),
+                  )}
                 </span>
               </button>
             ))}
+            {moreHits && (
+              <button
+                onClick={() => onMoreHits(query)}
+                className="mb-1 w-full rounded-lg px-2 py-1.5 text-left text-[11px] text-neutral-500 transition duration-150 hover:bg-neutral-800/50 hover:text-neutral-300"
+              >
+                Show more matches
+              </button>
+            )}
           </div>
         )}
         {chats.length === 0 && (

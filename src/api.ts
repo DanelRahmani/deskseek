@@ -28,7 +28,7 @@ import type {
   McpReadyEvent,
   McpServer,
   McpStatus,
-  MessageHit,
+  MessagePage,
   MessageRow,
   ModelInfo,
   NotifyEvent,
@@ -82,7 +82,8 @@ export const api = {
     invoke<ChatRow>("create_chat", { kind, workspace }),
   getMessages: (chatId: string) => invoke<MessageRow[]>("get_messages", { chatId }),
   /** Search what was said, across every conversation. */
-  searchMessages: (query: string) => invoke<MessageHit[]>("search_messages", { query }),
+  searchMessages: (query: string, offset = 0) =>
+    invoke<MessagePage>("search_messages", { query, offset }),
   /** Undo the last agent run's file changes; returns the paths put back. */
   rewindLastRun: (chatId: string) => invoke<string[]>("rewind_last_run", { chatId }),
   /** Ask again from the last user turn; `text` edits it first. */

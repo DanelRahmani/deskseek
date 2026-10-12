@@ -226,15 +226,35 @@ pub fn get_messages(state: State<'_, AppState>, chat_id: String) -> Result<Vec<d
     db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())
 }
 
+/// One page of search results, with whether there is another one behind it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MessagePage {
+    pub hits: Vec<db::MessageHit>,
+    /// True when at least one more page exists, so the UI knows to offer it.
+    pub more: bool,
+}
+
 /// Search every conversation by what was said in it, not just by its title.
+///
+/// The results are ranked by relevance, so a common word puts its most useful
+/// hits first — but a common word also has more of them than fit on a screen, so
+/// the list pages. One row over the page size is asked for and thrown away: its
+/// presence *is* the answer to "is there more", which costs nothing where a
+/// `count(*)` over the match set would.
 #[tauri::command]
 pub fn search_messages(
     state: State<'_, AppState>,
     query: String,
-) -> Result<Vec<db::MessageHit>, String> {
-    const HITS: i64 = 40;
+    offset: Option<i64>,
+) -> Result<MessagePage, String> {
+    const PAGE: i64 = 40;
     let conn = state.db.lock().unwrap();
-    db::search_messages(&conn, &query, HITS).map_err(|e| e.to_string())
+    let mut hits = db::search_messages(&conn, &query, offset.unwrap_or(0), PAGE + 1)
+        .map_err(|e| e.to_string())?;
+    let more = hits.len() as i64 > PAGE;
+    hits.truncate(PAGE as usize);
+    Ok(MessagePage { hits, more })
 }
 
 /// Undo the file changes of the most recent agent run in this chat, and report

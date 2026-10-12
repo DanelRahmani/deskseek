@@ -919,7 +919,7 @@ fn search_history(state: &AppState, chat_id: &str, args: &Value) -> Result<Strin
     let conn = state.db.lock().unwrap();
     let chat = db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?;
     let workspace = chat.workspace.as_deref();
-    let hits = db::search_messages_scoped(&conn, &query, workspace, Some(&chat.kind), limit)
+    let hits = db::search_messages_scoped(&conn, &query, workspace, Some(&chat.kind), 0, limit)
         .map_err(|e| e.to_string())?;
 
     let searched = match workspace {
