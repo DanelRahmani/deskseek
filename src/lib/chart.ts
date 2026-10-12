@@ -14,6 +14,8 @@
 export const MAX_POINTS = 200;
 /** More than this and the bars are thinner than the gaps. */
 export const MAX_SERIES = 8;
+/** More than this and a slice is a hairline. A pie is a picture of a few parts. */
+export const MAX_SLICES = 8;
 
 export interface ChartSeries {
   name: string;
@@ -21,7 +23,12 @@ export interface ChartSeries {
 }
 
 export interface ChartSpec {
-  type: "bar" | "line";
+  /**
+   * `pie` divides one series into its labels, so it takes exactly one series, no
+   * negative values and at most `MAX_SLICES` slices. `bar` and `line` plot every
+   * value against the same axis instead.
+   */
+  type: "bar" | "line" | "pie";
   title?: string;
   labels: string[];
   series: ChartSeries[];
@@ -103,13 +110,18 @@ function parse(text: string): ChartSpec | string {
   const spec = raw as Record<string, unknown>;
 
   const type = spec.type;
-  if (type !== "bar" && type !== "line") {
-    return `"type" must be "bar" or "line", not ${JSON.stringify(type ?? null)}`;
+  if (type !== "bar" && type !== "line" && type !== "pie") {
+    return `"type" must be "bar", "line" or "pie", not ${JSON.stringify(type ?? null)}`;
   }
 
   const rawLabels = spec.labels;
   if (!Array.isArray(rawLabels) || rawLabels.length === 0) {
     return '"labels" must be a non-empty array — one entry per column or point';
+  }
+  // A pie is a picture of a few parts, so its cap is the number of slices rather
+  // than the number of columns: twenty slices are a hairline each.
+  if (type === "pie" && rawLabels.length > MAX_SLICES) {
+    return `"labels" has ${rawLabels.length} slices; ${MAX_SLICES} is the most a pie can show — group the small ones together first`;
   }
   if (rawLabels.length > MAX_POINTS) {
     return `"labels" has ${rawLabels.length} entries; ${MAX_POINTS} is the most a chart can show — group or aggregate the data first`;
@@ -150,11 +162,135 @@ function parse(text: string): ChartSpec | string {
 
   const title = spec.title;
   if (title !== undefined && typeof title !== "string") return '"title" must be a string';
+
+  if (type === "pie") {
+    // The rules that make a bar chart flexible are what make a pie meaningless:
+    // a second series would have to be a second circle, and a slice of a whole
+    // cannot have a negative area.
+    if (series.length > 1) {
+      return `a pie takes one series of values, not ${series.length} — its labels are the slices`;
+    }
+    if (series[0].values.some((value) => value < 0)) {
+      return "a pie cannot show a negative value — a slice of a whole cannot be below zero";
+    }
+  }
+
   return { type, title: title || undefined, labels, series };
+}
+
+/** Point on the circle at `angle` radians, clockwise from twelve o'clock. */
+function arcPoint(cx: number, cy: number, r: number, angle: number) {
+  return { x: cx + r * Math.sin(angle), y: cy - r * Math.cos(angle) };
+}
+
+/**
+ * The swatch-and-name row above the plot.
+ *
+ * `entries` are `[colour, text]`, given ready-made because a pie's entries are
+ * its slices rather than its series — the one difference between the two legends.
+ */
+function legendRows(entries: [string, string][], y: number): string[] {
+  // ponytail: the spacing estimates text width at 6.6px per character for 11.5px
+  // system-ui. A very long entry overruns the next swatch; measure with
+  // getComputedTextLength if that ever becomes worth it.
+  const parts: string[] = [];
+  let cursor = PAD_LEFT;
+  entries.forEach(([color, text]) => {
+    parts.push(
+      `<circle cx="${(cursor + 5).toFixed(1)}" cy="${y - 4}" r="5" fill="${color}"/>`,
+      `<text x="${(cursor + 16).toFixed(1)}" y="${y}" font-size="11.5" fill="${MUTED}">${esc(text)}</text>`,
+    );
+    cursor += 16 + text.length * 6.6 + 22;
+  });
+  return parts;
+}
+
+/**
+ * A pie: `labels` are the slices, `series[0].values` their sizes.
+ *
+ * Every angle comes from the same sum the legend prints its percentages from, so
+ * the numbers and the picture cannot disagree. Two degenerate cases have to be
+ * spelled out because a path cannot draw either: one non-zero slice is the whole
+ * circle (an arc from a point back to itself is nothing), and nothing at all is
+ * a ring rather than an empty frame.
+ */
+function pie(
+  spec: ChartSpec,
+  plotTop: number,
+  plotW: number,
+  plotH: number,
+  legendY: number,
+): string[] {
+  const values = spec.series[0].values;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  const cx = CHART_WIDTH / 2;
+  const cy = plotTop + plotH / 2;
+  const r = Math.min(plotW, plotH) / 2 - 16;
+  const share = (value: number) => (total > 0 ? value / total : 0);
+  const pct = (value: number) => (share(value) * 100).toFixed(1);
+
+  const parts: string[] = [];
+  const positive = values.filter((value) => value > 0).length;
+  if (positive === 1) {
+    const i = values.findIndex((value) => value > 0);
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="${COLORS[i % COLORS.length]}"><title>${esc(`${spec.labels[i]}: ${values[i]} (100%)`)}</title></circle>`,
+    );
+  } else if (positive > 1) {
+    let from = 0;
+    values.forEach((value, i) => {
+      if (value <= 0) return;
+      const to = from + share(value) * Math.PI * 2;
+      const a = arcPoint(cx, cy, r, from);
+      const b = arcPoint(cx, cy, r, to);
+      // The flag is what tells the renderer to take the long way round; without
+      // it a slice past half the circle is drawn as its complement.
+      const large = to - from > Math.PI ? 1 : 0;
+      parts.push(
+        `<path d="M ${cx} ${cy} L ${a.x.toFixed(1)} ${a.y.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 ${large} 1 ${b.x.toFixed(1)} ${b.y.toFixed(1)} Z" fill="${COLORS[i % COLORS.length]}"><title>${esc(`${spec.labels[i]}: ${value} (${pct(value)}%)`)}</title></path>`,
+      );
+      from = to;
+    });
+  } else {
+    parts.push(
+      `<circle cx="${cx}" cy="${cy}" r="${r.toFixed(1)}" fill="none" stroke="${GRID}" stroke-width="14"/>`,
+    );
+  }
+
+  parts.push(
+    ...legendRows(
+      spec.labels.map((label, i) => [
+        COLORS[i % COLORS.length],
+        `${label} — ${values[i]} (${pct(values[i])}%)`,
+      ]),
+      legendY,
+    ),
+  );
+  return parts;
 }
 
 /** The picture. Assumes a spec that already passed `parse`. */
 function draw(spec: ChartSpec): string {
+  const legendY = spec.title ? 46 : 24;
+  const plotTop = legendY + 20;
+  const plotW = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
+  const plotH = CHART_HEIGHT - plotTop - PAD_BOTTOM;
+
+  const parts: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" role="img" font-family="system-ui, sans-serif">`,
+    `<title>${esc(spec.title || `${spec.type === "pie" ? spec.labels.join(", ") : spec.series.map((s) => s.name).join(", ")} — ${spec.type} chart`)}</title>`,
+  ];
+  if (spec.title) {
+    parts.push(
+      `<text x="${CHART_WIDTH / 2}" y="24" text-anchor="middle" font-size="15" font-weight="600" fill="${INK}">${esc(spec.title)}</text>`,
+    );
+  }
+
+  if (spec.type === "pie") {
+    parts.push(...pie(spec, plotTop, plotW, plotH, legendY), "</svg>");
+    return parts.join("");
+  }
+
   const all = spec.series.flatMap((s) => s.values);
   const low = Math.min(0, ...all);
   const high = Math.max(0, ...all);
@@ -163,21 +299,11 @@ function draw(spec: ChartSpec): string {
   const axisMin = Math.min(low, scale.values[0] ?? low);
   const axisMax = Math.max(high, scale.values[scale.values.length - 1] ?? high);
 
-  const legendY = spec.title ? 46 : 24;
-  const plotTop = legendY + 20;
-  const plotW = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
-  const plotH = CHART_HEIGHT - plotTop - PAD_BOTTOM;
-
   const y = (value: number) => plotTop + (plotH * (axisMax - value)) / (axisMax - axisMin);
   const zero = y(0);
   const count = spec.labels.length;
   const groupW = plotW / count;
   const centre = (i: number) => PAD_LEFT + i * groupW + groupW / 2;
-
-  const parts: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${CHART_WIDTH} ${CHART_HEIGHT}" width="${CHART_WIDTH}" height="${CHART_HEIGHT}" role="img" font-family="system-ui, sans-serif">`,
-    `<title>${esc(spec.title || `${spec.series.map((s) => s.name).join(", ")} — ${spec.type} chart`)}</title>`,
-  ];
 
   for (const tick of scale.values) {
     if (tick < axisMin - 1e-9 || tick > axisMax + 1e-9) continue;
@@ -192,23 +318,12 @@ function draw(spec: ChartSpec): string {
     `<line x1="${PAD_LEFT}" y1="${plotTop + plotH}" x2="${PAD_LEFT + plotW}" y2="${plotTop + plotH}" stroke="${AXIS}" stroke-width="1"/>`,
   );
 
-  // ponytail: the legend's spacing estimates text width at 6.6px per character
-  // for 11.5px system-ui. A very long series name overruns the next swatch;
-  // measure with getComputedTextLength if that ever becomes worth it.
-  let cursor = PAD_LEFT;
-  spec.series.forEach((s, i) => {
-    parts.push(
-      `<circle cx="${(cursor + 5).toFixed(1)}" cy="${legendY - 4}" r="5" fill="${COLORS[i % COLORS.length]}"/>`,
-      `<text x="${(cursor + 16).toFixed(1)}" y="${legendY}" font-size="11.5" fill="${MUTED}">${esc(s.name)}</text>`,
-    );
-    cursor += 16 + s.name.length * 6.6 + 22;
-  });
-
-  if (spec.title) {
-    parts.push(
-      `<text x="${CHART_WIDTH / 2}" y="24" text-anchor="middle" font-size="15" font-weight="600" fill="${INK}">${esc(spec.title)}</text>`,
-    );
-  }
+  parts.push(
+    ...legendRows(
+      spec.series.map((s, i) => [COLORS[i % COLORS.length], s.name]),
+      legendY,
+    ),
+  );
 
   if (spec.type === "bar") {
     const inner = groupW * 0.72;

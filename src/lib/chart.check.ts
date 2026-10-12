@@ -9,7 +9,12 @@
  * assertions are ordering and containment, so they fail when the logic breaks
  * rather than when the layout is tuned.
  */
-import { chartSvg, CHART_HEIGHT, CHART_WIDTH, MAX_POINTS } from "./chart.ts";
+import { chartSvg, CHART_HEIGHT, CHART_WIDTH, MAX_POINTS, MAX_SLICES } from "./chart.ts";
+
+/** Values printed with one decimal, so a coordinate is within half of that. */
+function near(a: number, b: number): boolean {
+  return Math.abs(a - b) <= 0.51;
+}
 
 function ok(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -130,13 +135,82 @@ insideFrame(bars(losses), "chart with negatives");
 const [lossBar, profitBar] = bars(losses);
 ok(lossBar[1] + lossBar[3] > profitBar[1] + profitBar[3], "a negative bar belongs lower than a positive one");
 
+// A pie divides one series between its labels, clockwise from twelve o'clock.
+const pie = svgOf(
+  JSON.stringify({
+    type: "pie",
+    title: "Where it went",
+    labels: ["a", "b", "c", "d"],
+    series: [{ name: "n", values: [1, 1, 1, 1] }],
+  }),
+);
+const slices = [...pie.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1]);
+ok(slices.length === 4, `four slices expected, got ${slices.length}`);
+ok(!/<rect|<polyline/.test(pie), "a pie draws neither bars nor a line");
+ok(pie.includes("(25.0%)"), "the legend should carry the share of each slice");
+ok(pie.includes('role="img"') && pie.includes("<title>"), "a pie needs a name for a reader too");
+
+// The whole convention in one assertion. Four equal values are four quarter
+// turns, so the first slice must end exactly 90° clockwise from the top: due
+// right of the centre, level with it. It fails if the angles are not the values,
+// if the sweep is anticlockwise, or if the radius is not the radius.
+const firstSlice =
+  /^M ([\d.]+) ([\d.]+) L [\d.]+ [\d.]+ A ([\d.]+) [\d.]+ 0 \d 1 ([\d.]+) ([\d.]+) Z$/.exec(
+    slices[0],
+  );
+ok(firstSlice !== null, `a slice path should have the shape this can read: ${slices[0]}`);
+const cx = Number(firstSlice?.[1]);
+const cy = Number(firstSlice?.[2]);
+const r = Number(firstSlice?.[3]);
+ok(
+  near(Number(firstSlice?.[4]), cx + r) && near(Number(firstSlice?.[5]), cy),
+  `a quarter turn should end due right of the centre, got (${firstSlice?.[4]}, ${firstSlice?.[5]})`,
+);
+
+// One non-zero slice is the whole circle, and an arc from a point back to itself
+// is drawn as nothing at all — so this case has to be a circle, not a path.
+const single = svgOf(
+  JSON.stringify({ type: "pie", labels: ["all"], series: [{ name: "n", values: [5] }] }),
+);
+ok(single.includes("<circle") && !single.includes("<path"), "a single-slice pie is a circle");
+ok(single.includes("(100.0%)"), "one part is the whole of it");
+const pieCircle = /cx="([\d.]+)" cy="([\d.]+)" r="([\d.]+)"/.exec(single);
+const [pcx, pcy, pr] = [Number(pieCircle?.[1]), Number(pieCircle?.[2]), Number(pieCircle?.[3])];
+ok(
+  pcx - pr >= 0 && pcy - pr >= 0 && pcx + pr <= CHART_WIDTH && pcy + pr <= CHART_HEIGHT,
+  `the pie must sit inside the frame, got centre (${pcx}, ${pcy}) radius ${pr}`,
+);
+
+// Degenerate pies must still produce drawable coordinates, not NaN.
+const emptyPie = svgOf(
+  JSON.stringify({ type: "pie", labels: ["a", "b"], series: [{ name: "n", values: [0, 0] }] }),
+);
+ok(!/NaN|Infinity/.test(emptyPie), "an all-zero pie must not produce NaN");
+ok(!emptyPie.includes("<path"), "nothing to divide means no slices");
+const halfZero = svgOf(
+  JSON.stringify({ type: "pie", labels: ["a", "b"], series: [{ name: "n", values: [3, 0] }] }),
+);
+ok(!/NaN|Infinity/.test(halfZero), "a zero slice must not produce NaN");
+ok(halfZero.includes("(100.0%)") && halfZero.includes("(0.0%)"), "both shares belong in the legend");
+
+// A pie label is the model's text too, so it must not become markup.
+const hostilePie = svgOf(
+  JSON.stringify({
+    type: "pie",
+    title: "<b>x</b>",
+    labels: ["</text><img src=x onerror=1>"],
+    series: [{ values: [1] }],
+  }),
+);
+ok(!hostilePie.includes("<img") && !hostilePie.includes("<b>"), "a pie label must not become markup");
+
 // Every wrong shape the model actually sends gets a message that names it.
 ok(errorOf("this is not json").includes("JSON"), "bad JSON must say so");
 ok(errorOf('"12"').includes("object"), "a bare value is not a spec");
 ok(errorOf("[]").includes("object"), "an array is not a spec");
 ok(errorOf(JSON.stringify({ labels: ["a"], series: [{ values: [1] }] })).includes("type"), "type is required");
 ok(
-  errorOf(JSON.stringify({ type: "pie", labels: ["a"], series: [{ values: [1] }] })).includes("pie"),
+  errorOf(JSON.stringify({ type: "scatter", labels: ["a"], series: [{ values: [1] }] })).includes("scatter"),
   "the error should quote what was sent",
 );
 ok(
@@ -159,6 +233,26 @@ ok(
     String(MAX_POINTS),
   ),
   "too many points must name the cap",
+);
+// The three shapes a pie cannot be, each with its own reason.
+const tooManySlices = Array.from({ length: MAX_SLICES + 1 }, (_, i) => `l${i}`);
+ok(
+  errorOf(
+    JSON.stringify({ type: "pie", labels: tooManySlices, series: [{ values: tooManySlices.map(() => 1) }] }),
+  ).includes(String(MAX_SLICES)),
+  "too many slices must name the pie's own cap",
+);
+ok(
+  errorOf(
+    JSON.stringify({ type: "pie", labels: ["a"], series: [{ values: [1] }, { values: [2] }] }),
+  ).includes("one series"),
+  "a pie takes one series",
+);
+ok(
+  errorOf(JSON.stringify({ type: "pie", labels: ["a", "b"], series: [{ values: [1, -1] }] })).includes(
+    "negative",
+  ),
+  "a slice of a whole cannot be negative",
 );
 
 console.log("chart.check.ts: all checks passed");

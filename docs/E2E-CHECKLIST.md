@@ -140,6 +140,12 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] The bars size by share of the busiest day, and switching 7 / 30 / 90 days re-reads
 - [ ] A conversation in *By conversation* opens that chat when clicked
 - [ ] A turn stopped half-way is still counted, for what it spent up to the stop
+- [ ] *Where the tokens went* shows a pie per section, and each pie's two slices add up to the
+      totals printed above it
+- [ ] The slices are proportional: a section with twice the output of another has the bigger
+      orange slice, and the legend's percentages match
+- [ ] A window with only one kind of chat draws one pie, and a section with no tokens still
+      draws (as a ring) rather than breaking the panel
 
 ## Scheduling and notifications
 
@@ -223,6 +229,8 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] The same chart is drawn **in the conversation**, inside the tool card, and matches the panel
 - [ ] A chart with a second series draws grouped bars, or two lines, in distinct colours
 - [ ] A `line` chart of the same data draws a line with a point per label
+- [ ] A `pie` chart draws one slice per label, with the share of each in the legend; a pie of a
+      single non-zero value draws a full circle, and a pie of all zeros draws a ring
 - [ ] A chart whose spec is wrong (a missing `type`, or one value short) shows the reason and the
       JSON in the panel, and the tool result names what was wrong
 - [ ] A label containing markup (`<b>x</b>`) is shown as text, not drawn as markup

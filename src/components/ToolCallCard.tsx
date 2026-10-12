@@ -4,6 +4,7 @@ import type { ToolRun } from "../types";
 import { savedPath } from "../lib/docs";
 import { tasksFrom } from "../lib/tasks";
 import { chartSvg } from "../lib/chart";
+import { ChartImage } from "./ChartImage";
 
 const ICONS: Record<string, string> = {
   read_file: "📄",
@@ -152,12 +153,8 @@ export function ToolCallCard({ run }: { run: ToolRun }) {
             That chart could not be drawn — the panel has the reason.
           </p>
         ) : (
-          // White behind the drawing: the chart is laid out for paper, and the
-          // frame it normally lives in is what supplies the background.
-          <div
-            className="mt-2 overflow-hidden rounded-lg border border-white/10 bg-white p-2 [&_svg]:h-auto [&_svg]:w-full"
-            dangerouslySetInnerHTML={{ __html: chart.svg }}
-          />
+          // White behind the drawing is `ChartImage`'s business, not this card's.
+          <ChartImage svg={chart.svg} className="mt-2" />
         ))}
       {run.note && (
         // Not a function of `open`: the caveat is the point of the card, and a

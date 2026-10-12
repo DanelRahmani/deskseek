@@ -338,10 +338,12 @@ so no CDN links), `svg` or `mermaid` for a diagram, `chart` for data, `markdown`
 Calling it again with the same title publishes a new version of that document, so revising is \
 cheap and nothing is lost. Keep the chat reply short and put the substance in the artifact.\n\n\
 Two things the panel draws for you, so do not fake them by hand:\n\
-- **A chart.** `kind: \"chart\"` takes the data and the app draws the bars or the line — do not \
-plot one by hand in `svg`. The content is JSON: \
-`{\"type\":\"bar\"|\"line\",\"title\":\"...\",\"labels\":[\"Jan\",\"Feb\"],\"series\":[{\"name\":\"Sales\",\"values\":[10,40]}]}` \
-— one value per label, up to 8 series. If the shape is wrong the tool result says what to fix.\n\
+- **A chart.** `kind: \"chart\"` takes the data and the app draws it — bars, a line, or a pie — \
+so do not plot one by hand in `svg`. The content is JSON: \
+`{\"type\":\"bar\"|\"line\"|\"pie\",\"title\":\"...\",\"labels\":[\"Jan\",\"Feb\"],\"series\":[{\"name\":\"Sales\",\"values\":[10,40]}]}` \
+— one value per label, up to 8 series. A `pie` is one series divided between the labels, which \
+is how a breakdown is drawn (\"where the tokens went\"): one series, no negative values. If the \
+shape is wrong the tool result says what to fix.\n\
 - **Maths.** In `markdown`, LaTeX between `$...$` (inline) or `$$...$$` (displayed) renders — in \
 the chat as well as in an artifact. Write the formula instead of spelling it out in words.\n\
 Do the arithmetic in a command, never in your head: when the numbers come from a file, total them \

@@ -1,8 +1,8 @@
 # DeskSeek roadmap
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
-Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is in progress: 2.1–2.8
-are done, the rest of 2 is the plan. Items 3–6 have not been started.
+Phase 1 is **done and pushed** (commit `b437c6e`). Phase 2 is **done**: 2.1–2.9 have all
+landed. Items 3–6 have not been started.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
@@ -393,31 +393,41 @@ Ordered by how often the author would actually reach for it.
 - **Stop**: nothing parks invisibly — the notification, the chat's own prompt and the
   panel's list all say so — and everything parked is answerable from one place.
 
-### 2.9 [S] Spend, split: where the tokens went
-- **Why**: the spend view answers *how much*, and only in money. The tokens are the
-  half that is not a bill: a coding chat that reads a lot of files burns **input**,
-  and a chat-mode conversation burns **output** — same total, different problem,
-  and only one of them is fixed by a cheaper prompt. Asked for on 2026-10-12.
-- **Do**: a pie of prompt against completion tokens, split by section (`coding` vs
-  `chat`). The data is a join away: `turn_usage.chat_id` → `chats.kind`, and
-  `spend_report` already joins `chats` for the titles, so this is one more grouped
-  query and one more field on `SpendReport` — no new table, and no arithmetic done
-  in the panel.
-- **Drawing it**: `chart.ts` has `bar` and `line` only. Two honest options, and
-  the choice is for whoever builds it: add a **`pie` type to the chart module**
-  (pure, and therefore assertable — the module exists for exactly this), or a
-  `conic-gradient` div like the per-day bar in `SpendPanel` (three lines, nothing
-  to check). Prefer the first: the slices have to be *right*, and a gradient has no
-  way to be wrong out loud.
-- **Test**: a Rust test with hand-built rows across both kinds, asserting the
-  sections sum to the report's own totals; if `pie` is added, a chart check that
-  the angles complete the circle and that an empty or single-slice breakdown does
-  not produce `NaN` — the same class of bug the flat-series axis produced in 2.6.
-- **Stop**: an input/output split is visible per section, and the slices sum to the
-  totals above them.
-- **Honest limit to keep**: cached input costs a fraction of fresh input. If the
-  split ever claims to explain the *bill*, it has to show cached tokens too; as a
-  picture of where the tokens went, two slices is what was asked for.
+### 2.9 [S] Spend, split: where the tokens went ✅
+- **Was**: the spend view answered *how much*, and only in money.
+- **The data is one more grouped query, not a new table**: `spend_report` gained
+  `sections: Vec<SectionTokens>` — the same `turn_usage` rows grouped by
+  `chats.kind` instead of by chat. The panel computes nothing; it draws what the
+  report says.
+- **The pie lives in `chart.ts`, as the plan hoped.** `type` gained `"pie"`, and
+  the legend loop was pulled out into one `legendRows` helper because a pie's
+  entries are its slices rather than its series. Two shapes had to be spelled out
+  because a path cannot draw either: one non-zero slice is the **whole circle**
+  (an arc from a point back to itself is nothing), and all-zero is a **ring**
+  rather than an empty frame. `parse` refuses the three pies that mean nothing —
+  more than one series, a negative slice, more than `MAX_SLICES` (8) slices — with
+  a message naming the reason, because those errors go back to the model.
+- **Test, and the one worth having**: `chart.check.ts` asserts a quarter-turn
+  geometrically — four equal values, so the first slice must end *due right of the
+  centre, level with it*. That single assertion fails if the angles are not the
+  values, if the sweep is anticlockwise, or if the radius is not the radius. Plus:
+  a single slice is a circle and not a path, an all-zero pie has no slices and no
+  `NaN`, a zero-valued slice keeps its `(0.0%)` entry, a label cannot become
+  markup, and the pie sits inside the frame. On the Rust side,
+  `the_sections_are_a_split_of_the_totals_rather_than_a_second_story` asserts the
+  sections **are** the report's own totals and that coding is the input-heavy half
+  — which is the whole reason the split is worth showing.
+- **Drawing it twice would have been the bug**: `ChartImage` is now the one place
+  that knows a chart goes on a white card (the palette is chosen against white),
+  and `ToolCallCard` uses it too.
+- **Telling the model**: `chart`'s schema description and the
+  `# Writing something to keep` prompt section now say `bar`, `line` or `pie`, and
+  that a pie is a breakdown — one series, no negatives.
+- **Stop**: an input/output split is visible per section, and the slices sum to
+  the totals above them.
+- **Honest limit, in the README and under the pies**: prompt and completion are
+  billed at different rates and cached input at a fraction of fresh, so this is
+  where the tokens went rather than what each part cost.
 
 ---
 

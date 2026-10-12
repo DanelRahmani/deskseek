@@ -577,7 +577,23 @@ export interface ChatSpend {
 }
 
 /**
- * What a window of turns cost, grouped the three ways the panel shows it. One
+ * One section's share of the tokens.
+ *
+ * The two kinds behave differently: a coding chat reading files burns input, a
+ * conversation burns output — the same total, a different problem, and only one
+ * of them is fixed by a cheaper prompt. Together the sections *are* the report's
+ * own totals, which is what lets the panel draw them as slices of it.
+ */
+export interface SectionTokens {
+  /** `chat` | `coding` */
+  kind: string;
+  turns: number;
+  promptTokens: number;
+  completionTokens: number;
+}
+
+/**
+ * What a window of turns cost, grouped the four ways the panel shows it. One
  * shape for one round trip, so the panel cannot show a total from one moment and
  * a breakdown from another.
  */
@@ -593,6 +609,7 @@ export interface SpendReport {
   /** Dearest first. */
   models: ModelSpend[];
   chats: ChatSpend[];
+  sections: SectionTokens[];
 }
 
 /**

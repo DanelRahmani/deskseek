@@ -1994,6 +1994,19 @@ pub struct ChatSpend {
     pub turns: i64,
 }
 
+/// One section's share of the tokens, split into the two kinds that behave
+/// differently: a coding chat reading files burns input, a conversation burns
+/// output.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionTokens {
+    /// `chat` | `coding`
+    pub kind: String,
+    pub turns: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+}
+
 /// Everything the spend panel shows, in one round trip.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2009,6 +2022,9 @@ pub struct SpendReport {
     /// Most expensive first.
     pub models: Vec<ModelSpend>,
     pub chats: Vec<ChatSpend>,
+    /// By section, and together they *are* the totals above — which is the whole
+    /// reason the panel can draw them as slices.
+    pub sections: Vec<SectionTokens>,
 }
 
 /// Spend since `since`, grouped the three ways the panel asks for it.
@@ -2079,6 +2095,28 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
         rows.collect::<rusqlite::Result<Vec<_>>>()?
     };
 
+    let sections = {
+        // The same rows grouped by the section the chat belongs to. Money answers
+        // "how much"; this answers "where did it go", which is the half of the
+        // bill a cheaper prompt can actually change.
+        let mut stmt = conn.prepare(
+            "SELECT c.kind, COUNT(*), COALESCE(SUM(t.prompt_tokens), 0),
+                    COALESCE(SUM(t.completion_tokens), 0)
+             FROM turn_usage t JOIN chats c ON c.id = t.chat_id
+             WHERE t.created_at >= ?1
+             GROUP BY c.kind ORDER BY c.kind",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(SectionTokens {
+                kind: r.get(0)?,
+                turns: r.get(1)?,
+                prompt_tokens: r.get(2)?,
+                completion_tokens: r.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
     Ok(SpendReport {
         since,
         total_usd,
@@ -2088,6 +2126,7 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
         days,
         models,
         chats,
+        sections,
     })
 }
 
@@ -3120,6 +3159,12 @@ mod tests {
                 cost_usd: 1.25,
                 turns: 3,
             }],
+            sections: vec![SectionTokens {
+                kind: "coding".into(),
+                turns: 3,
+                prompt_tokens: 900,
+                completion_tokens: 60,
+            }],
         };
 
         let value = serde_json::to_value(&report).unwrap();
@@ -3128,7 +3173,64 @@ mod tests {
         assert_eq!(value["promptTokens"], serde_json::json!(900));
         assert_eq!(value["days"][0]["costUsd"], serde_json::json!(1.25));
         assert_eq!(value["chats"][0]["chatId"], serde_json::json!("chat-1"));
+        assert_eq!(value["sections"][0]["promptTokens"], serde_json::json!(900));
         assert_camel_case_keys(&value, "report");
+    }
+
+    #[test]
+    fn the_sections_are_a_split_of_the_totals_rather_than_a_second_story() {
+        let conn = mem();
+        let coding = create_chat(&conn, "coding", Some("/repo"), "m", true, "high", "manual").unwrap();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+
+        // One-off rows with round numbers, so every expectation below is a sum of
+        // literals rather than a restatement of the recurrence rules.
+        let turn = |chat_id: &str, prompt: u32, completion: u32| {
+            record_turn_usage(
+                &conn,
+                chat_id,
+                &uuid::Uuid::new_v4().to_string(),
+                &TurnUsage {
+                    model: "m",
+                    prompt_tokens: prompt,
+                    completion_tokens: completion,
+                    cache_hit_tokens: 0,
+                    cache_miss_tokens: 0,
+                    cost_usd: 0.5,
+                },
+            )
+            .unwrap();
+        };
+        turn(&coding.id, 900, 100);
+        turn(&coding.id, 900, 100);
+        turn(&chat.id, 200, 400);
+
+        let report = spend_report(&conn, 0, 10).unwrap();
+        assert_eq!(report.prompt_tokens, 2000);
+        assert_eq!(report.completion_tokens, 600);
+        assert_eq!(report.turns, 3);
+
+        let coding_row = report.sections.iter().find(|s| s.kind == "coding").expect("a coding group");
+        let chat_row = report.sections.iter().find(|s| s.kind == "chat").expect("a chat group");
+        assert_eq!((coding_row.turns, coding_row.prompt_tokens, coding_row.completion_tokens), (2, 1800, 200));
+        assert_eq!((chat_row.turns, chat_row.prompt_tokens, chat_row.completion_tokens), (1, 200, 400));
+        // Coding is the input-heavy half and a conversation the output-heavy one —
+        // the reason the split is worth showing at all.
+        assert!(coding_row.prompt_tokens > chat_row.prompt_tokens);
+        assert!(chat_row.completion_tokens > coding_row.completion_tokens);
+
+        // The panel draws these as slices of the totals above them, so they have
+        // to *be* the totals — the same rule that keeps `spend_report` and the
+        // sidebar agreeing.
+        assert_eq!(
+            report.sections.iter().map(|s| s.prompt_tokens).sum::<i64>(),
+            report.prompt_tokens,
+        );
+        assert_eq!(
+            report.sections.iter().map(|s| s.completion_tokens).sum::<i64>(),
+            report.completion_tokens,
+        );
+        assert_eq!(report.sections.iter().map(|s| s.turns).sum::<i64>(), report.turns);
     }
 
     #[test]

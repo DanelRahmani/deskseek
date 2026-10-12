@@ -212,11 +212,15 @@ Both sections are functional:
 - **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
   real usage as every turn ends
 - **Spend** (*Spend* in the sidebar, or `/spend`) — the same figures over a window: the total,
-  then a bar per day, then the same money by model and by conversation. One row is written per
-  **turn**, added to as the run goes, so a turn you stopped half-way still appears for what it
-  really spent — which is also what makes this agree with the per-chat totals rather than
-  telling a second, quieter story. It is deliberately a list and not a chart, and the prices are
-  the published rates for the model and the hour, so treat it as an estimate of your bill
+  then a pie of **where the tokens went** per section, then a bar per day, then the same money by
+  model and by conversation. One row is written per **turn**, added to as the run goes, so a turn
+  you stopped half-way still appears for what it really spent — which is also what makes this
+  agree with the per-chat totals rather than telling a second, quieter story. The split is the
+  half of the page that is not a bill: a coding chat that reads a lot of files burns **input** and
+  a conversation burns **output**, same total, different problem. Honest limit: prompt and
+  completion are billed at different rates and cached input at a fraction of fresh, so the pies
+  are a picture of where the tokens went rather than what each part cost. The prices are the
+  published rates for the model and the hour, so treat the money as an estimate of your bill
 - **A spend limit** — *Stop a run after spending* in **Settings → Models & prompt** (0 is off)
   ends a run between steps once its cost crosses the figure, and says so in the chat rather than
   going quiet. It is checked between rounds, so a long loop of tool calls cannot slip past it
@@ -485,7 +489,7 @@ forgotten:
 | --- | --- |
 | `html` | A sandboxed frame, rendered live |
 | `svg` / `mermaid` | The diagram, drawn and centred on white |
-| `chart` | A bar or line chart, drawn from the numbers you send |
+| `chart` | A bar, line or pie chart, drawn from the numbers you send |
 | `markdown` | The normal Markdown renderer |
 | `code` | Monospace, read-only |
 
@@ -497,13 +501,21 @@ tool card in the chat names what was published, and the live panel is where the 
 
 A `chart` artifact takes **data, not markup**: the content is a small JSON spec —
 `{"type":"bar","labels":["Jan","Feb"],"series":[{"name":"Sales","values":[10,40]}]}` — and the
-app draws the bars or the line. That is deliberate. A model asked to hand-write SVG for a plot
-produces a picture that is subtly wrong and impossible to check by looking; a spec either has one
-value per label or it says it does not. `type` is `bar` or `line`, up to eight series, and the
-tool result names what to fix when a shape is wrong. A chart that still cannot be drawn shows the
-reason and the JSON in the panel rather than an empty frame. A chart is also **drawn in the
-conversation itself**, inside the tool card that published it — the card has the numbers it sent,
-so the picture is there without a click and without the panel having to be open.
+app draws the bars, the line or the pie. That is deliberate. A model asked to hand-write SVG for
+a plot produces a picture that is subtly wrong and impossible to check by looking; a spec either
+has one value per label or it says it does not. `type` is `bar`, `line` or `pie`, up to eight
+series, and the tool result names what to fix when a shape is wrong. A **pie** is one series
+divided between the labels — a breakdown rather than a series over time — so it takes exactly one
+series, no negative values, and at most eight slices; its arcs are computed from the same sum the
+legend prints its percentages from, so the numbers and the picture cannot disagree. A chart that
+still cannot be drawn shows the reason and the JSON in the panel rather than an empty frame. A
+chart is also **drawn in the conversation itself**, inside the tool card that published it — the
+card has the numbers it sent, so the picture is there without a click and without the panel
+having to be open.
+
+**Honest limit of the drawing code**: it is bars, lines and pies on a linear axis, with no
+stacking, no log scale and no smoothing. The legend spaces its entries by an estimated character
+width, so a very long name can overrun the next swatch.
 
 **Maths** renders as LaTeX wherever Markdown does — in the chat and in a `markdown` artifact.
 Write `$…$` for inline and `$$…$$` for a displayed equation. It is the model's own LaTeX, drawn by
@@ -699,8 +711,8 @@ cd src-tauri && cargo test
 pane rules in `src/lib/shell.ts`; the task-list reader in `src/lib/tasks.ts`, which parses
 arguments the model wrote and must therefore survive every malformed shape it can produce; the
 artifact and document readers; the chart contract in `src/lib/chart.ts`, so a bar's height cannot
-silently stop matching its value and a label cannot become markup; and the shortcut map in
-`src/lib/shortcuts.ts`, so a chord cannot
+silently stop matching its value, a pie's slice cannot stop matching its share, and a label cannot
+become markup; and the shortcut map in `src/lib/shortcuts.ts`, so a chord cannot
 silently fire for the wrong key or stop firing for the right one.
 
 Before a release, `npm run tauri build` produces the installers (Windows NSIS + MSI, macOS

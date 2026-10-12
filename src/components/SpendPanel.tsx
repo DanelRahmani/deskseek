@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import { chartSvg } from "../lib/chart";
+import { ChartImage } from "./ChartImage";
 import { IconButton } from "./Icon";
-import type { SpendReport } from "../types";
+import type { SectionTokens, SpendReport } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -70,6 +72,38 @@ function Row({
     >
       {body}
     </button>
+  );
+}
+
+/**
+ * One section's tokens as a pie of input against output.
+ *
+ * Drawn by `chart.ts` rather than with a `conic-gradient`: the slices have to add
+ * up to the totals printed above them, and a gradient has no way to be wrong out
+ * loud. Nothing is computed here — these are the report's own numbers.
+ */
+function SectionPie({ section }: { section: SectionTokens }) {
+  const name = section.kind === "coding" ? "Coding" : "Chatting";
+  const drawn = chartSvg(
+    JSON.stringify({
+      type: "pie",
+      labels: ["Input", "Output"],
+      series: [{ name: "tokens", values: [section.promptTokens, section.completionTokens] }],
+    }),
+  );
+  return (
+    <div className="px-2 py-1">
+      <div className="flex items-center gap-2 text-[12px]">
+        <span className="min-w-0 flex-1 truncate text-neutral-400">{name}</span>
+        <span className="shrink-0 text-[10px] text-neutral-600">
+          {section.turns} turn{section.turns === 1 ? "" : "s"}
+        </span>
+        <span className="shrink-0 tabular-nums text-neutral-300">
+          {tokens(section.promptTokens + section.completionTokens)}
+        </span>
+      </div>
+      {"svg" in drawn && <ChartImage svg={drawn.svg} className="mt-1" />}
+    </div>
   );
 }
 
@@ -159,6 +193,20 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                 {tokens(report.promptTokens)} in · {tokens(report.completionTokens)} out
               </p>
             </div>
+
+            <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
+              Where the tokens went
+            </h3>
+            <div className="mt-1">
+              {report.sections.map((section) => (
+                <SectionPie key={section.kind} section={section} />
+              ))}
+            </div>
+            <p className="mt-2 px-2 text-[11px] leading-relaxed text-neutral-600">
+              Input and output are billed at different rates, and cached input at a fraction of
+              fresh — so this is where the tokens went, not what each part cost. The figure at the
+              top is the bill.
+            </p>
 
             <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
               By day
