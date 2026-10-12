@@ -570,9 +570,10 @@ disagree about what the document says. Four things are worth saying plainly:
 
 A component that throws would leave a blank window and nothing to go on, so the app renders on top
 of an error boundary: what failed, a stack you can copy, and two ways back — *Try again*, which
-re-renders, and *Reload the window*. It is honest about being a report rather than a fix, and about
-one limit: whatever was half-typed in the composer is in the tree it replaces, so it does not
-survive a crash.
+re-renders, and *Reload the window*. It is honest about being a report rather than a fix. The
+composer is the exception it protects: a half-typed message is mirrored into `sessionStorage`, so
+it comes back after *Try again* and after a reload. You can produce a crash on purpose to see the
+screen — `localStorage.setItem("deskseek.crash", "1")`, then reload.
 
 **Connectors (MCP servers)**
 

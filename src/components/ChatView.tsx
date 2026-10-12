@@ -12,6 +12,7 @@ import type {
   QuestionEvent,
   ToolRun,
 } from "../types";
+import { loadDraft, saveDraft } from "../lib/draft";
 import { tasksFrom } from "../lib/tasks";
 import { buildTranscript } from "../lib/transcript";
 import { CopyButton, Markdown } from "./Markdown";
@@ -191,7 +192,13 @@ export function ChatView({
   prompts,
   insert,
 }: Props) {
-  const [draft, setDraft] = useState("");
+  // Seeded from sessionStorage, not "", so a render throw — which unmounts this
+  // whole tree — does not take a half-typed message with it. See lib/draft.ts.
+  const [draft, setDraftState] = useState(() => loadDraft(chat?.id));
+  const setDraft = (text: string) => {
+    setDraftState(text);
+    saveDraft(chat?.id, text);
+  };
   const [cmdIndex, setCmdIndex] = useState(0);
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.

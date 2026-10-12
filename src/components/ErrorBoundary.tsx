@@ -21,10 +21,11 @@ interface State {
  * one class component and turns that into a readable screen: the message, what
  * threw, and a way back.
  *
- * ponytail: it does not preserve in-progress state, because a half-typed prompt
- * lives in the tree it replaces. *Try again* re-renders the app, which is enough
- * to recover from a bad payload that has since changed; keeping the draft means
- * lifting it above the boundary, which is worth doing only if this recurs.
+ * The one thing it *cannot* preserve is state in the tree it replaces — which
+ * is why the composer draft is mirrored into sessionStorage (`lib/draft.ts`)
+ * and comes back on remount. A crash can be produced on demand for a manual
+ * check: set `deskseek.crash` in localStorage and reload; App throws once,
+ * self-clearing, so *Try again* recovers.
  */
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null, where: "" };

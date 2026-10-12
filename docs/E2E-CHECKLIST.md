@@ -237,10 +237,14 @@ Tick a box only when the result matches. If something fails, note the step numbe
 
 ## Robustness
 
-- [ ] A render error shows the error screen — the message, a copyable stack, *Try again* and
-      *Reload the window* — and never a blank window. Nothing forces one today, so this is checked
-      whenever a bug happens to throw: a **blank window is a failure**, an error screen is a pass
-- [ ] *Try again* re-renders and recovers; *Reload the window* reloads from disk
+- [ ] Open devtools, run `localStorage.setItem("deskseek.crash", "1")`, then reload: an error
+      screen appears — the message, a copyable stack, *Try again* and *Reload the window* — and
+      never a blank window
+- [ ] Type a half-finished message, trigger the crash above, then *Try again*: the app comes back
+      and the message is still in the composer
+- [ ] *Try again* re-renders and recovers; *Reload the window* reloads from disk with the draft
+      still there
+- [ ] If a bug throws anywhere else, the same screen appears — a **blank window is a failure**
 
 ## Maths
 

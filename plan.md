@@ -433,20 +433,27 @@ Ordered by how often the author would actually reach for it.
 
 ## Phase 3 — Trust and robustness
 
-### 3.1 [S] React error boundary and a crash surface
+### 3.1 [S] React error boundary and a crash surface ✅
 - **Why**: the app has no boundary; a render throw is a blank window with a lost
   draft.
 - **Do**: one boundary at the app root that keeps the composer draft, shows what
   failed, and offers *Reload*. Reuse the existing error copy voice.
 - **Test**: a temporary throw behind a dev flag, then an E2E checklist line.
 - **Stop**: a thrown component leaves a readable screen and an intact draft.
-- **Pulled forward and partly done (2026-10-12)**: 2.1's panel blanked the window
+- **Pulled forward and now complete (2026-10-12)**: 2.1's panel blanked the window
   the first time it was opened, so the boundary could not wait. `ErrorBoundary`
   wraps `<App/>` in `main.tsx`: the message, React's component stack, *Try again*
-  (a re-render), *Reload the window*, and copy. **The draft half is not done** —
-  the prompt lives in the tree the boundary replaces — and neither is the plan's
-  own test, so nothing in the gate *forces* the screen. The Stop condition is
-  therefore not met: the boundary is armed, not proven.
+  (a re-render), *Reload the window*, and copy.
+- **The draft half is now done.** A half-typed message is mirrored into
+  `sessionStorage` by `src/lib/draft.ts` (`loadDraft`/`saveDraft`, tolerant of an
+  unavailable store, keyed per chat so two panes cannot overwrite each other) and
+  `ChatView` seeds its composer from it — so the draft comes back after *Try
+  again* and after a reload, which is the one piece of state the boundary cannot
+  preserve because it lives in the tree the boundary replaces.
+- **The screen is now forcible**: App throws once if `deskseek.crash` is set in
+  `localStorage`, self-clearing so *Try again* recovers. That is the plan's "dev
+  flag", and `docs/E2E-CHECKLIST.md` walks it (crash → screen → *Try again* →
+  draft intact).
 
 ### 3.2 [M] Interrupted-run recovery
 - **Why**: a crash or a kill mid-run leaves a chat with a half-written turn and no

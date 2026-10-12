@@ -107,6 +107,14 @@ const HELP =
   "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /prompts · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
 
 export default function App() {
+  // A crash on demand, so the error boundary can be eyeballed without editing
+  // code: `localStorage.setItem("deskseek.crash", "1")` then reload. It clears
+  // itself, so *Try again* recovers and the draft-preservation check is real.
+  if (localStorage.getItem("deskseek.crash")) {
+    localStorage.removeItem("deskseek.crash");
+    throw new Error("Deliberate crash: deskseek.crash was set.");
+  }
+
   const [settings, setSettings] = useState<Settings | null>(null);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [keyMask, setKeyMask] = useState<string | null>(null);
