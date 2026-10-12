@@ -245,6 +245,13 @@ Tick a box only when the result matches. If something fails, note the step numbe
 - [ ] *Try again* re-renders and recovers; *Reload the window* reloads from disk with the draft
       still there
 - [ ] If a bug throws anywhere else, the same screen appears — a **blank window is a failure**
+- [ ] Send a message in a coding chat, then kill the app from Task Manager while the run is
+      working, and reopen: that chat shows the **interrupted** banner
+- [ ] On a run that changed files, the banner also offers *Put its files back*, which restores
+      them; on one that never touched a file, that button is absent
+- [ ] *Ask again* re-runs the turn and the banner goes; the chat keeps working afterwards (the
+      half-finished tail is dropped rather than left in the history)
+- [ ] *Dismiss* clears the banner without re-running, and it does not come back on the next launch
 
 ## Maths
 

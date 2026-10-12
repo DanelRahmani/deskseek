@@ -466,6 +466,19 @@ export type ParkedRequest =
   | (ParkedBase & { kind: "approval"; payload: ApprovalEvent })
   | (ParkedBase & { kind: "question"; payload: QuestionEvent });
 
+/**
+ * A turn the previous session left in flight. Read once at startup: the marker
+ * exists for exactly as long as a run does, so anything found here belongs to a
+ * process that died mid-turn and never got to clear it.
+ */
+export interface InterruptedRun {
+  chatId: string;
+  runId: string;
+  startedAt: number;
+  /** True when that run left file pre-images, so *Put its files back* would do something. */
+  canRewind: boolean;
+}
+
 /** One row of the project tree. */
 export interface TreeEntry {
   name: string;

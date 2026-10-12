@@ -455,13 +455,40 @@ Ordered by how often the author would actually reach for it.
   flag", and `docs/E2E-CHECKLIST.md` walks it (crash → screen → *Try again* →
   draft intact).
 
-### 3.2 [M] Interrupted-run recovery
+### 3.2 [M] Interrupted-run recovery ✅
 - **Why**: a crash or a kill mid-run leaves a chat with a half-written turn and no
   marker.
 - **Do**: on open, mark runs with no completion; offer *Retry* / *Rewind* for that
   run. Reuses `runs.rs` and `file_checkpoints`, no new table.
 - **Test**: a DB fixture with an unfinished run is detected on open.
 - **Stop**: after a hard kill, reopening says what was in flight.
+- **Done (2026-10-12).** The plan's "no new table" did not survive contact: a
+  marker column on `chats` would have to be threaded through every chat SELECT,
+  `ChatRow`, the wire payload and `duplicate_chat` (where a copy would inherit the
+  marker and look interrupted) — more surface than it is worth. The marker is its
+  own tiny table instead: **`in_flight_runs (chat_id PRIMARY KEY, run_id,
+  started_at)`**, one row per chat, matching `runs.rs`'s "one live run per chat".
+  A new table needs no `ALTER`, so nothing else had to change.
+- **Written and cleared in one place**: `commands::run_turn` wraps
+  `runs.begin` → `db::mark_run_started` → `agent::run` → `runs.finish` →
+  `db::mark_run_ended`, and both run sites (`send_message`/`start_turn` and
+  `resend_last_turn`) go through it. Every ending clears the marker — finished,
+  stopped, errored — so only a process that *died* leaves one behind. To make the
+  marker's `run_id` the same id the checkpoints and `turn_usage` use,
+  `agent::run` now takes it from the caller instead of minting its own.
+- **`interrupted_runs()`** returns what is left, newest first, with `canRewind`
+  (does this exact run have pre-images). Read once at startup, which is the only
+  moment it is meaningful: while a run is live the marker is *supposed* to be
+  there.
+- **UI**: `ChatView` shows an amber banner for an interrupted chat — *Ask again*
+  (which is also the repair: the history ends on a tool call with no result, and
+  `resend_last_turn` drops that tail before it re-runs, so the chat is usable
+  again), *Put its files back* only when `canRewind`, and *Dismiss*. The banner is
+  re-read from the backend after an action rather than assumed away, so a repair
+  that failed to start leaves the banner up instead of lying.
+- **Tests**: the marker round trip (started → visible, ended → gone), `canRewind`
+  keyed to the run rather than the chat, and a second run replacing the first
+  marker instead of stacking.
 
 ### 3.3 [M] Back up and restore the whole profile
 - **Why**: `backup_config` covers settings + `mcp.json` only (and deliberately

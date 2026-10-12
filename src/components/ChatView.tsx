@@ -5,6 +5,7 @@ import type {
   Attachment,
   ChatRow,
   DoneEvent,
+  InterruptedRun,
   MessageRow,
   ModelInfo,
   PermissionMode,
@@ -42,6 +43,11 @@ interface Props {
   computerPaused: boolean;
   computerReason: string | null;
   onResumeComputer: () => void;
+  /** The turn a previous session left in flight here, if any. */
+  interrupted: InterruptedRun | null;
+  onRetryInterrupted: () => void;
+  onRewindInterrupted: () => void;
+  onDismissInterrupted: () => void;
   /** What the MCP servers offer. `ready: false` means discovery is still running. */
   mcp: { ready: boolean; toolCount: number; failedCount: number };
   onMcp: () => void;
@@ -169,6 +175,10 @@ export function ChatView({
   computerPaused,
   computerReason,
   onResumeComputer,
+  interrupted,
+  onRetryInterrupted,
+  onRewindInterrupted,
+  onDismissInterrupted,
   mcp,
   onMcp,
   contextTokens,
@@ -564,6 +574,40 @@ export function ChatView({
             className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
           >
             Start it again
+          </button>
+        </div>
+      )}
+
+      {/* A turn the last session left half-done. It is a real problem, not just
+          news: the history ends on a tool call with no result, which the next
+          request cannot be built from — so *Ask again* is the fix as well as the
+          retry. Shown only when the marker survived a restart, so a run that is
+          live right now never draws it. */}
+      {interrupted && (
+        <div className="mx-4 mb-2 flex flex-wrap items-center gap-3 rounded-lg border border-amber-900/60 bg-amber-950/40 px-3 py-2 text-xs text-amber-300">
+          <span className="flex-1">
+            The last turn here was interrupted — the app closed while it was still running.
+          </span>
+          <button
+            onClick={onRetryInterrupted}
+            className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
+          >
+            Ask again
+          </button>
+          {interrupted.canRewind && (
+            <button
+              onClick={onRewindInterrupted}
+              className="shrink-0 rounded border border-amber-800/60 px-2 py-0.5 transition hover:border-amber-700 hover:text-amber-200"
+              title="Put back the files that run changed, before trying again"
+            >
+              Put its files back
+            </button>
+          )}
+          <button
+            onClick={onDismissInterrupted}
+            className="shrink-0 rounded px-2 py-0.5 text-amber-400/80 transition hover:text-amber-200"
+          >
+            Dismiss
           </button>
         </div>
       )}

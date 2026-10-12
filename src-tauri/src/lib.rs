@@ -300,6 +300,8 @@ pub fn run() {
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,
+            commands::interrupted_runs,
+            commands::dismiss_interrupted,
             commands::list_scheduled,
             commands::create_scheduled,
             commands::update_scheduled,

@@ -265,6 +265,13 @@ Both sections are functional:
   undone. Two honest limits: a shell command that rewrites files is invisible to it (`npm run
   build` is not undone) — which is why every `run_command` card says so before it runs — and it
   says how many files it put back rather than claiming success
+- **An interrupted turn is reported, not left to rot.** A run writes a marker before it starts and
+  clears it however it ends — finished, stopped or errored — so a marker still there at launch
+  means the app was killed mid-turn. That chat opens with a banner: *Ask again* re-runs the turn
+  (which is also the repair, because the history ends on a tool call with no result and the next
+  request cannot be built from that), *Put its files back* offers the rewind above when the run
+  had changed something, and *Dismiss* just clears it. Notices like this are read once at
+  startup; a turn running right now is never reported as interrupted
 
 **Approvals, permission modes and stopping a run**
 
@@ -738,7 +745,8 @@ src-tauri/src/
   store/                 SQLite schema, settings JSON, OS keychain, paths
   tools/                 built-in tools, path sandbox, process runner, permission guard
   mcp/                   MCP client (rmcp) and server config
-  runs.rs                in-flight run registry + cancel handles
+  runs.rs                in-flight run registry + cancel handles (the durable
+                         marker a killed run leaves behind is db::in_flight_runs)
   schedule.rs            when a recurring task next runs (pure local-time arithmetic)
   notify.rs              one place that decides whether a ping becomes an OS toast
   fs_watch.rs            workspace watcher, refcounted roots, coalesced events

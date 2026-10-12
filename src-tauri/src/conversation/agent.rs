@@ -1406,6 +1406,11 @@ async fn run_tool(
 
 /// Streams one turn to the end, running the tools it asks for.
 ///
+/// `run_id` names this run's file checkpoints and its `turn_usage` row. It is
+/// supplied by the caller rather than made here, because the durable in-flight
+/// marker (`db::mark_run_started`) is written next to `Runs::begin` and has to
+/// carry the same id — a second one here could not be matched to the run.
+///
 /// `unattended` marks a run started by the scheduler rather than by the user:
 /// it can still ask for approval, but it says so through a notification instead
 /// of waiting in silence.
@@ -1413,6 +1418,7 @@ pub async fn run(
     app: AppHandle,
     state: &AppState,
     chat_id: &str,
+    run_id: &str,
     cancel: Cancel,
     unattended: bool,
 ) -> Result<(), String> {
@@ -1438,9 +1444,6 @@ pub async fn run(
         &settings.sandbox_image,
     );
     let mut cost_total = 0.0f64;
-    // Names this run's file checkpoints, so "undo the last run" means this whole
-    // turn and not one round of it.
-    let run_id = uuid::Uuid::new_v4().to_string();
     let mut last_usage = None;
     let mut last_message_id = String::new();
     let mut last_finish: Option<String> = None;

@@ -24,6 +24,7 @@ import type {
   Attachment,
   ChatRow,
   DoneEvent,
+  InterruptedRun,
   MessageHit,
   MessageRow,
   ModelInfo,
@@ -170,6 +171,10 @@ export default function App() {
   // Chats that finished while they were not the one on screen. Not part of
   // `sessions`: it is about whether the user has *looked*, which outlives a turn.
   const [unread, setUnread] = useState<Record<string, boolean>>({});
+  // Turns the last session left in flight, by chat. Loaded once at startup: the
+  // marker only exists while a run does, so anything here is from a process that
+  // died mid-turn.
+  const [interrupted, setInterrupted] = useState<Record<string, InterruptedRun>>({});
   // Process-wide, not per chat: the kill switch stops everything, so one banner
   // in every pane is the truth rather than a per-chat guess.
   const [computer, setComputer] = useState<{ paused: boolean; reason: string | null }>({
@@ -243,24 +248,29 @@ export default function App() {
   // Startup only: load settings and every chat, then restore the saved shell.
   useEffect(() => {
     (async () => {
-      const [s, m, k, docs, chatList, codingList, paused, mcpStatus] = await Promise.all([
-        api.getSettings(),
-        api.listModels(),
-        api.maskedApiKey(),
-        api.documentsDir(),
-        api.listChats("chat"),
-        api.listChats("coding"),
-        // The hotkey may have been pressed before the window was listening.
-        api.computerState(),
-        // MCP may already have finished starting, in which case `mcp-ready` has
-        // been and gone; ask rather than wait forever for an event we missed.
-        api.mcpStatus(),
-      ]);
+      const [s, m, k, docs, chatList, codingList, paused, mcpStatus, interruptedRuns] =
+        await Promise.all([
+          api.getSettings(),
+          api.listModels(),
+          api.maskedApiKey(),
+          api.documentsDir(),
+          api.listChats("chat"),
+          api.listChats("coding"),
+          // The hotkey may have been pressed before the window was listening.
+          api.computerState(),
+          // MCP may already have finished starting, in which case `mcp-ready` has
+          // been and gone; ask rather than wait forever for an event we missed.
+          api.mcpStatus(),
+          // An interrupted turn is worth a banner, not a failed startup, so a
+          // read that goes wrong just means no banner.
+          api.interruptedRuns().catch(() => [] as InterruptedRun[]),
+        ]);
       setSettings(s);
       setModels(m);
       setKeyMask(k);
       setDocumentsDir(docs);
       setComputer({ paused, reason: paused ? "Computer control is stopped." : null });
+      setInterrupted(Object.fromEntries(interruptedRuns.map((r) => [r.chatId, r])));
       // A configured, enabled server that is neither running nor failed is still
       // starting. Anything else means discovery is over, event or no event.
       setMcp({
@@ -1172,6 +1182,54 @@ export default function App() {
   }, [loadMessages]);
 
   /**
+   * A turn the last session left half-done. Two ways to put it right, and both
+   * end by re-reading the markers rather than assuming: *Ask again* runs the turn
+   * through the normal path (which drops the dangling tool calls a killed run
+   * leaves, so the chat is usable again), and *Put its files back* is the
+   * existing rewind. A second read is what clears the banner honestly — if the
+   * action failed before the run started, the marker is still there and the
+   * banner stays rather than lying about it.
+   */
+  const refreshInterrupted = useCallback(async () => {
+    try {
+      const runs = await api.interruptedRuns();
+      setInterrupted(Object.fromEntries(runs.map((r) => [r.chatId, r])));
+    } catch {
+      // A banner is not worth an error of its own; the next launch re-reads it.
+    }
+  }, []);
+
+  const retryInterrupted = useCallback(
+    async (chatId: string) => {
+      await resend(chatId, null);
+      await refreshInterrupted();
+    },
+    [resend, refreshInterrupted],
+  );
+
+  const rewindInterrupted = useCallback(
+    async (chatId: string) => {
+      await rewind(chatId);
+      await refreshInterrupted();
+    },
+    [rewind, refreshInterrupted],
+  );
+
+  const dismissInterrupted = useCallback(async (chatId: string) => {
+    setInterrupted((prev) => {
+      if (!(chatId in prev)) return prev;
+      const next = { ...prev };
+      delete next[chatId];
+      return next;
+    });
+    try {
+      await api.dismissInterrupted(chatId);
+    } catch {
+      // The banner is gone; a row that survived only reappears next launch.
+    }
+  }, []);
+
+  /**
    * Swap back the answer a resend replaced. No model call and no busy state: both
    * answers are already recorded, so this is a reload of what is on screen.
    */
@@ -1548,6 +1606,10 @@ export default function App() {
                     computerPaused={computer.paused}
                     computerReason={computer.reason}
                     onResumeComputer={() => api.setComputerPaused(false)}
+                    interrupted={id ? (interrupted[id] ?? null) : null}
+                    onRetryInterrupted={() => id && void retryInterrupted(id)}
+                    onRewindInterrupted={() => id && void rewindInterrupted(id)}
+                    onDismissInterrupted={() => id && void dismissInterrupted(id)}
                     mcp={mcp}
                     onMcp={() => openCustomise("connectors")}
                     contextTokens={id ? tokensFor(id) : 0}

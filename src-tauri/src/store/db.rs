@@ -212,6 +212,19 @@ CREATE TABLE IF NOT EXISTS file_checkpoints (
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_chat ON file_checkpoints(chat_id, created_at);
 
+-- The run a chat has in flight right now, if any. `runs.rs` holds the same fact
+-- in memory so the stop button has something to pull, but memory dies with the
+-- process — a build that is killed mid-run would otherwise leave no trace of
+-- what it was doing. This row is that trace: written when a run starts, deleted
+-- when it ends however it ends (finished, stopped, errored), so a row still
+-- there at startup is a turn that never got to close. One row per chat, matching
+-- `runs.rs`'s "one live run per chat".
+CREATE TABLE IF NOT EXISTS in_flight_runs (
+    chat_id    TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+    run_id     TEXT NOT NULL,
+    started_at INTEGER NOT NULL
+);
+
 -- What one turn cost. `chats.cost_usd` is a running total with no dates, and a
 -- usage column on `messages` would be one row per API round rather than per
 -- turn, so neither can answer "what did this cost me this month".
@@ -1908,6 +1921,70 @@ pub fn rewind_last_run(conn: &Connection, chat_id: &str) -> Result<Vec<String>, 
     Ok(restored)
 }
 
+// --------------------------------------------------------- in-flight runs
+
+/// Records that a run has started for `chat_id`.
+///
+/// Deliberately not inside `runs.rs`: that registry is in memory, and the whole
+/// point of this row is to outlive the process. It is written next to
+/// `Runs::begin` and cleared next to `Runs::finish`, so the durable marker and
+/// the live one cannot disagree about which runs exist.
+pub fn mark_run_started(conn: &Connection, chat_id: &str, run_id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO in_flight_runs (chat_id, run_id, started_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(chat_id) DO UPDATE SET run_id = excluded.run_id, started_at = excluded.started_at",
+        params![chat_id, run_id, now_ts()],
+    )?;
+    Ok(())
+}
+
+/// Clears the marker. Every ending comes through here — a run that finished, one
+/// stopped, one that errored — because they all mean "not in flight any more".
+/// Only a process that died before reaching it leaves the row behind.
+pub fn mark_run_ended(conn: &Connection, chat_id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM in_flight_runs WHERE chat_id = ?1", [chat_id])?;
+    Ok(())
+}
+
+/// One run that was in flight when the process died.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InterruptedRun {
+    pub chat_id: String,
+    pub run_id: String,
+    pub started_at: i64,
+    /// Whether that run left file pre-images, so *Rewind* is offered only when it
+    /// would actually put something back.
+    pub can_rewind: bool,
+}
+
+/// The runs a previous process left in flight, newest first.
+///
+/// Meant to be read once at startup: while a run is live its marker is present
+/// on purpose, so asking later in the session would report the run the user is
+/// watching. Both actions the UI offers work off this: *Retry* re-sends the last
+/// user turn (which drops the dangling tool calls a killed run left), and
+/// *Rewind* is `rewind_last_run` over this chat.
+pub fn interrupted_runs(conn: &Connection) -> rusqlite::Result<Vec<InterruptedRun>> {
+    let mut stmt = conn.prepare(
+        "SELECT r.chat_id, r.run_id, r.started_at,
+                EXISTS (SELECT 1 FROM file_checkpoints c
+                        WHERE c.chat_id = r.chat_id AND c.run_id = r.run_id)
+         FROM in_flight_runs r
+         JOIN chats c ON c.id = r.chat_id
+         ORDER BY r.started_at DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(InterruptedRun {
+            chat_id: r.get(0)?,
+            run_id: r.get(1)?,
+            started_at: r.get(2)?,
+            can_rewind: r.get::<_, i64>(3)? != 0,
+        })
+    })?;
+    rows.collect()
+}
+
 // ------------------------------------------------------------ usage history
 
 /// One API round's usage, as the agent loop hands it over.
@@ -2463,6 +2540,52 @@ mod tests {
         // The run is spent, so a second rewind has nothing to do.
         assert!(rewind_last_run(&conn, &chat.id).unwrap().is_empty());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_run_in_flight_is_only_visible_until_it_ends() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
+            .unwrap();
+
+        assert!(interrupted_runs(&conn).unwrap().is_empty(), "nothing has run yet");
+
+        mark_run_started(&conn, &chat.id, "run-1").unwrap();
+        let found = interrupted_runs(&conn).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].chat_id, chat.id);
+        assert_eq!(found[0].run_id, "run-1");
+        assert!(!found[0].can_rewind, "this run touched no files");
+
+        // A run that ends clears its own marker, whichever way it ended.
+        mark_run_ended(&conn, &chat.id).unwrap();
+        assert!(interrupted_runs(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_interrupted_run_says_whether_rewinding_would_help() {
+        let conn = mem();
+        let chat = create_chat(&conn, "coding", Some("C:/proj"), "m", true, "high", "manual")
+            .unwrap();
+        mark_run_started(&conn, &chat.id, "run-1").unwrap();
+        // The checkpoint is keyed by the run, so a pre-image from a *different*
+        // run must not be mistaken for this one's.
+        record_checkpoint(&conn, &chat.id, "run-2", "C:/proj/other.rs", Some("x")).unwrap();
+        assert!(!interrupted_runs(&conn).unwrap()[0].can_rewind);
+
+        record_checkpoint(&conn, &chat.id, "run-1", "C:/proj/main.rs", Some("x")).unwrap();
+        assert!(interrupted_runs(&conn).unwrap()[0].can_rewind);
+    }
+
+    #[test]
+    fn a_second_run_replaces_the_first_marker_rather_than_stacking() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        mark_run_started(&conn, &chat.id, "run-1").unwrap();
+        mark_run_started(&conn, &chat.id, "run-2").unwrap();
+        let found = interrupted_runs(&conn).unwrap();
+        assert_eq!(found.len(), 1, "one row per chat, like the live registry");
+        assert_eq!(found[0].run_id, "run-2");
     }
 
     #[test]

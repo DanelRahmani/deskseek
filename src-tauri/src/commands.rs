@@ -265,10 +265,7 @@ pub async fn resend_last_turn(
 
     // This replaces a turn, so it registers a run exactly as send_message does:
     // one live run per chat, and it cancels any turn already in flight.
-    let (run_id, cancel) = state.runs.begin(&chat_id);
-    let result = agent::run(app, &state, &chat_id, cancel, false).await;
-    state.runs.finish(&chat_id, run_id);
-    result
+    run_turn(app, &state, &chat_id, false).await
 }
 
 /// Puts back the answer a resend replaced, and keeps the one it replaces.
@@ -1532,6 +1529,35 @@ pub fn spend_report(
 
 // --------------------------------------------------------------- messaging
 
+/// Runs one turn, keeping the live registry and the durable marker in step.
+///
+/// `runs.rs` is in memory, so it is the stop button's fact and nothing more —
+/// a process killed mid-turn leaves no trace of it. `in_flight_runs` is that
+/// trace: written before the run and cleared after it, however it ended
+/// (finished, stopped, errored). A kill never reaches the clear, and the row it
+/// leaves behind is what the next launch reports as an interrupted turn, so the
+/// two must be written together rather than in two places that could drift.
+async fn run_turn(
+    app: AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    unattended: bool,
+) -> Result<(), String> {
+    let run_id = uuid::Uuid::new_v4().to_string();
+    let (live, cancel) = state.runs.begin(chat_id);
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::mark_run_started(&conn, chat_id, &run_id);
+    }
+    let result = agent::run(app, state, chat_id, &run_id, cancel, unattended).await;
+    state.runs.finish(chat_id, live);
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::mark_run_ended(&conn, chat_id);
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
@@ -1604,9 +1630,7 @@ pub async fn start_turn(
     }
 
     // One live run per chat: registering cancels any turn already in flight.
-    let (run_id, cancel) = state.runs.begin(chat_id);
-    let result = agent::run(app.clone(), state, chat_id, cancel, unattended).await;
-    state.runs.finish(chat_id, run_id);
+    let result = run_turn(app.clone(), state, chat_id, unattended).await;
     // Tell someone who is not looking. `notify` decides whether that is a toast
     // at all; this only reports what happened.
     notify::turn_finished(&app, state, chat_id, result.is_err());
@@ -1623,6 +1647,24 @@ pub fn stop_chat(state: State<'_, AppState>, chat_id: String) -> bool {
 #[tauri::command]
 pub fn running_chats(state: State<'_, AppState>) -> Vec<String> {
     state.runs.running()
+}
+
+/// Turns a previous session left in flight, newest first.
+///
+/// Read once at startup, which is the only moment it means anything: while a run
+/// is live its marker is present on purpose, so a later read would report the
+/// run the user is already watching.
+#[tauri::command]
+pub fn interrupted_runs(state: State<'_, AppState>) -> Result<Vec<db::InterruptedRun>, String> {
+    let conn = state.db.lock().unwrap();
+    db::interrupted_runs(&conn).map_err(|e| e.to_string())
+}
+
+/// Stop treating a chat as interrupted, once the user has dealt with it.
+#[tauri::command]
+pub fn dismiss_interrupted(state: State<'_, AppState>, chat_id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::mark_run_ended(&conn, &chat_id).map_err(|e| e.to_string())
 }
 
 // --------------------------------------------------------------- scheduling

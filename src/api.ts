@@ -19,6 +19,7 @@ import type {
   FsEvent,
   GuardEvent,
   Instruction,
+  InterruptedRun,
   MemoryCategoryView,
   MemoryEntryView,
   MemoryProposal,
@@ -218,6 +219,9 @@ export const api = {
   /** Scheduled runs parked on an approval or a question, answerable from here. */
   listParked: () => invoke<ParkedRequest[]>("list_parked"),
   dismissParked: (id: string) => invoke<void>("dismiss_parked", { id }),
+  /** Turns a previous session left in flight — read once, at startup. */
+  interruptedRuns: () => invoke<InterruptedRun[]>("interrupted_runs"),
+  dismissInterrupted: (chatId: string) => invoke<void>("dismiss_interrupted", { chatId }),
   setProjectInstructions: (id: string, instructions: Instruction[]) =>
     invoke<void>("set_project_instructions", { id, instructions }),
   projectSpend: () => invoke<ProjectSpend[]>("project_spend"),
