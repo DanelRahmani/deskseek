@@ -624,3 +624,16 @@ the parts only a person can see.
 - [ ] A chat on an endpoint with one model, or on an unpriced model, never shows the line
 - [ ] The task form's model list shows each model's published rate, and says *rate unknown* for a
       model with none
+
+## Looking at the screen
+
+- [ ] With computer use on and a vision model in use, `ui_screenshot` sends a picture the model can
+      actually read — ask it to describe a detail that is only in the image, not in the tree
+- [ ] The same call on a text-only endpoint gets a result that names the window, its size and the
+      file, with no error and no refused request
+- [ ] The picture appears in the chat either way, and the full-size PNG is in the Appshots folder
+- [ ] A canvas or game window — one whose controls `ui_snapshot` cannot read — is described from
+      the screenshot rather than reported as empty
+- [ ] `browser_screenshot` names the page's scaled size in its result, and the model can describe
+      something that is only in the picture
+- [ ] With computer use off, `ui_screenshot` does not appear in the tool list at all

@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::api::client::StreamEvent;
 use crate::api::models;
-use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
+use crate::api::types::{Attachment, ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::{self, Decision};
 use crate::conversation::assemble::{build_messages, memory_block, system_with_memory, Turn};
 use crate::conversation::review;
@@ -452,6 +452,9 @@ You can read and operate the user's screen:\n\n\
 types, automation ids, and which are disabled), or of another window if you name part of its \
 title. It lists the open windows when the one you asked for is not there. Start here, and use it \
 again after you act.\n\
+- `ui_screenshot` — look at the window in front. Use it when `ui_snapshot` reports nothing useful, \
+which is what a canvas, a game, or an app that draws its own controls reports. The picture reaches \
+you only if the model you are running on can see images; the user is shown it either way.\n\
 - `ui_click` — press a control, by its `name` (part of it is enough) or its `id`. Buttons, menu \
 items, list items and tabs all work.\n\
 - `ui_type` — type into a field the same way, with optional `clear` to replace what is already \
@@ -1131,7 +1134,7 @@ async fn run_tool(
     plan: &sandbox_exec::Plan,
     run_id: &str,
     unattended: bool,
-) -> Result<String, String> {
+) -> Result<tools::ToolOutput, String> {
     // The automation browser is stateful and shared, so it is handled here
     // rather than being rebuilt per call. `browser_read` is the stateless
     // one-shot fetch and stays with the other internet tools.
@@ -1140,19 +1143,19 @@ async fn run_tool(
     }
 
     if tools::is_computer_tool(name) {
-        return desktop::execute(name, args, &state.computer).await;
+        return desktop::execute(app, state, chat_id, call_id, name, args).await;
     }
 
     if matches!(name, "fetch_url" | "browser_read" | "web_search") {
-        return run_browse_tool(state, name, args).await;
+        return run_browse_tool(state, name, args).await.map(Into::into);
     }
 
     if name.starts_with("mcp__") {
-        return state.mcp.read().await.call(name, args).await;
+        return state.mcp.read().await.call(name, args).await.map(Into::into);
     }
 
     if name == "search_history" {
-        return search_history(state, chat_id, args);
+        return search_history(state, chat_id, args).map(Into::into);
     }
 
     if name == "ask_user" {
@@ -1195,10 +1198,11 @@ async fn run_tool(
             let _ = db::forget_parked(&conn, &request_id);
         }
         if answer.cancelled {
-            return Ok("The user dismissed the question without answering. Do not ask it again — \
-                       carry on with the smallest sensible assumption, say which you took, and \
-                       continue."
-                .to_string());
+            return Ok(crate::tools::ToolOutput::text(
+            "The user dismissed the question without answering. Do not ask it again — \
+             carry on with the smallest sensible assumption, say which you took, and \
+             continue.",
+        ));
         }
         // Match each answer to its question by index, so a sparse reply still
         // lines up and a question with no answer is reported as such rather than
@@ -1229,7 +1233,7 @@ async fn run_tool(
             })
             .collect::<Vec<_>>()
             .join("\n");
-        return Ok(format!("The user answered:\n{lines}"));
+        return Ok(format!("The user answered:\n{lines}").into());
     }
 
     // Setting up a recurring task. Handled here rather than by an executor
@@ -1274,7 +1278,7 @@ async fn run_tool(
              has run yet, and nothing runs now — it is in the Scheduled panel, where they can \
              pause, edit or delete it.",
             row.title, row.id
-        ));
+        ).into());
     }
 
     if name == "save_memory" {
@@ -1312,7 +1316,7 @@ async fn run_tool(
                 "Added {} entr{} to the profile (MEMORY.md), which is sent with every request.",
                 draft.entries.len(),
                 if draft.entries.len() == 1 { "y" } else { "ies" }
-            ));
+            ).into());
         }
 
         let added = crate::memory_files::append(
@@ -1325,7 +1329,7 @@ async fn run_tool(
             "Kept {added} entr{} in the '{destination}' memory — looked up later when it is \
              relevant, not sent with every request.",
             if added == 1 { "y" } else { "ies" }
-        ));
+        ).into());
     }
 
     if name == "list_skills" {
@@ -1333,7 +1337,8 @@ async fn run_tool(
         if installed.is_empty() {
             return Ok("No skills are installed yet. The user can add one in /skills, or you can \
                        write one with `create_skill`."
-                .to_string());
+                .to_string()
+                .into());
         }
         let enabled = {
             let conn = state.db.lock().unwrap();
@@ -1356,7 +1361,7 @@ async fn run_tool(
         return Ok(format!(
             "Installed skills:\n{lines}\n\n`use_skill` with an id switches one on for this chat \
              and gives you its instructions."
-        ));
+        ).into());
     }
 
     if name == "use_skill" {
@@ -1395,7 +1400,7 @@ async fn run_tool(
         return Ok(format!(
             "\"{title}\" is on for this chat{}. Follow it from here on.\n\n# {kind}: {title}\n\n{body}",
             if already { " already" } else { "" }
-        ));
+        ).into());
     }
 
     if name == "create_skill" {
@@ -1442,7 +1447,7 @@ async fn run_tool(
              delete it in /skills.",
             draft.name,
             if switched { "switched it on" } else { "it was already on" }
-        ));
+        ).into());
     }
 
     if name == "create_design_system" {
@@ -1464,7 +1469,7 @@ async fn run_tool(
              you build UI here; the user can turn it off in Customise → Design systems.",
             draft.name,
             if switched { "switched it on" } else { "it was already on" }
-        ));
+        ).into());
     }
 
     if name == "draft_design_system" {
@@ -1498,7 +1503,7 @@ async fn run_tool(
              starting point, not a finished system: read it back, fill in the gaps, and revise it \
              with `create_design_system` and `replace: true`.",
             if switched { "switched it on" } else { "it was already on" }
-        ));
+        ).into());
     }
 
     if name == "notify_user" {
@@ -1515,7 +1520,7 @@ async fn run_tool(
         // The app decides whether this becomes an OS toast — when the window has
         // focus, it is already on screen — so the answer is the same either way.
         crate::notify::ping(app, state, Some(chat_id), &title, &message);
-        return Ok("The user has been notified.".to_string());
+        return Ok("The user has been notified.".to_string().into());
     }
 
     if name == "update_tasks" {
@@ -1535,7 +1540,7 @@ async fn run_tool(
             "Checklist updated: {} task{}, {done} done, {doing} in progress.",
             tasks.len(),
             if tasks.len() == 1 { "" } else { "s" }
-        ));
+        ).into());
     }
 
     if name == "artifact_create" {
@@ -1575,7 +1580,7 @@ async fn run_tool(
              To change it yourself, call artifact_create again with the same title and the full new \
              document — the older versions are kept.",
             detail.artifact.title, detail.artifact.current_version, detail.artifact.kind
-        ));
+        ).into());
     }
 
     if tools::docs::is_document_tool(name) {
@@ -1583,7 +1588,7 @@ async fn run_tool(
         // what this conversation is producing, and the file tree beside it shows
         // the same folder because both ask `workspace_for`.
         let browser = state.settings.lock().unwrap().browser_path.clone();
-        return docs::execute(name, args, ws, &browser).await;
+        return docs::execute(name, args, ws, &browser).await.map(Into::into);
     }
 
     // Before a run changes a file, its current content is recorded so the whole
@@ -1608,7 +1613,7 @@ async fn run_tool(
         }
     }
 
-    exec::execute(name, args, ws, cancel, plan).await
+    exec::execute(name, args, ws, cancel, plan).await.map(Into::into)
 }
 
 /// Streams one turn to the end, running the tools it asks for.
@@ -2095,7 +2100,7 @@ pub async fn run(
             };
 
             let (ok, text) = match &result {
-                Ok(text) => (true, text.clone()),
+                Ok(output) => (true, output.text.clone()),
                 Err(err) => (false, err.clone()),
             };
             let _ = app.emit(
@@ -2106,14 +2111,48 @@ pub async fn run(
                 }),
             );
 
-            let content = match result {
-                Ok(text) => text,
-                Err(err) => format!("Error: {err}"),
+            let (content, attachments) = match result {
+                Ok(output) => {
+                    // A tool that took a picture hands it over as an attachment on
+                    // the result — the same shape the user's own attachments use,
+                    // so nothing downstream needs a case for it: the message layer
+                    // already turns an image attachment into content parts, and a
+                    // model that cannot see already has the text by the one rule
+                    // that strips images.
+                    let attachments = output.image.and_then(|image| {
+                        let mime = crate::api::types::data_url_mime(&image.data_url);
+                        // The name follows the real type, so the chat shows a
+                        // `.jpg` that is a JPEG and a `.png` that is a PNG.
+                        let name = if mime.ends_with("jpeg") {
+                            "screenshot.jpg"
+                        } else {
+                            "screenshot.png"
+                        };
+                        serde_json::to_string(&vec![Attachment {
+                            name: name.to_string(),
+                            mime,
+                            data_url: image.data_url,
+                            text: image.note,
+                        }])
+                        .ok()
+                    });
+                    (output.text, attachments)
+                }
+                Err(err) => (format!("Error: {err}"), None),
             };
             {
                 let conn = state.db.lock().unwrap();
-                db::insert_message(&conn, chat_id, "tool", Some(&content), None, None, Some(&call.id), None)
-                    .map_err(|e| e.to_string())?;
+                db::insert_message(
+                    &conn,
+                    chat_id,
+                    "tool",
+                    Some(&content),
+                    None,
+                    None,
+                    Some(&call.id),
+                    attachments.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
             }
 
             // Stopped while a tool ran: record this result, then stop.

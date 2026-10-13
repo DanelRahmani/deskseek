@@ -189,8 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn shape_is_system_history_user() {
-        let msgs = build_messages("sys", &[assistant_with_reasoning()], Some("hello"), false);
+    fn shape_is_system_history_user() {        let msgs = build_messages("sys", &[assistant_with_reasoning()], Some("hello"), false);
         assert_eq!(msgs.len(), 3);
         assert_eq!(msgs[0].role, "system");
         assert_eq!(msgs[1].role, "assistant");
@@ -298,5 +297,37 @@ mod tests {
         };
         let msgs = build_messages("sys", &[turn], Some("hi"), true);
         assert_eq!(msgs[1].tool_calls.as_ref().unwrap()[0].function.name, "get_weather");
+    }
+
+    #[test]
+    fn a_tool_result_that_took_a_picture_carries_both_halves() {
+        // What `ui_screenshot` hands back: the text stays, and the picture rides
+        // beside it as an attachment. The pair is what makes a model that cannot
+        // see degrade to the text rather than to nothing — `provider::messages_for`
+        // is the rule that drops the image, and it needs the text to be there.
+        let turn = Turn {
+            role: "tool".to_string(),
+            content: Some("Photographed the window in front: \"Notepad\", 1920×1080px.".to_string()),
+            tool_call_id: Some("call_1".to_string()),
+            attachments: Some(vec![Attachment {
+                name: "screenshot.png".to_string(),
+                mime: "image/png".to_string(),
+                data_url: "data:image/png;base64,AAAA".to_string(),
+                text: "\"Notepad\", 1920×1080px, scaled to 960×540".to_string(),
+            }]),
+            ..Default::default()
+        };
+        let msgs = build_messages("sys", &[turn], None, true);
+        let tool = msgs.iter().find(|m| m.role == "tool").unwrap();
+        // The tool's own pairing survives, or the request is refused before the
+        // picture is even considered.
+        assert_eq!(tool.tool_call_id.as_deref(), Some("call_1"));
+        let parts = match tool.content.as_ref() {
+            Some(Content::Parts(parts)) => parts.clone(),
+            other => panic!("a tool result with a picture must be parts, got {other:?}"),
+        };
+        assert_eq!(parts.len(), 2, "a text part and an image part");
+        assert!(matches!(&parts[0], ContentPart::Text { text } if text.contains("Photographed")));
+        assert!(matches!(&parts[1], ContentPart::ImageUrl { image_url } if image_url.url.contains("base64")));
     }
 }

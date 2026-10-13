@@ -109,6 +109,69 @@ impl AgentMode {
     }
 }
 
+/// The longest side a picture is sent at.
+///
+/// A model reads a screenshot by its dimensions rather than by its bytes, and past
+/// roughly this size the tokens stop buying detail: the pixels are there and the
+/// model is no better at the text. 1080p is one step down, 4K is three. Shared by
+/// the desktop's downscale and the browser's capture scale, because the answer to
+/// "how big should this be" must not depend on which tool took the picture.
+pub const MODEL_MAX_SIDE: u32 = 1280;
+
+/// A picture a tool took, on its way to two readers.
+///
+/// Both halves matter and neither is optional: the tool's own text names the file
+/// the user can open to look properly, and the smaller `data:` copy is what the
+/// model is handed — the same shape an attachment uses, so the message layer needs
+/// no new case for it.
+pub struct ToolImage {
+    /// The smaller copy, as a `data:` URL.
+    pub data_url: String,
+    /// One line saying what was photographed, kept in the tool's own text so a
+    /// turn that cannot carry a picture still has something to read.
+    pub note: String,
+}
+
+/// What a tool gives back: the text the model reads, and any picture that goes
+/// with it.
+///
+/// A struct rather than a bare `String` because exactly one thing does not fit in
+/// a string. The alternative would be a second return channel beside the tool's
+/// own, which the loop would have to remember to join and which could outlive the
+/// call that made it.
+#[derive(Default)]
+pub struct ToolOutput {
+    pub text: String,
+    pub image: Option<ToolImage>,
+}
+
+impl ToolOutput {
+    pub fn text(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            image: None,
+        }
+    }
+
+    /// The same result with a picture attached.
+    pub fn with_image(mut self, image: ToolImage) -> Self {
+        self.image = Some(image);
+        self
+    }
+}
+
+impl From<String> for ToolOutput {
+    fn from(text: String) -> Self {
+        Self::text(text)
+    }
+}
+
+impl From<&str> for ToolOutput {
+    fn from(text: &str) -> Self {
+        Self::text(text)
+    }
+}
+
 /// Tools that only exist when the user has switched computer use on. Nothing
 /// else in the toolset starts with these prefixes.
 pub fn is_computer_tool(name: &str) -> bool {
@@ -1015,6 +1078,14 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "ui_screenshot",
+                "Look at the window that is in front on the user's desktop. Use it when ui_snapshot reports nothing useful — a canvas, a game, an app that draws its own controls. The picture reaches you only if the model you are running on can see; either way the user is shown it in the chat. The picture is of whatever has focus, so bring the window forward first.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
                 "ui_click",
                 "Press a control on the user's desktop — a button, a menu item, a list item — by its name or its automation id. Look with ui_snapshot first. The user approves each press unless the chat is in skip mode.",
                 params(
@@ -1252,7 +1323,7 @@ mod tests {
 
     #[test]
     fn desktop_tools_are_computer_class_and_must_be_switched_on() {
-        for name in ["ui_snapshot", "ui_click", "ui_type"] {
+        for name in ["ui_snapshot", "ui_screenshot", "ui_click", "ui_type"] {
             assert_eq!(class_of(name), ToolClass::Computer, "{name}");
             assert!(is_computer_tool(name), "{name} must follow the computer-use switch");
         }
@@ -1260,6 +1331,9 @@ mod tests {
         assert!(crate::tools::desktop::is_action("ui_click"));
         assert!(crate::tools::desktop::is_action("ui_type"));
         assert!(!crate::tools::desktop::is_action("ui_snapshot"));
+        // Looking at the screen is not acting on it: a screenshot is approved like
+        // every other computer call, but it changes nothing, so it is not budgeted.
+        assert!(!crate::tools::desktop::is_action("ui_screenshot"));
         // The gate must not catch anything that already existed.
         for name in ["read_file", "browser_open", "run_command", "fetch_url", "update_tasks"] {
             assert!(!is_computer_tool(name), "{name} must not follow the computer-use switch");

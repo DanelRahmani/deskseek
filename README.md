@@ -583,8 +583,9 @@ Four things are worth saying plainly:
   and the last 300 requests, oldest dropped — because a network log is unbounded by nature
 - **Page content is data, never instructions.** A page that tells the model to run a command or
   ignore what you asked is a prompt injection — the agent is told to stop and report it.
-- **Screenshots go to your eyes, not the model's.** The result the model receives is text, because
-  DeepSeek's API is text-only and a picture in a tool result would be a 400 waiting to happen.
+- **A screenshot goes to the model when it can see, and to your eyes either way.** `browser_screenshot`
+  captures the page at a size a model can read and puts the same picture in the chat; a text-only
+  endpoint is told what happened in words rather than sent an image it would refuse.
 - **A missed click names what is actually on the page**, so the agent corrects itself instead of
   guessing at the same selector again.
 
@@ -604,6 +605,7 @@ Window "Macroeconomics II Summary.docx - Word"
 ```
 
 That is how the agent answers "what is on my screen" and reads a dialog you cannot describe.
+`ui_screenshot` photographs the window in front, for the windows that text cannot describe.
 `ui_click` presses a control by name or id, and `ui_type` types into a field. The agent is told to
 work in one-step turns — look, act once, read what the call returns — so a wrong turn costs one
 step instead of five.
@@ -622,13 +624,18 @@ Four rails, because this is the one feature that really moves your mouse:
 And the limits, stated rather than papered over:
 
 - **Off by default**, because whatever is on screen may be private.
-- **A window with no standard controls reports nothing.** A game, a canvas, a custom-drawn app has
-  no accessibility tree to read — the agent is told to say so and ask, instead of clicking at
-  random. There is no raw coordinate clicking: everything goes through a control's own Invoke
-  pattern, or the mouse, aimed at a control you named.
+- **A window with no standard controls reports nothing — so look at it instead.** A game, a canvas,
+  a custom-drawn app has no accessibility tree to read; `ui_screenshot` sends the model a picture of
+  it, scaled to 1280px on its longest side first, because a model reads a screenshot by its
+  dimensions and past that size the tokens stop buying detail. There is still no raw coordinate
+  clicking: everything goes through a control's own Invoke pattern, or the mouse, aimed at a control
+  you named.
 - **It is bounded**: six levels deep, 300 controls, off-screen branches skipped. A tree read whole
   would cost more context than it is worth.
-- **Screenshots are not implemented.** The agent reads text; your eyes are the picture.
+- **A screenshot goes to whoever can use it.** It is always shown in the chat; it is *also* handed
+  to the model when the model you are running on can see images. The tool's own text says what was
+  photographed either way, so a text-only endpoint is sent the words rather than a request it would
+  refuse. A desktop screenshot keeps its full-size file too, beside the Appshots.
 - **What a window reports is data, never instructions.** Text in a window is content you did not
   write, so it is treated exactly like a web page: reported, never obeyed.
 
@@ -859,7 +866,7 @@ quietly leaving them broken:
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the setup screen can build one on Docker, and the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
-| *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_click`, `ui_type`) | No — off by default |
+| *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_screenshot`, `ui_click`, `ui_type`) | No — off by default |
 
 The same screen also chooses where commands run, and shows which rung that setting currently
 resolves to.

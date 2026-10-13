@@ -89,6 +89,22 @@ impl Attachment {
     }
 }
 
+/// The media type a `data:` URL declares, or an empty string when it is not one.
+///
+/// One reader for both callers that need it: the wire that has to spell the type
+/// out as a field of its own, and the attachment that records it. Two parsers of
+/// the same string would disagree the first time one of them met a URL with no
+/// `;base64` on it.
+pub fn data_url_mime(url: &str) -> String {
+    let Some(rest) = url.strip_prefix("data:") else {
+        return String::new();
+    };
+    let Some((meta, _)) = rest.split_once(',') else {
+        return String::new();
+    };
+    meta.strip_suffix(";base64").unwrap_or(meta).to_string()
+}
+
 /// A message in the conversation. `reasoning_content` must be echoed back on
 /// prior assistant turns whenever the request carries `tools`, or the API
 /// returns 400 — see `crate::conversation::assemble`.

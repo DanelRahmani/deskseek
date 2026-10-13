@@ -27,9 +27,13 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use serde_json::Value;
+use tauri::{AppHandle, Emitter};
 
 use super::exec::truncate;
+use super::{ToolImage, ToolOutput};
+use crate::AppState;
 
 /// Emitted whenever computer control is stopped or resumed, so the chat can say so.
 pub const EVENT_COMPUTER: &str = "computer-state";
@@ -216,10 +220,23 @@ impl Query {
 }
 
 /// Runs one desktop tool.
+///
+/// Takes the whole app state rather than only the gate, because one of these
+/// tools photographs the screen: that needs somewhere to file the picture and a
+/// window to put it in front of, which the gate alone cannot give it.
 #[cfg(windows)]
-pub async fn execute(name: &str, args: &Value, gate: &Gate) -> Result<String, String> {
+pub async fn execute(
+    app: &AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    call_id: &str,
+    name: &str,
+    args: &Value,
+) -> Result<ToolOutput, String> {
+    let gate = &state.computer;
     match name {
-        "ui_snapshot" => snapshot(Query::from_args(args)).await,
+        "ui_snapshot" => snapshot(Query::from_args(args)).await.map(Into::into),
+        "ui_screenshot" => screenshot(app, state, chat_id, call_id).await,
         "ui_click" => {
             let query = Query::from_args(args);
             if !query.is_specific() {
@@ -230,7 +247,7 @@ pub async fn execute(name: &str, args: &Value, gate: &Gate) -> Result<String, St
                 );
             }
             gate.wait_turn()?;
-            click(query).await
+            click(query).await.map(Into::into)
         }
         "ui_type" => {
             let query = Query::from_args(args);
@@ -245,14 +262,21 @@ pub async fn execute(name: &str, args: &Value, gate: &Gate) -> Result<String, St
             let clear = args.get("clear").and_then(Value::as_bool).unwrap_or(false);
             let submit = args.get("submit").and_then(Value::as_bool).unwrap_or(false);
             gate.wait_turn()?;
-            type_text(query, text, clear, submit).await
+            type_text(query, text, clear, submit).await.map(Into::into)
         }
         other => Err(format!("unknown desktop tool '{other}'")),
     }
 }
 
 #[cfg(not(windows))]
-pub async fn execute(name: &str, _args: &Value, _gate: &Gate) -> Result<String, String> {
+pub async fn execute(
+    _app: &AppHandle,
+    _state: &AppState,
+    _chat_id: &str,
+    _call_id: &str,
+    name: &str,
+    _args: &Value,
+) -> Result<ToolOutput, String> {
     Err(format!(
         "'{name}' drives the Windows desktop — it is not available on this platform"
     ))
@@ -307,6 +331,130 @@ pub struct Shot {
     pub text: String,
 }
 
+/// How much to shrink a capture until its longest side fits under
+/// `MODEL_MAX_SIDE`, as a whole number.
+///
+/// Integer and never zero: the scaling is box-averaging, which takes a square of
+/// source pixels per output pixel, and a non-integer factor would need a resampler
+/// this app does not have and does not need.
+fn scale_factor(width: u32, height: u32) -> u32 {
+    let longest = width.max(height);
+    longest.div_ceil(super::MODEL_MAX_SIDE).max(1)
+}
+
+#[cfg(test)]
+mod downscale_tests {
+    use super::*;
+
+    /// A solid colour field, RGBA, `width × height`.
+    fn solid(width: u32, height: u32, colour: [u8; 4]) -> Vec<u8> {
+        colour
+            .iter()
+            .copied()
+            .cycle()
+            .take(width as usize * height as usize * 4)
+            .collect()
+    }
+
+    #[test]
+    fn a_picture_is_only_shrunk_when_it_is_too_big_for_a_model() {
+        // Small enough as it is: the factor of 1 means "leave it alone", so a
+        // model never gets an upscaled picture that has invented detail.
+        assert_eq!(scale_factor(1280, 720), 1);
+        assert_eq!(scale_factor(700, 400), 1);
+        // 1080p is one step down, 4K is three.
+        assert_eq!(scale_factor(1920, 1080), 2);
+        assert_eq!(scale_factor(3840, 2160), 3);
+        // The longest side decides, whichever way round the window is.
+        assert_eq!(scale_factor(1080, 1920), 2);
+    }
+
+    #[test]
+    fn downscaling_averages_the_block_rather_than_picking_one_pixel() {
+        // Two by two, one black pixel and three white: every channel averages to
+        // 191. Picking a pixel would give 0 or 255 — which is what turns a
+        // screenshot's text into mush.
+        let source = vec![
+            0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ];
+        let (out, width, height) = downscale_rgba(&source, 2, 2, 2).unwrap();
+        assert_eq!((width, height), (1, 1));
+        assert_eq!(out, vec![191, 191, 191, 255]);
+    }
+
+    #[test]
+    fn a_factor_of_one_is_the_same_picture() {
+        let source = solid(3, 2, [10, 20, 30, 255]);
+        let (out, width, height) = downscale_rgba(&source, 3, 2, 1).unwrap();
+        assert_eq!((width, height), (3, 2));
+        assert_eq!(out, source);
+    }
+
+    #[test]
+    fn scaling_nothing_is_refused_rather_than_guessed_at() {
+        let source = solid(4, 4, [1, 2, 3, 255]);
+        assert!(downscale_rgba(&source, 4, 4, 0).is_none());
+        assert!(downscale_rgba(&source, 0, 4, 2).is_none());
+        // A factor bigger than the picture would leave nothing to draw.
+        assert!(downscale_rgba(&source, 4, 4, 8).is_none());
+        // And a buffer that is not as long as its own dimensions is not a picture.
+        assert!(downscale_rgba(&source[..8], 4, 4, 2).is_none());
+    }
+}
+
+/// An integer box-downscale of a top-down RGBA buffer.
+///
+/// Averages each `factor × factor` block, which is the correct cheap way to lose
+/// pixels: *picking* one pixel out of each block aliases a screenshot's text into
+/// unreadable mush, and text is most of what a screenshot is for.
+///
+/// `None` when there is nothing to do it to — no pixels, a factor that would
+/// leave a zero-sized picture, or a buffer shorter than its own dimensions.
+pub fn downscale_rgba(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    factor: u32,
+) -> Option<(Vec<u8>, u32, u32)> {
+    if width == 0 || height == 0 || factor == 0 {
+        return None;
+    }
+    let (out_width, out_height) = (width / factor, height / factor);
+    if out_width == 0 || out_height == 0 {
+        return None;
+    }
+    if rgba.len() < width as usize * height as usize * 4 {
+        return None;
+    }
+    if factor == 1 {
+        return Some((rgba.to_vec(), width, height));
+    }
+
+    let step = factor as usize;
+    let area = (step * step) as u32;
+    let mut out = vec![0u8; out_width as usize * out_height as usize * 4];
+    for oy in 0..out_height as usize {
+        for ox in 0..out_width as usize {
+            let (mut r, mut g, mut b, mut a) = (0u32, 0u32, 0u32, 0u32);
+            for y in 0..step {
+                for x in 0..step {
+                    let at = ((oy * step + y) * width as usize + (ox * step + x)) * 4;
+                    r += rgba[at] as u32;
+                    g += rgba[at + 1] as u32;
+                    b += rgba[at + 2] as u32;
+                    a += rgba[at + 3] as u32;
+                }
+            }
+            let at = (oy * out_width as usize + ox) * 4;
+            out[at] = (r / area) as u8;
+            out[at + 1] = (g / area) as u8;
+            out[at + 2] = (b / area) as u8;
+            out[at + 3] = (a / area) as u8;
+        }
+    }
+    Some((out, out_width, out_height))
+}
+
 /// Encode an RGBA buffer as a PNG.
 ///
 /// Its own function because it is the half that can be checked without a screen
@@ -352,7 +500,8 @@ pub fn remember_foreground() {
 /// in it.
 #[cfg(windows)]
 pub fn capture_focused() -> Result<Shot, String> {
-    let (png, width, height, title) = shot::grab()?;
+    let (pixels, width, height, title) = shot::grab()?;
+    let png = encode_png(&pixels, width, height)?;
     // Both halves, because the picture of an error is not searchable and the
     // text of a canvas is not readable. The tree is the same one `ui_snapshot`
     // walks, addressed by the title we just remembered.
@@ -374,6 +523,76 @@ pub fn capture_focused() -> Result<Shot, String> {
     Err("an Appshot captures a Windows window, and this is not Windows".to_string())
 }
 
+// ------------------------------------------------------- the model's own look
+
+/// A picture of the window in front, for the model to look at.
+///
+/// One capture serves both readers: the full-size PNG is filed where the user can
+/// open it and a smaller copy is what travels in the tool result. The scaling is
+/// integer box-averaging in this file rather than an image crate — half of 1080p
+/// is still a readable screenshot, and a new dependency for one division is not
+/// worth its build.
+///
+/// The text says what happened and what the file is called in both cases, because
+/// the tool does not know whether the model in front of it can see: that is a
+/// property of the endpoint, decided when the request is built.
+#[cfg(windows)]
+async fn screenshot(
+    app: &AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    call_id: &str,
+) -> Result<ToolOutput, String> {
+    let (pixels, width, height, title) = run_blocking(shot::grab_now).await?;
+    let dir = state.paths.shots_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let path = dir.join("screenshot.png");
+    std::fs::write(&path, encode_png(&pixels, width, height)?).map_err(|e| e.to_string())?;
+
+    let factor = scale_factor(width, height);
+    let (small, to_width, to_height) = downscale_rgba(&pixels, width, height, factor)
+        .unwrap_or((pixels, width, height));
+    let encoded = base64::engine::general_purpose::STANDARD.encode(encode_png(
+        &small,
+        to_width,
+        to_height,
+    )?);
+    let data_url = format!("data:image/png;base64,{encoded}");
+
+    // The same event a browser screenshot uses, so the picture appears in the chat
+    // through the one path that already knows how to draw one.
+    let _ = app.emit(
+        crate::tools::browser::EVENT_SHOT,
+        serde_json::json!({ "chatId": chat_id, "callId": call_id, "dataUrl": data_url }),
+    );
+
+    let scaled = factor > 1;
+    let note = if scaled {
+        format!("\"{title}\", {width}×{height}px, scaled to {to_width}×{to_height}")
+    } else {
+        format!("\"{title}\", {width}×{height}px")
+    };
+    let text = format!(
+        "Photographed the window in front: {note}. The picture is in the chat, and the full-size \
+         copy is at {}. If you cannot see images, read the same window with `ui_snapshot` instead.",
+        path.display()
+    );
+    Ok(ToolOutput::text(text).with_image(ToolImage {
+        data_url,
+        note,
+    }))
+}
+
+#[cfg(not(windows))]
+async fn screenshot(
+    _app: &AppHandle,
+    _state: &AppState,
+    _chat_id: &str,
+    _call_id: &str,
+) -> Result<ToolOutput, String> {
+    Err("a screenshot needs the Windows desktop, and this is not Windows".to_string())
+}
+
 #[cfg(windows)]
 mod shot {
     use std::ffi::c_void;
@@ -387,8 +606,6 @@ mod shot {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     };
-
-    use super::encode_png;
 
     /// `PW_RENDERFULLCONTENT`: ask the window to draw itself even when it renders
     /// through a composition surface, which is every browser, every Electron app
@@ -420,15 +637,35 @@ mod shot {
         *FRONT.lock().unwrap() = Some((handle as isize, title_of(handle)));
     }
 
-    /// The captured window: PNG bytes, its size, and its title.
+    /// The window that was in front when the chord was pressed: its pixels as
+    /// top-down RGBA, its size, and its title.
     pub fn grab() -> Result<(Vec<u8>, u32, u32, String), String> {
         let (raw, title) = FRONT
             .lock()
             .unwrap()
             .clone()
             .ok_or("no window was in front when the quick window was raised")?;
-        let hwnd = raw as HWND;
+        capture(raw as HWND, title)
+    }
 
+    /// The window that is in front *now*.
+    ///
+    /// A second entry point rather than a flag, because the two ask different
+    /// questions: an Appshot is about the window the user was looking at a moment
+    /// ago, and a screenshot the model asked for is about whatever is in front
+    /// when the call arrives.
+    pub fn grab_now() -> Result<(Vec<u8>, u32, u32, String), String> {
+        // SAFETY: `GetForegroundWindow` takes no arguments and returns a handle
+        // this thread neither owns nor frees.
+        let hwnd = unsafe { GetForegroundWindow() };
+        if hwnd.is_null() {
+            return Err("no window is in front to photograph".to_string());
+        }
+        capture(hwnd, title_of(hwnd))
+    }
+
+    /// One window's pixels, top-down and opaque, ready to be scaled or encoded.
+    fn capture(hwnd: HWND, title: String) -> Result<(Vec<u8>, u32, u32, String), String> {
         // SAFETY: the documented GDI dance for capturing one window. Every
         // handle made here is released on the way out, including on both error
         // paths, because a device context leaked per press is a resource leak
@@ -500,12 +737,7 @@ mod shot {
                 pixel[3] = 255;
             }
 
-            Ok((
-                encode_png(&pixels, width as u32, height as u32)?,
-                width as u32,
-                height as u32,
-                title,
-            ))
+            Ok((pixels, width as u32, height as u32, title))
         }
     }
 

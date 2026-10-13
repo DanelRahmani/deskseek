@@ -2124,20 +2124,46 @@ than a module.
   `cargo test` 432 → 434 (two of the new tests are the quiet cases).
 - **Stop**: a cheaper model is suggested with a number, and never chosen for the user.
 
-### 9.1 [M] Vision into tool results
+### 9.1 [M] Vision into tool results ✅
 - **Why**: the README says screenshots go to the user's eyes because DeepSeek's API is text-only. A
   vision-capable model removes the reason, and one change upgrades both browser control and computer
   use from blind to able to see what happened.
-- **Files**: `api/types.rs` (a tool result that carries parts), `api/openai_compat.rs` (image parts
-  on the wire), `tools/browser.rs` and `tools/desktop.rs` (a capture that returns a path, downscaled
-  once), `conversation/agent.rs` (the result shape), `ToolCallCard.tsx` (show the image the model
-  saw), `README.md` (the "goes to your eyes" paragraph is revised, not left to contradict).
-- **Shape**: downscale once, keep the full-size file, and send the smaller one — the rule the
-  attachment path already states. A tool result carrying an image says so in text too, for the
-  model's benefit. A model without vision degrades to the text part with an explicit note rather
-  than sending an image the endpoint will reject.
-- **Test**: the result-shape test asserts an image part and a text part together, and that a
-  non-vision model gets the text part and the note.
+- **Files**: `tools/mod.rs` (`ToolOutput`, `ToolImage`, the `MODEL_MAX_SIDE` ceiling, and the
+  `ui_screenshot` declaration); `tools/desktop.rs` (`capture`/`grab_now`, `scale_factor`,
+  `downscale_rgba`, and the screenshot tool that files the full-size PNG and sends the smaller copy);
+  `tools/browser.rs` (`viewport_of`, `model_scale`, and a `screenshot` that hands over what it
+  captured); `api/types.rs` (`data_url_mime`, one reader for a `data:` URL's type);
+  `conversation/agent.rs` (the tool result carries an image, and the loop files it as an attachment);
+  `api/provider.rs` (2.1's `messages_for` is the filter that drops it for a model that cannot see);
+  `conversation/assemble.rs` (the shape test); `README.md` in both places it promised text-only.
+- **Shape**: a tool result grew from a `String` to `ToolOutput` — text plus an optional picture —
+  because the alternative was a second return channel beside the tool's own that the loop would
+  have to remember to join. The picture rides to the model as an **attachment on the tool message**,
+  the same shape a user's own attachment uses, so nothing downstream needed a case for it: the
+  message layer already turns an image attachment into content parts, and 2.1's `messages_for`
+  already strips images for a model that cannot see. **No new dependency**: the browser asks CDP for
+  a scaled capture (`clip.scale`, one extra `Page.getLayoutMetrics`), and the desktop does integer
+  box-averaging — picking one pixel per block instead would alias a screenshot's text into mush,
+  which is most of what a screenshot is for. Both stop at 1280px on the longest side, in one shared
+  constant. Three smaller decisions: the desktop keeps the full-size file and the browser does not
+  (a browser shot is in the chat, where the user was looking; the Appshot is the one that has always
+  been a file); the tool's text says what happened in both cases, because *whether* a picture is sent
+  is decided later and by the endpoint; and `ui_screenshot` photographs whatever is in front, which
+  is the same window `ui_snapshot` reads, so the picture and the tree agree.
+- **Test**: `cargo test` — `scale_factor` (only shrunk when too big, the longest side decides),
+  `downscale_rgba` (the average and not a picked pixel, factor 1 is the same picture, and the four
+  ways there is nothing to scale), `model_scale` and `viewport_of` (the visual viewport wins, an
+  older browser's layout-only metrics still answer, nothing usable is not an answer), and the
+  result shape the archive asked for: `a_tool_result_that_took_a_picture_carries_both_halves`, which
+  asserts a text part *and* an image part on a `tool` message that keeps its `tool_call_id`. Two of
+  these failed first and both were mine: an average I had worked out wrong (191, not 63), and a real
+  bug the test caught — `viewport_of` used `?` inside its loop, so an older browser's missing
+  `cssVisualViewport` aborted the search instead of falling through to the layout viewport. Falsified:
+  making the vision filter unconditional (`if model.vision` → `if true`) fails
+  `only_a_model_that_can_see_is_sent_a_picture` with `the image must be dropped, not sent — left: 2,
+  right: 1`, after checking the mutation reached the disk, and restoring passes. `cargo test` 435 →
+  442. What a unit test cannot reach is a screen and a browser, so the six lines for those are on
+  `docs/E2E-CHECKLIST.md`.
 - **Stop**: a screenshot can be read by the model, and a model that cannot see is told so.
 
 ### 9.5 [M] Computer use: a coordinate click and an app inventory

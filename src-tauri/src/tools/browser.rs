@@ -34,6 +34,7 @@ use crate::AppState;
 
 use super::browse;
 use super::exec::truncate;
+use super::{MODEL_MAX_SIDE, ToolImage, ToolOutput};
 
 /// Emitted when a screenshot is taken, so the chat can show the picture. It
 /// travels on its own event because the tool result the model sees stays text.
@@ -358,15 +359,42 @@ impl Session {
         page_from_value(&value)
     }
 
-    /// The one tool that produces something the user sees rather than something
-    /// the model reads.
-    async fn screenshot(&mut self, app: &AppHandle, chat_id: &str, call_id: &str) -> Result<String, String> {
-        let result = self
-            .call(
-                "Page.captureScreenshot",
-                json!({ "format": "jpeg", "quality": 70 }),
-            )
-            .await?;
+    /// A picture of the page.
+    ///
+    /// One capture serves both readers: the same JPEG is shown in the chat and
+    /// handed to the model, which is why the shot is asked for at a size a model
+    /// can read rather than at the window size — CDP scales it, so no image library
+    /// is needed for the halving and the bytes are a fraction of a full frame.
+    ///
+    /// The text says the same thing either way, because whether a picture is
+    /// actually sent is a property of the endpoint and is decided later: a model
+    /// that cannot see reads the page with `browser_extract` or `browser_eval`.
+    async fn screenshot(
+        &mut self,
+        app: &AppHandle,
+        chat_id: &str,
+        call_id: &str,
+    ) -> Result<ToolOutput, String> {
+        // The page's own size, so the scale can be worked out. A failure here is
+        // not worth losing the screenshot over: the full-size frame is a perfectly
+        // good picture, just a bigger one.
+        let metrics = self.call("Page.getLayoutMetrics", json!({})).await.ok();
+        let mut params = json!({ "format": "jpeg", "quality": 70 });
+        let mut note = "the page".to_string();
+        if let Some((width, height)) = metrics.as_ref().and_then(viewport_of) {
+            let scale = model_scale(width, height);
+            if scale < 1.0 {
+                params["clip"] =
+                    json!({ "x": 0, "y": 0, "width": width, "height": height, "scale": scale });
+                params["captureBeyondViewport"] = json!(false);
+            }
+            note = format!(
+                "the page at {}×{}px",
+                (width * scale).round() as u32,
+                (height * scale).round() as u32
+            );
+        }
+        let result = self.call("Page.captureScreenshot", params).await?;
         let data = result
             .get("data")
             .and_then(Value::as_str)
@@ -376,11 +404,92 @@ impl Session {
             EVENT_SHOT,
             json!({ "chatId": chat_id, "callId": call_id, "dataUrl": data_url }),
         );
-        Ok(
-            "Screenshot captured and shown to the user in the chat. You cannot see it — use \
-             browser_extract or browser_eval to read what is on the page."
-                .to_string(),
-        )
+        let text = format!(
+            "Photographed {note}. The picture is in the chat. If you cannot see images, read the \
+             page with `browser_extract`, or ask a narrower question with `browser_eval`."
+        );
+        Ok(ToolOutput::text(text).with_image(ToolImage {
+            data_url,
+            note,
+        }))
+    }
+}
+
+/// The page's own size, from `Page.getLayoutMetrics`.
+///
+/// The visual viewport first, because that is what the user is looking at — a
+/// page zoomed in reports a layout viewport several screens wide, and capturing
+/// all of it would be a picture of a page nobody is on.
+fn viewport_of(metrics: &Value) -> Option<(f64, f64)> {
+    for key in ["cssVisualViewport", "visualViewport", "layoutViewport"] {
+        let view = &metrics[key];
+        // A key CDP did not send is skipped rather than ending the search: an
+        // older browser sends only the layout viewport, and a `?` here would abort
+        // on the first absent key and lose a size that is right there.
+        let (Some(width), Some(height)) =
+            (view["clientWidth"].as_f64(), view["clientHeight"].as_f64())
+        else {
+            continue;
+        };
+        if width > 0.0 && height > 0.0 {
+            return Some((width, height));
+        }
+    }
+    None
+}
+
+/// The scale to ask CDP for, so the picture fits `MODEL_MAX_SIDE`.
+///
+/// A fraction rather than the desktop's whole-number factor, because the browser
+/// resamples properly and a clip can be scaled by any amount. Never above 1: a
+/// small window is not worth enlarging, and a picture blown up invents detail the
+/// model would then read.
+fn model_scale(width: f64, height: f64) -> f64 {
+    let longest = width.max(height);
+    if longest <= MODEL_MAX_SIDE as f64 {
+        1.0
+    } else {
+        (MODEL_MAX_SIDE as f64 / longest).clamp(0.1, 1.0)
+    }
+}
+
+#[cfg(test)]
+mod picture_tests {
+    use super::*;
+
+    #[test]
+    fn a_page_is_scaled_only_when_it_is_too_big_for_a_model() {
+        assert_eq!(model_scale(1280.0, 720.0), 1.0);
+        assert_eq!(model_scale(800.0, 600.0), 1.0);
+        // Half of 2560 is 1280, which is the whole point of the ceiling.
+        assert_eq!(model_scale(2560.0, 1440.0), 0.5);
+        assert!(model_scale(5120.0, 2880.0) < 0.3);
+        // Never above one: a small page is not worth enlarging, because a picture
+        // blown up invents detail the model would then read.
+        assert!(model_scale(320.0, 200.0) <= 1.0);
+    }
+
+    #[test]
+    fn the_page_size_is_read_out_of_the_metrics_cdp_sends() {
+        // The visual viewport wins: a page zoomed in reports a layout viewport
+        // several screens wide, and capturing all of it would be a picture of a
+        // page nobody is looking at.
+        let metrics = json!({
+            "layoutViewport": { "clientWidth": 4000, "clientHeight": 3000 },
+            "cssVisualViewport": { "clientWidth": 1280, "clientHeight": 720 }
+        });
+        assert_eq!(viewport_of(&metrics), Some((1280.0, 720.0)));
+
+        // Only a layout viewport is still an answer.
+        let older = json!({ "layoutViewport": { "clientWidth": 900, "clientHeight": 600 } });
+        assert_eq!(viewport_of(&older), Some((900.0, 600.0)));
+
+        // Nothing usable is not an answer, which leaves the full-size frame.
+        assert_eq!(viewport_of(&json!({})), None);
+        assert_eq!(
+            viewport_of(&json!({ "cssVisualViewport": { "clientWidth": 0, "clientHeight": 0 } })),
+            None
+        );
     }
 }
 
@@ -853,7 +962,7 @@ pub async fn execute(
     name: &str,
     args: &Value,
     cancel: &Cancel,
-) -> Result<String, String> {
+) -> Result<ToolOutput, String> {
     let settings = state.settings.lock().unwrap().clone();
     if !settings.browsing_enabled {
         return Err("browser use is switched off in Settings → Browsing".to_string());
@@ -887,8 +996,14 @@ async fn dispatch(
     name: &str,
     args: &Value,
     cancel: &Cancel,
-) -> Result<String, String> {
-    match name {
+) -> Result<ToolOutput, String> {
+    // The one tool that gives back a picture rather than a page of text.
+    if name == "browser_screenshot" {
+        return session.screenshot(app, chat_id, call_id).await;
+    }
+    // Every other arm answers with words and is left exactly as it was: wrapping
+    // the match is a smaller change than teaching fifteen arms a richer type.
+    let result: Result<String, String> = match name {
         "browser_open" => {
             let url = browse::normalise_url(require(args, "url")?);
             let new_tab = args.get("new_tab").and_then(Value::as_bool).unwrap_or(false);
@@ -959,18 +1074,19 @@ async fn dispatch(
                         }
                     }
                 }
-                return Ok(format!("Closed \"{title}\"."));
+                return Ok(format!("Closed \"{title}\".").into());
             }
 
             if page.id == session.target_id {
-                return Ok(format!("Already driving \"{title}\"."));
+                return Ok(format!("Already driving \"{title}\".").into());
             }
             session.switch_to(&page.ws_url, &page.id).await?;
             session.wait_ready(cancel).await?;
             Ok(format!(
                 "Switched to \"{title}\".\n\n{}",
                 render_page(&session.read_page().await?)
-            ))
+            )
+            .into())
         }
         "browser_console" => Ok(render_console(&session.console)),
         "browser_network" => Ok(render_network(&session.network)),
@@ -1000,13 +1116,14 @@ async fn dispatch(
                 return Ok(format!(
                     "{typed} The form was submitted.\n\n{}",
                     render_page(&session.read_page().await?)
-                ));
+                )
+                .into());
             }
             Ok(typed)
         }
-        "browser_screenshot" => session.screenshot(app, chat_id, call_id).await,
         other => Err(format!("unknown browser tool '{other}'")),
-    }
+    };
+    result.map(Into::into)
 }
 
 #[cfg(test)]

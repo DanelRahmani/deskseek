@@ -43,6 +43,7 @@ one.
 - The app is no longer wired to one vendor: an **endpoint** is a base URL, a dialect, a key and the models it serves, so OpenRouter, Groq, Together, xAI, Google and local runtimes (Ollama, LM Studio, vLLM) are configuration in **Settings → Access** rather than code — with one keychain account per endpoint, no key at all for a model on this machine, and a rate nobody published reported as *unknown* instead of guessed at
 - A scheduled task can run on a model of its own — a cheap one for a nightly triage — instead of the chat's; the run's spend row names the model that really ran
 - A model with no thinking to budget can be marked as such, and the chat then shows no thinking controls at all rather than a switch that quietly does nothing
+- A screenshot now goes to the model as well as to you, when the model you are running on can see: `ui_screenshot` photographs the window in front — for the canvases and custom-drawn apps whose controls report nothing — and `browser_screenshot` sends the page it captured, both scaled to 1280px on the longest side. A text-only endpoint is sent the words instead, and a desktop screenshot keeps its full-size file
 - When a cheaper model of the same endpoint would have done the same work for noticeably less, the chat says what the turn would have cost there and offers the switch — a number and a suggestion, never a downgrade you did not ask for. The task form's model list shows each model's published rate
 
 ## 0.4.0 — 2026-10-12
