@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon, IconButton } from "./Icon";
 import { InstructionsSection } from "./InstructionsSection";
+import { MemoryRow } from "./MemorySection";
 import { money } from "./SpendPanel";
 import type { ChatRow, Instruction, MemoryEntryView, ProjectRow, ProjectSpend } from "../types";
 
@@ -50,6 +51,8 @@ export function ProjectsPanel({
   /** Which project's memory is open, if any. */
   const [memoryOpen, setMemoryOpen] = useState<string | null>(null);
   const [memory, setMemory] = useState<Record<string, MemoryEntryView[]>>({});
+  /** What is typed into a project's "remember something" box, before Add. */
+  const [entryDraft, setEntryDraft] = useState<Record<string, string>>({});
 
   const reload = useCallback(async () => {
     const [list, spent] = await Promise.all([api.listProjects(), api.projectSpend()]);
@@ -159,6 +162,37 @@ export function ProjectsPanel({
     try {
       const entries = await api.projectMemory(project.id);
       setMemory((m) => ({ ...m, [project.id]: entries }));
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  /** Reload one project's memory after a write, so the list is what is on disk. */
+  const refreshMemory = async (project: ProjectRow) => {
+    const entries = await api.projectMemory(project.id);
+    setMemory((m) => ({ ...m, [project.id]: entries }));
+  };
+
+  const forgetEntry = async (project: ProjectRow, text: string) => {
+    try {
+      await api.deleteProjectMemory(project.id, text);
+      await refreshMemory(project);
+      setStatus(`Forgot one entry from "${project.name}".`);
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  const addEntry = async (project: ProjectRow) => {
+    const text = (entryDraft[project.id] ?? "").trim();
+    if (!text) return;
+    try {
+      const added = await api.appendProjectMemory(project.id, text);
+      setEntryDraft((d) => ({ ...d, [project.id]: "" }));
+      await refreshMemory(project);
+      setStatus(
+        added === 0 ? "That is already remembered for this project." : "Remembered.",
+      );
     } catch (e) {
       setStatus(String(e));
     }
@@ -290,21 +324,47 @@ export function ProjectsPanel({
               <div className="mt-2 space-y-1 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
                 {!project.folder ? (
                   <p className="text-[11px] text-neutral-600">
-                    No folder, so this project's chats each keep their own memory.
-                  </p>
-                ) : (memory[project.id] ?? []).length === 0 ? (
-                  <p className="text-[11px] text-neutral-600">
-                    Nothing remembered about this project yet.
+                    No folder, so this project's chats each keep their own memory — there is no
+                    shared file to change here.
                   </p>
                 ) : (
-                  (memory[project.id] ?? []).map((entry) => (
-                    <div key={entry.text} className="flex items-baseline gap-2">
-                      <span className="min-w-0 flex-1 text-[11px] text-neutral-300">
-                        {entry.text}
-                      </span>
-                      <span className="shrink-0 text-[10px] text-neutral-600">{entry.date}</span>
+                  <>
+                    {(memory[project.id] ?? []).length === 0 ? (
+                      <p className="text-[11px] text-neutral-600">
+                        Nothing remembered about this project yet.
+                      </p>
+                    ) : (
+                      (memory[project.id] ?? []).map((entry) => (
+                        <MemoryRow
+                          key={entry.text}
+                          text={entry.text}
+                          date={entry.date}
+                          disabled={busy}
+                          onForget={() => void forgetEntry(project, entry.text)}
+                        />
+                      ))
+                    )}
+                    <div className="flex items-center gap-1 pt-1">
+                      <input
+                        value={entryDraft[project.id] ?? ""}
+                        onChange={(e) =>
+                          setEntryDraft((d) => ({ ...d, [project.id]: e.target.value }))
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") void addEntry(project);
+                        }}
+                        placeholder="Remember something about this project…"
+                        className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-900 px-2 py-1 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
+                      />
+                      <button
+                        onClick={() => void addEntry(project)}
+                        disabled={busy || !(entryDraft[project.id] ?? "").trim()}
+                        className="shrink-0 rounded px-2 py-1 text-[11px] text-sky-300 transition hover:bg-sky-500/15 disabled:opacity-40"
+                      >
+                        Add
+                      </button>
                     </div>
-                  ))
+                  </>
                 )}
               </div>
             )}

@@ -281,6 +281,8 @@ pub fn run() {
             commands::set_project_instructions,
             commands::project_spend,
             commands::project_memory,
+            commands::append_project_memory,
+            commands::delete_project_memory,
             commands::list_parked,
             commands::dismiss_parked,
             commands::list_all_artifacts,

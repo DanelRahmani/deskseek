@@ -757,4 +757,40 @@ mod tests {
         assert_eq!(read(&dir, "work").len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn forgetting_one_entry_leaves_every_other_line_alone() {
+        let dir = tmp();
+        append(
+            &dir,
+            "work",
+            &[
+                "Keep me.".to_string(),
+                "Forget me.".to_string(),
+                "Keep me too.".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert!(remove(&dir, "work", "Forget me.").unwrap());
+        let kept: Vec<String> = read(&dir, "work").into_iter().map(|e| e.text).collect();
+        assert_eq!(kept, vec!["Keep me.".to_string(), "Keep me too.".to_string()]);
+
+        // Forgetting something that is not there changes nothing, and says so.
+        assert!(!remove(&dir, "work", "Never said.").unwrap());
+        assert_eq!(read(&dir, "work").len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_with_no_folder_owns_no_memory_file() {
+        // This is what stops the project panel from falling back to a category
+        // file: with no folder there is no shared file at all, so a project can
+        // never be shown another project's notes.
+        assert_eq!(project_category(None), None);
+        let acme = project_category(Some(Path::new("/work/acme")));
+        let beta = project_category(Some(Path::new("/work/beta")));
+        assert_eq!(acme.as_deref(), Some("project-acme"));
+        assert_ne!(acme, beta, "two projects must not share one memory file");
+    }
 }

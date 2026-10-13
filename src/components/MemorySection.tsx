@@ -27,6 +27,38 @@ const INPUT =
   "rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1.5 text-xs text-neutral-200 outline-hidden focus:border-neutral-700";
 const LINK = "text-[11px] text-sky-400 hover:text-sky-300 disabled:opacity-50";
 
+/**
+ * One remembered line, as both memory surfaces draw it: the text, the date it was
+ * filed, and the button that forgets it. Shared so the project panel's memory
+ * looks and behaves exactly like this screen's — one row, one way to forget it.
+ */
+export function MemoryRow({
+  text,
+  date,
+  onForget,
+  disabled,
+}: {
+  text: string;
+  date: string;
+  onForget: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2 py-1.5 text-xs">
+      <span className="min-w-0 flex-1 text-neutral-300">{text}</span>
+      <span className="shrink-0 text-[10px] text-neutral-600">{date}</span>
+      <button
+        onClick={onForget}
+        disabled={disabled}
+        className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
+        title="Forget this"
+      >
+        <Icon name="close" />
+      </button>
+    </div>
+  );
+}
+
 export function MemorySection({ chatId, onChanged }: Props) {
   const [body, setBody] = useState("");
   const [path, setPath] = useState("");
@@ -241,25 +273,17 @@ export function MemorySection({ chatId, onChanged }: Props) {
                 </div>
                 <div className="space-y-1">
                   {c.entries.map((e) => (
-                    <div
+                    <MemoryRow
                       key={`${c.category}-${e.date}-${e.text}`}
-                      className="flex items-start gap-2 rounded-lg border border-neutral-800 bg-neutral-900/60 px-2 py-1.5 text-xs"
-                    >
-                      <span className="min-w-0 flex-1 text-neutral-300">{e.text}</span>
-                      <span className="shrink-0 text-[10px] text-neutral-600">{e.date}</span>
-                      <button
-                        onClick={() =>
-                          run(async () => {
-                            await api.deleteMemoryEntry(c.category, e.text);
-                          })
-                        }
-                        disabled={busy}
-                        className="shrink-0 text-neutral-500 hover:text-red-400 disabled:opacity-50"
-                        title="Forget this"
-                      >
-                        <Icon name="close" />
-                      </button>
-                    </div>
+                      text={e.text}
+                      date={e.date}
+                      disabled={busy}
+                      onForget={() =>
+                        run(async () => {
+                          await api.deleteMemoryEntry(c.category, e.text);
+                        })
+                      }
+                    />
                   ))}
                 </div>
               </div>

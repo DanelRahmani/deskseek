@@ -263,6 +263,12 @@ export const api = {
   projectSpend: () => invoke<ProjectSpend[]>("project_spend"),
   projectMemory: (projectId: string) =>
     invoke<MemoryEntryView[]>("project_memory", { projectId }),
+  /** Adds one entry to a project's own memory file, from the panel that shows it. */
+  appendProjectMemory: (projectId: string, text: string) =>
+    invoke<number>("append_project_memory", { projectId, text }),
+  /** Forgets one entry from a project's own memory file. */
+  deleteProjectMemory: (projectId: string, text: string) =>
+    invoke<boolean>("delete_project_memory", { projectId, text }),
 
   /** Design systems: their own store and their own switch, so neither list has
    *  to know the other one to avoid switching it off. */

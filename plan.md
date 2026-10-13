@@ -1221,16 +1221,20 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   call sites — rather than by a `system_prompt` test. `cargo test` 333 passed.
 - **Stop**: nothing said in a chat that memory does not learn from can be quoted back in another one.
 
-### 8.4 [S] A project's memory is editable where it is shown
+### 8.4 [S] A project's memory is editable where it is shown ✅
 - **Why**: 2.7 reads the project's own `project-<folder>.md` and shows it read-only, so forgetting
   one entry means leaving the panel for *Settings → Memory*. The writer already exists; the panel is
   simply not wired to it.
-- **Files**: `ProjectsPanel.tsx` (forget a line, add a line), `commands.rs` (a command scoped to the
-  project's file), `memory_files.rs` (`project_category` is already the one place that decides which
-  file a project owns), `MemorySection.tsx` (the row component, reused rather than re-implemented).
-- **Test**: forgetting one entry removes exactly that line and leaves the rest; and a project with no
-  folder still reports that it has no shared file rather than showing another project's notes, which
-  is the rule 2.7 already states.
+- **Files**: `commands.rs` (`project_memory_category`, the one place a project's file is resolved,
+  plus `project_memory`, `append_project_memory` and `delete_project_memory` — the last two refuse
+  with a plain sentence when the project has no folder); `memory_files.rs` (`project_category` stays
+  the owner of the file name, `append`/`remove` do the work); `MemorySection.tsx` (the row is now an
+  exported `MemoryRow`, used by both surfaces); `ProjectsPanel.tsx` (forget a line, add a line);
+  `src/api.ts`.
+- **Test**: `memory_files::tests::forgetting_one_entry_leaves_every_other_line_alone` (one line goes,
+  its neighbours stay, and a miss changes nothing) and `a_project_with_no_folder_owns_no_memory_file`
+  (no folder means no file, and two folders never resolve to one — the rule that stops a project
+  showing another's notes). `cargo test` 335 passed.
 - **Stop**: a project's memory can be changed from the panel that displays it.
 
 ### 8.5 [S] Hourly and weekdays

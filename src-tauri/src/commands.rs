@@ -1347,28 +1347,37 @@ pub fn project_spend(state: State<'_, AppState>) -> Result<Vec<db::ProjectSpend>
     db::project_spend(&conn).map_err(|e| e.to_string())
 }
 
-/// What the assistant has remembered about a project.
+/// The memory file a project owns, or `None` when it has no folder.
 ///
-/// A project's chats share its folder, and a memory learned in that folder is
-/// filed under `project-<folder name>` — so the project's memory is that one
-/// file. A project with no folder has no shared file (each chat keeps its own),
-/// which is why an empty answer here is honest rather than a bug.
+/// The one place this is worked out: `project_category` in `memory_files.rs`
+/// decides the file name, and the read and both writes below all come through
+/// here. A project with no folder has no shared file — each of its chats keeps
+/// its own — so "no folder" and "no memory" are the same answer, never a
+/// fallback that would show another project's notes.
+fn project_memory_category(
+    state: &AppState,
+    project_id: &str,
+) -> Result<Option<String>, String> {
+    let folder = {
+        let conn = state.db.lock().unwrap();
+        db::get_project(&conn, project_id)
+            .map_err(|e| e.to_string())?
+            .and_then(|p| p.folder)
+    };
+    Ok(folder
+        .as_deref()
+        .and_then(|f| crate::memory_files::project_category(Some(std::path::Path::new(f)))))
+}
+
+/// What the assistant has remembered about a project.
 #[tauri::command]
 pub fn project_memory(
     state: State<'_, AppState>,
     project_id: String,
 ) -> Result<Vec<MemoryEntryView>, String> {
-    let folder = {
-        let conn = state.db.lock().unwrap();
-        db::get_project(&conn, &project_id)
-            .map_err(|e| e.to_string())?
-            .and_then(|p| p.folder)
-    };
-    let Some(folder) = folder else {
+    let Some(category) = project_memory_category(&state, &project_id)? else {
         return Ok(Vec::new());
     };
-    let category = crate::memory_files::project_category(Some(std::path::Path::new(&folder)))
-        .unwrap_or_default();
     Ok(crate::memory_files::read(&state.paths.memory_dir(), &category)
         .into_iter()
         .map(|e| MemoryEntryView {
@@ -1376,6 +1385,35 @@ pub fn project_memory(
             text: e.text,
         })
         .collect())
+}
+
+/// Adds one entry to the project's own memory file, from the panel that shows it.
+///
+/// The panel is the writer here, so forgetting something no longer means leaving
+/// the project and opening *Settings → Memory*.
+#[tauri::command]
+pub fn append_project_memory(
+    state: State<'_, AppState>,
+    project_id: String,
+    text: String,
+) -> Result<usize, String> {
+    let category = project_memory_category(&state, &project_id)?
+        .ok_or_else(|| "This project has no folder, so it keeps no shared memory.".to_string())?;
+    crate::memory_files::append(&state.paths.memory_dir(), &category, &[text])
+        .map_err(|e| e.to_string())
+}
+
+/// Forgets one entry from the project's own memory file. Only that line goes.
+#[tauri::command]
+pub fn delete_project_memory(
+    state: State<'_, AppState>,
+    project_id: String,
+    text: String,
+) -> Result<bool, String> {
+    let category = project_memory_category(&state, &project_id)?
+        .ok_or_else(|| "This project has no folder, so it keeps no shared memory.".to_string())?;
+    crate::memory_files::remove(&state.paths.memory_dir(), &category, &text)
+        .map_err(|e| e.to_string())
 }
 
 /// Every artifact in every chat — what the gallery lists.
