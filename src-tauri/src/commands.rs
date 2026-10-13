@@ -1718,6 +1718,19 @@ pub fn spend_report(
     db::spend_report(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
 }
 
+/// The shape of the same window: how the turns fell across days and hours, and
+/// which conversations they were.
+///
+/// Takes the same `days` argument as `spend_report` and applies the same cap, so
+/// the two panels cannot be looking at two different windows.
+#[tauri::command]
+pub fn recap(state: State<'_, AppState>, days: Option<u32>) -> Result<db::Recap, String> {
+    let days = days.unwrap_or(DEFAULT_SPEND_DAYS).clamp(1, MAX_SPEND_DAYS);
+    let since = db::now_ts() - i64::from(days) * 86_400;
+    let conn = state.db.lock().unwrap();
+    db::recap(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
+}
+
 // --------------------------------------------------------------- maintenance
 
 /// What a sweep did, and how big the database is now.

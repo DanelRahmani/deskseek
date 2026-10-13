@@ -1341,14 +1341,25 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   to observe an OS toast. `cargo test` 344 passed.
 - **Stop**: reminders fire, and quiet hours silence the toast without hiding that something happened.
 
-### 8.10 [S] A recap of the week or month
+### 8.10 [S] A recap of the week or month ✅
 - **Why**: Claude's Reflect reports the topics you spent time on, your most active day and your peak
   hour. Everything it needs is already in `turn_usage` and `chats`; this is a read model, not a new
   store.
-- **Files**: `store/db.rs` (a recap query, beside `spend_report`), `SpendPanel.tsx` (a section) or a
-  new `RecapPanel.tsx`, `src/lib/chart.ts` (the existing engine, not a second one).
-- **Test**: the recap's totals equal `spend_report`'s for the same window, so the two views cannot
-  tell different stories; and an empty window draws nothing rather than a chart of zeros.
+- **Files**: `store/db.rs` (`Recap` and `HourCount`, and a `recap` query that *takes its totals, days
+  and conversations from `spend_report` itself* rather than querying again — so agreement between the
+  two views is structural — plus the one query the spend view has no use for, the hour histogram);
+  `commands.rs` and `src/api.ts` (`recap`, the same `days` argument and the same cap as
+  `spend_report`); `src/types.ts`; `src/lib/chart.ts` (`recapSpec`, the recap as a bar chart or `null`
+  when there is nothing to draw, sitting beside the renderer so the rule is checked by the file that
+  draws the bars); `src/lib/chart.check.ts` (extended, not replaced); `SpendPanel.tsx` (*The shape of
+  it* — the chart, the busiest day and the peak hour, loaded in the same round trip as the bill).
+- **Test**: `db::tests::the_recap_adds_up_and_agrees_with_the_spend_view` — the totals, days and chats
+  match `spend_report`'s, the day rows and the hour rows each sum to the same turn count, the day
+  costs sum to the total, hours come busiest-first and inside 0..24, and an empty window is empty.
+  `the_spend_payload_is_camel_case_on_the_wire` grew a `Recap` value, because `hours` is a shape
+  nothing else in the app has and a snake_case key there would blank the section silently.
+  `chart.check.ts` gained the adapter's cases (oldest day first) and the two ways a window can be
+  empty, which is what stops a row of zero-height bars being drawn. `cargo test` 345 passed.
 - **Stop**: a week's shape is readable, and its numbers agree with the spend view.
 
 ### 8.11 [S] A notification that takes you to the thing

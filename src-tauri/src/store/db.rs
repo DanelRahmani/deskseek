@@ -2480,6 +2480,74 @@ pub struct SpendReport {
     pub sections: Vec<SectionTokens>,
 }
 
+/// One hour of the local day, and how many turns began in it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourCount {
+    /// 0..23, local time — the hour the user would name.
+    pub hour: i64,
+    pub turns: i64,
+}
+
+/// A week's (or a month's) shape: what the work was, not what it cost.
+///
+/// A read model over `turn_usage`, never a store of its own — everything here is
+/// derived from rows the spend view already reads. The totals, the days and the
+/// conversations are taken *from* `spend_report` rather than queried again, so
+/// "the recap agrees with the spend view" is structural rather than a promise two
+/// queries keep by hand. Only the hour histogram is new, because the spend view
+/// has no use for it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Recap {
+    pub since: i64,
+    /// The same four figures `spend_report` reports for this window.
+    pub total_usd: f64,
+    pub turns: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    /// Newest day first, only days that had a turn.
+    pub days: Vec<DaySpend>,
+    /// Busiest hour first.
+    pub hours: Vec<HourCount>,
+    /// Dearest conversation first — the closest this has to "what you worked on".
+    pub chats: Vec<ChatSpend>,
+}
+
+/// The shape of a window, built on `spend_report`'s numbers.
+///
+/// One extra query, for the hours: `strftime('%H', …, 'localtime')` buckets by the
+/// user's own clock, for the same reason the days are local — an evening's work
+/// must not be filed under tomorrow.
+pub fn recap(conn: &Connection, since: i64, chat_limit: usize) -> rusqlite::Result<Recap> {
+    let report = spend_report(conn, since, chat_limit)?;
+    let hours = {
+        let mut stmt = conn.prepare(
+            "SELECT CAST(strftime('%H', created_at, 'unixepoch', 'localtime') AS INTEGER),
+                    COUNT(*)
+               FROM turn_usage WHERE created_at >= ?1
+              GROUP BY 1 ORDER BY COUNT(*) DESC, 1",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(HourCount {
+                hour: r.get(0)?,
+                turns: r.get(1)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    Ok(Recap {
+        since: report.since,
+        total_usd: report.total_usd,
+        turns: report.turns,
+        prompt_tokens: report.prompt_tokens,
+        completion_tokens: report.completion_tokens,
+        days: report.days,
+        hours,
+        chats: report.chats,
+    })
+}
+
 /// Spend since `since`, grouped the three ways the panel asks for it.
 ///
 /// A day is a *local* day: the column is Unix seconds, and a spend view that
@@ -3954,6 +4022,57 @@ mod tests {
     }
 
     #[test]
+    fn the_recap_adds_up_and_agrees_with_the_spend_view() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+
+        // One-off costs on different local days, so both groupings have something
+        // to group, and round numbers so the sums are literals.
+        for (run, days_ago, cost) in [("r1", 0, 0.5), ("r2", 0, 0.25), ("r3", 2, 0.125)] {
+            record_turn_usage(&conn, &chat.id, run, &round("m", 100, 20, cost), None).unwrap();
+            conn.execute(
+                "UPDATE turn_usage SET created_at = ?2 WHERE run_id = ?1",
+                params![run, now_ts() - days_ago * 86_400],
+            )
+            .unwrap();
+        }
+
+        let report = spend_report(&conn, 0, 10).unwrap();
+        // Not bound to `recap`: a local of that name would shadow the function
+        // for the rest of the test, including the empty-window call below.
+        let shape = recap(&conn, 0, 10).unwrap();
+
+        // The two views cannot tell different stories, and not by promise: the
+        // recap takes its totals, days and conversations *from* `spend_report`
+        // rather than querying again. Asserted anyway, because it is the item's
+        // whole guarantee and a later rewrite must not quietly break it.
+        assert_eq!(shape.turns, report.turns);
+        assert_eq!(shape.total_usd, report.total_usd);
+        assert_eq!(shape.prompt_tokens, report.prompt_tokens);
+        assert_eq!(shape.days.len(), report.days.len());
+        assert_eq!(shape.chats.len(), report.chats.len());
+
+        // And the shape adds up to the numbers: the days and the hours are the
+        // same turns, grouped two more ways. This is the part that can actually
+        // break, so it is the part worth asserting.
+        assert_eq!(shape.turns, 3);
+        assert_eq!(shape.days.iter().map(|d| d.turns).sum::<i64>(), shape.turns);
+        assert_eq!(shape.hours.iter().map(|h| h.turns).sum::<i64>(), shape.turns);
+        let day_cost: f64 = shape.days.iter().map(|d| d.cost_usd).sum();
+        assert!((day_cost - shape.total_usd).abs() < 1e-9, "{day_cost}");
+        // Busiest hour first, and only hours that had a turn.
+        assert!(shape.hours.windows(2).all(|w| w[0].turns >= w[1].turns));
+        assert!(shape.hours.iter().all(|h| (0..24).contains(&h.hour)));
+        assert_eq!(shape.hours.iter().map(|h| h.turns).sum::<i64>(), 3);
+
+        // An empty window is empty — which is what lets the panel draw nothing
+        // instead of a chart of zeros.
+        let empty = recap(&conn, now_ts() + 86_400, 10).unwrap();
+        assert_eq!(empty.turns, 0);
+        assert!(empty.days.is_empty() && empty.hours.is_empty() && empty.chats.is_empty());
+    }
+
+    #[test]
     fn the_spend_payload_is_camel_case_on_the_wire() {
         // The spend structs are `rename_all = "camelCase"`, so the frontend is
         // written against `totalUsd`, not `total_usd`. When it asked for the
@@ -4000,6 +4119,30 @@ mod tests {
         assert_eq!(value["chats"][0]["chatId"], serde_json::json!("chat-1"));
         assert_eq!(value["sections"][0]["promptTokens"], serde_json::json!(900));
         assert_camel_case_keys(&value, "report");
+
+        // The recap is the same family under the same rule, and its `hours` array
+        // is the one shape nothing else in the app has — so it is walked too.
+        let recap = Recap {
+            since: 1,
+            total_usd: 1.25,
+            turns: 3,
+            prompt_tokens: 900,
+            completion_tokens: 60,
+            days: Vec::new(),
+            hours: vec![HourCount { hour: 9, turns: 3 }],
+            chats: vec![ChatSpend {
+                chat_id: "chat-1".into(),
+                title: "A conversation".into(),
+                cost_usd: 1.25,
+                turns: 3,
+            }],
+        };
+        let recap_value = serde_json::to_value(&recap).unwrap();
+        assert_eq!(recap_value["totalUsd"], serde_json::json!(1.25));
+        assert_eq!(recap_value["promptTokens"], serde_json::json!(900));
+        assert_eq!(recap_value["hours"][0]["turns"], serde_json::json!(3));
+        assert_eq!(recap_value["chats"][0]["chatId"], serde_json::json!("chat-1"));
+        assert_camel_case_keys(&recap_value, "recap");
     }
 
     #[test]

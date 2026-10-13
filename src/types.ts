@@ -709,6 +709,35 @@ export interface SpendReport {
 }
 
 /**
+ * One hour of the local day, and how many turns began in it.
+ */
+export interface HourCount {
+  /** 0..23, local time. */
+  hour: number;
+  turns: number;
+}
+
+/**
+ * A window's shape, as the recap section shows it.
+ *
+ * A read model, not a second store: its totals, days and conversations come from
+ * `spend_report` itself, so the two panels cannot disagree about the same window.
+ * Only `hours` is new.
+ */
+export interface Recap {
+  since: number;
+  totalUsd: number;
+  turns: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Newest day first, only days that had a turn. */
+  days: DaySpend[];
+  /** Busiest hour first. */
+  hours: HourCount[];
+  chats: ChatSpend[];
+}
+
+/**
  * A saved prompt: a request kept as a markdown file, for the composer rather
  * than for the model.
  */

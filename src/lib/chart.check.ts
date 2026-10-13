@@ -9,7 +9,7 @@
  * assertions are ordering and containment, so they fail when the logic breaks
  * rather than when the layout is tuned.
  */
-import { chartSvg, CHART_HEIGHT, CHART_WIDTH, MAX_POINTS, MAX_SLICES } from "./chart.ts";
+import { chartSvg, CHART_HEIGHT, CHART_WIDTH, MAX_POINTS, MAX_SLICES, recapSpec } from "./chart.ts";
 
 /** Values printed with one decimal, so a coordinate is within half of that. */
 function near(a: number, b: number): boolean {
@@ -254,5 +254,33 @@ ok(
   ),
   "a slice of a whole cannot be negative",
 );
+
+// --- the recap's own chart ---------------------------------------------------
+
+// A week reads left to right, so the days go oldest-first even though the query
+// returns them newest-first (which is right for a list of costs).
+const week = recapSpec({
+  turns: 3,
+  days: [
+    { day: "2026-10-12", turns: 1 },
+    { day: "2026-10-11", turns: 2 },
+  ],
+});
+if (week === null) throw new Error("FAIL: a window with turns must produce a chart");
+ok(week.type === "bar", "the recap is a bar chart");
+ok(week.labels[0] === "10-11", `the oldest day comes first, got ${week.labels[0]}`);
+ok(week.series[0].values.join(",") === "2,1", "the values follow the labels");
+ok(svgOf(JSON.stringify(week)).includes("Turns per day"), "the chart says what it is");
+
+// Nothing to draw, in either of the two ways there is to have nothing: a window
+// with no turns at all, and a window whose rows are all zero.
+ok(recapSpec({ turns: 0, days: [] }) === null, "an empty window draws nothing");
+ok(
+  recapSpec({ turns: 0, days: [{ day: "2026-10-12", turns: 0 }] }) === null,
+  "a window of zero turns draws nothing rather than a row of empty bars",
+);
+// And one turn in one day is still something worth drawing.
+const tiny = recapSpec({ turns: 1, days: [{ day: "2026-10-12", turns: 1 }] });
+ok(tiny !== null, "a single turn is still a shape");
 
 console.log("chart.check.ts: all checks passed");

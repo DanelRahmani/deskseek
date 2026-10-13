@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import { chartSvg } from "../lib/chart";
+import { chartSvg, recapSpec } from "../lib/chart";
 import { ChartImage } from "./ChartImage";
 import { IconButton } from "./Icon";
-import type { SectionTokens, SpendReport } from "../types";
+import type { Recap, SectionTokens, SpendReport } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -108,6 +108,26 @@ function SectionPie({ section }: { section: SectionTokens }) {
 }
 
 /**
+ * The recap as one picture, or a sentence when there is nothing to draw.
+ *
+ * `recapSpec` returning `null` for an empty window is what keeps this from
+ * drawing a row of zero-height bars, which reads as "you did nothing" when it
+ * means "this is the wrong window".
+ */
+function RecapChart({ recap }: { recap: Recap }) {
+  const spec = recapSpec(recap);
+  if (spec === null) {
+    return (
+      <p className="px-2 text-[12px] text-neutral-600">
+        Nothing to draw for this window — the figures below are all zero.
+      </p>
+    );
+  }
+  const drawn = chartSvg(JSON.stringify(spec));
+  return "svg" in drawn ? <ChartImage svg={drawn.svg} className="mt-1" /> : null;
+}
+
+/**
  * What this has cost, over a window of turns.
  *
  * Read from `turn_usage`, which records one row per turn as the run goes, so a
@@ -118,13 +138,19 @@ function SectionPie({ section }: { section: SectionTokens }) {
 export function SpendPanel({ onClose, onOpenChat }: Props) {
   const [days, setDays] = useState(30);
   const [report, setReport] = useState<SpendReport | null>(null);
+  const [recap, setRecap] = useState<Recap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
 
   const load = useCallback(async (window: number) => {
     setBusy(true);
     try {
-      setReport(await api.spendReport(window));
+      // Both views of one window, in one round trip each and from the same rows:
+      // the recap takes its totals from `spend_report`, so asking for them
+      // together cannot show two different windows.
+      const [spent, shape] = await Promise.all([api.spendReport(window), api.recap(window)]);
+      setReport(spent);
+      setRecap(shape);
       setError(null);
     } catch (e) {
       setError(String(e));
@@ -139,6 +165,11 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
 
   // The longest bar is the whole width; every other one is its share of it.
   const busiestDay = Math.max(1, ...(report?.days.map((d) => d.costUsd) ?? []));
+
+  // Busiest means most turns, which is not the newest day. The peak hour comes
+  // first from the query, which orders hours by turns.
+  const busiest = [...(recap?.days ?? [])].sort((a, b) => b.turns - a.turns)[0];
+  const peak = recap?.hours[0];
 
   return (
     <aside className="panel-in-right flex h-full w-80 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
@@ -207,6 +238,29 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
               fresh — so this is where the tokens went, not what each part cost. The figure at the
               top is the bill.
             </p>
+
+            {recap && (
+              <>
+                <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
+                  The shape of it
+                </h3>
+                <RecapChart recap={recap} />
+                <div className="mt-1 space-y-1 px-2 text-[12px]">
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 text-neutral-400">Busiest day</span>
+                    <span className="shrink-0 text-neutral-300">
+                      {busiest ? `${dayLabel(busiest.day)} · ${busiest.turns}` : "—"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 text-neutral-400">Peak hour</span>
+                    <span className="shrink-0 tabular-nums text-neutral-300">
+                      {peak ? `${String(peak.hour).padStart(2, "0")}:00 · ${peak.turns}` : "—"}
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
 
             <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
               By day

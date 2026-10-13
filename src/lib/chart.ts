@@ -36,6 +36,37 @@ export interface ChartSpec {
 
 export type ChartResult = { svg: string } | { error: string };
 
+/**
+ * A window's shape as a bar chart: turns per local day, oldest first.
+ *
+ * `null` rather than a chart of zeros when there is nothing to draw. An empty
+ * window has no shape, and a row of zero-height bars reads as "you did nothing"
+ * when it means "this is the wrong window" — so the caller shows a sentence
+ * instead, and *that* decision is what lives here.
+ *
+ * Oldest first, because a week reads left to right; the query returns newest
+ * first, which is right for a list of costs and wrong for a picture of a week.
+ *
+ * It sits beside the renderer rather than in the panel so the nothing-to-draw
+ * rule is checked by the same file that draws the bars.
+ */
+export function recapSpec(recap: {
+  turns: number;
+  days: { day: string; turns: number }[];
+}): ChartSpec | null {
+  if (recap.turns <= 0 || recap.days.length === 0) {
+    return null;
+  }
+  const days = [...recap.days].reverse();
+  return {
+    type: "bar",
+    title: "Turns per day",
+    // `MM-DD` from the `YYYY-MM-DD` the database wrote: twenty full dates would
+    // not fit an axis, and the year is the same for every one of them.
+    labels: days.map((d) => d.day.slice(5)),
+    series: [{ name: "turns", values: days.map((d) => d.turns) }],
+  };
+}
 // A fixed palette rather than the theme's tokens: the frame draws on white, so
 // the colours have to be chosen against white and cannot follow the app theme.
 const COLORS = ["#2f6fd0", "#d0562f", "#2f9e6a", "#8a5cd0", "#a8761f", "#3f8fa8"];

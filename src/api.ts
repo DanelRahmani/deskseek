@@ -41,6 +41,7 @@ import type {
   PromptView,
   QuestionAnswer,
   QuestionEvent,
+  Recap,
   ScheduledFiredEvent,
   ScheduledTask,
   SectionKind,
@@ -307,6 +308,8 @@ export const api = {
 
   /** What the last `days` of turns cost, grouped by day, model and chat. */
   spendReport: (days: number) => invoke<SpendReport>("spend_report", { days }),
+  /** The same window's shape: days, hours and conversations. */
+  recap: (days: number) => invoke<Recap>("recap", { days }),
 
   /** Saved prompts: one markdown file each, in a folder of their own. */
   listPrompts: () => invoke<PromptView[]>("list_prompts"),

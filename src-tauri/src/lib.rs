@@ -347,6 +347,7 @@ pub fn run() {
             commands::tool_grants,
             commands::recent_decisions,
             commands::spend_report,
+            commands::recap,
             commands::maintain_db,
             commands::send_message,
             commands::stop_chat,
