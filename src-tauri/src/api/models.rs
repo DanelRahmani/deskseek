@@ -32,6 +32,20 @@ pub const MODELS: &[ModelInfo] = &[
     },
 ];
 
+/// One model's context window, in tokens.
+///
+/// An id we do not ship gets the largest window we know about, which is the same
+/// fallback the frontend's meter makes. Guessing *small* is the dangerous
+/// direction: it would fold a chat that had room left and spend a summariser call
+/// nobody needed.
+pub fn context_for(model: &str) -> u32 {
+    MODELS
+        .iter()
+        .find(|m| m.id == model)
+        .map(|m| m.context)
+        .unwrap_or(1_000_000)
+}
+
 pub fn is_peak(now: DateTime<Utc>) -> bool {
     if matches!(now.weekday(), chrono::Weekday::Sat | chrono::Weekday::Sun) {
         return false;

@@ -778,9 +778,11 @@ pub fn delete_chat(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 }
 
 /// Drops every message in a chat — used when the conversation is compacted.
-pub fn delete_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<()> {
-    conn.execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])?;
-    Ok(())
+///
+/// Returns how many went, so the note that replaces them can say how much was
+/// folded rather than leaving the user to wonder where the history went.
+pub fn delete_messages(conn: &Connection, chat_id: &str) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM messages WHERE chat_id = ?1", [chat_id])
 }
 
 /// The newest user turn: where a regenerate or an edit starts from.

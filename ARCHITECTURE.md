@@ -84,7 +84,8 @@ Changing behaviour in this app is usually changing one of these.
 | --- | --- |
 | The `messages` array sent to the API, including `reasoning_content` echoed back on prior assistant turns whenever the request carries tools | `conversation/assemble.rs` |
 | The agent loop, and the system prompt: the profile, the looked-up memory, the skills and design-system catalogue, the instructions, the project's rules | `conversation/agent.rs` |
-| Model prices, and which hours are off-peak | `api/models.rs` |
+| When a run folds its own chat, and what a folded transcript is — the one note both `/compact` and the automatic fold go through | `conversation/summarize.rs` |
+| Model prices, which hours are off-peak, and each model's context window | `api/models.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |
 | Where a command actually runs, and the job object that kills its children with it | `tools/sandbox_exec.rs`, `tools/job.rs` |

@@ -690,12 +690,7 @@ pub async fn compact_chat(state: State<'_, AppState>, chat_id: String) -> Result
     let (summary, _, _) = summarize::summarize_chat(&state, &chat_id, false).await?;
     {
         let conn = state.db.lock().unwrap();
-        db::delete_messages(&conn, &chat_id).map_err(|e| e.to_string())?;
-        let body = format!(
-            "Context compacted. Summary of the conversation so far:\n\n{summary}\n\nContinue from here."
-        );
-        db::insert_message(&conn, &chat_id, "user", Some(&body), None, None, None, None)
-            .map_err(|e| e.to_string())?;
+        summarize::fold(&conn, &chat_id, &summary).map_err(|e| e.to_string())?;
     }
     Ok(summary)
 }

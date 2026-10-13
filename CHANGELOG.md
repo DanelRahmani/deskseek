@@ -27,6 +27,7 @@ one.
 - Clicking a notification opens the conversation it was about
 - The composer's `@` mentions a file from the workspace and `$` a skill, both filled into the box to edit rather than sent
 - The decision log and the spend export to one file in your documents folder — the same rows the panels show, with a call's arguments left out in favour of their digests
+- A chat that has nearly filled the model's context window folds itself into a summary between turns rather than waiting for you to notice, and the note says how many messages went into it
 
 ## 0.4.0 — 2026-10-12
 

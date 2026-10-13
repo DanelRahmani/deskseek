@@ -12,6 +12,7 @@ use crate::api::models;
 use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::{self, Decision};
 use crate::conversation::assemble::{build_messages, memory_block, system_with_memory, Turn};
+use crate::conversation::summarize;
 use crate::runs::Cancel;
 use crate::store::{
     db, keychain,
@@ -1924,6 +1925,26 @@ pub async fn run(
                 }),
             );
             break;
+        }
+    }
+
+    // Fold the chat when this run's request was already most of the window, so
+    // the next one starts small instead of failing on a length error. The measure
+    // is the provider's own prompt count rather than an estimate of our own, and
+    // `should_compact` refuses a transcript that is already a fold, which is what
+    // stops a chat whose system prompt alone fills the window from folding on
+    // every turn. A fold that fails is nobody's problem but the next turn's: the
+    // answer the user asked for is already stored and about to be sent.
+    if let Some(usage) = &last_usage {
+        let stored = {
+            let conn = state.db.lock().unwrap();
+            db::list_messages(&conn, chat_id).map(|rows| rows.len()).unwrap_or(0)
+        };
+        if summarize::should_compact(usage.prompt_tokens, models::context_for(&chat.model), stored) {
+            if let Ok((summary, _, _)) = summarize::summarize_chat(state, chat_id, false).await {
+                let conn = state.db.lock().unwrap();
+                let _ = summarize::fold(&conn, chat_id, &summary);
+            }
         }
     }
 

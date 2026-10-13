@@ -1,6 +1,7 @@
-//! End-of-chat summarising. One cheap non-streaming call produces a short
-//! summary plus proposed additions to `memory.md`. Nothing is written to the
-//! memory file here — proposals wait for the user to accept them.
+//! End-of-chat summarising and folding. One cheap non-streaming call produces a
+//! short summary plus proposed additions to `memory.md`, and the same summary is
+//! what a fold replaces the transcript with. Nothing is written to the memory
+//! file here — proposals wait for the user to accept them.
 
 use serde::Deserialize;
 
@@ -11,6 +12,59 @@ use crate::AppState;
 
 /// Trim the transcript so a very long chat still summarises cheaply.
 const MAX_TRANSCRIPT_CHARS: usize = 48_000;
+
+/// The fraction of the model's window at which a run folds its own chat.
+///
+/// Deliberately higher than the meter's warning at 0.8: the warning is free and a
+/// fold spends a summariser call, so the automatic step waits until the next
+/// request really is close to the ceiling.
+pub const AUTO_COMPACT_AT: f64 = 0.9;
+
+/// Whether a run should fold its chat before the next request.
+///
+/// The measure is the provider's own `prompt_tokens` for the request just sent,
+/// not a character estimate, so this cannot drift from what the endpoint counted.
+///
+/// `stored` is how many messages the chat holds now. A transcript that has
+/// already been folded is one message, and folding it again would replace the
+/// fold with itself — spending a call every turn and never letting the
+/// conversation grow back. So a lone message is never folded, and neither is a
+/// chat whose window is unknown: neither is a reason to spend.
+pub fn should_compact(prompt_tokens: u32, context: u32, stored: usize) -> bool {
+    stored > 1 && context > 0 && prompt_tokens as f64 >= context as f64 * AUTO_COMPACT_AT
+}
+
+/// What a folded transcript is replaced with.
+///
+/// `folded` is how many messages went into the summary, said out loud so the
+/// transcript records that history was folded rather than lost — the same reason
+/// the manual `/compact` has never been silent about it.
+pub fn compacted_note(summary: &str, folded: usize) -> String {
+    format!(
+        "Context compacted — {folded} earlier messages were folded into the summary below.\n\n\
+         Summary of the conversation so far:\n\n{summary}\n\nContinue from here."
+    )
+}
+
+/// Replaces a chat's transcript with one note carrying its summary.
+///
+/// The manual `/compact` and the automatic fold both come through here, so there
+/// is one shape of folded transcript in the database rather than two that can
+/// drift apart.
+pub fn fold(conn: &rusqlite::Connection, chat_id: &str, summary: &str) -> rusqlite::Result<()> {
+    let folded = db::delete_messages(conn, chat_id)?;
+    db::insert_message(
+        conn,
+        chat_id,
+        "user",
+        Some(&compacted_note(summary, folded)),
+        None,
+        None,
+        None,
+        None,
+    )?;
+    Ok(())
+}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Summary {
@@ -414,5 +468,28 @@ mod tests {
             .collect();
         let text = transcript(&rows);
         assert!(text.chars().count() <= MAX_TRANSCRIPT_CHARS);
+    }
+
+    #[test]
+    fn a_chat_over_the_window_is_folded_once_and_not_again() {
+        // 80% of the window is the meter's warning, not the fold's mark: a chat
+        // that still has room is left alone. Nothing here asserts the exact
+        // boundary — 0.9 * 1_000_000 is a floating-point question, not a fact
+        // about the rule, and a test that pins it would be pinning arithmetic.
+        assert!(!should_compact(800_000, 1_000_000, 40));
+        assert!(should_compact(950_000, 1_000_000, 40));
+        // Already folded, the transcript is the fold itself — folding it again
+        // would spend a call a turn and never let the conversation grow back.
+        assert!(!should_compact(950_000, 1_000_000, 1));
+        // A window we do not know is not a reason to spend.
+        assert!(!should_compact(999_999, 0, 40));
+    }
+
+    #[test]
+    fn a_folded_note_says_how_much_it_folded() {
+        let note = compacted_note("talked about lifetimes", 12);
+        assert!(note.contains("12 earlier messages"), "{note}");
+        assert!(note.contains("talked about lifetimes"), "{note}");
+        assert!(note.contains("Continue from here."), "{note}");
     }
 }

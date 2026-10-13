@@ -9,8 +9,9 @@ the tree's roles and its keys are one edit to the same recursion. **Phase 8
 (8.1–8.13) is done and committed, still local, and unreleased**: its items are
 below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, and
 which of it is worth having here) is
-[`ReverseEngineering.md`](ReverseEngineering.md). The next release is **0.5.0**,
-and `CHANGELOG.md`'s top section is what its tag will print.
+[`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is planned
+below and is being built; its items stay local and unreleased with Phase 8's. The next
+release is **0.5.0**, and `CHANGELOG.md`'s top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -1417,6 +1418,100 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   missing key; and the keys are camelCase, which is what the format was written in. Falsified:
   making the export its own decision query with a different cap fails it. `cargo test` 347 passed.
 - **Stop**: what was allowed, and what it cost, can be exported to a file.
+
+---
+
+## Phase 9: Containment and trust
+
+Planned 2026-10-13, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 8 made deskseek do
+more; this is the batch that makes what it does trustworthy when nobody is watching — what it may
+spend, what it may send out, what it may delete, and who checks it when the mode is Auto. The order
+is load-bearing rather than cosmetic: 9.5 must land before 9.6, because a safety review costs money
+and a bill that cannot show the review is a bill that lies. Nothing here needs a server, and nothing
+here weakens a rule already standing — the guard stays the guard, and anything that survives a
+restart is something the user can see and revoke.
+
+### 9.1 [S] A long chat folds itself ✅
+- **Why**: Claude compacts near the limit automatically; this repo offers `/summarise` and a button
+  that appears at 80% of the window, so the user is the one who has to notice. Automating the same
+  step costs one cheap call and removes a decision — and a scheduled run, which has nobody watching
+  the meter, is exactly where the window runs out.
+- **Files**: `conversation/summarize.rs` (`AUTO_COMPACT_AT`, `should_compact`, `compacted_note`,
+  and `fold` — the one place `/compact` and the automatic step both go through, so there is one
+  shape of folded transcript rather than two); `conversation/agent.rs` (the trigger, after the loop
+  and before the done event, so the window's own re-read shows the fold); `api/models.rs`
+  (`context_for`); `store/db.rs` (`delete_messages` returns how many it dropped, which is what the
+  note reports); `commands.rs` (`compact_chat` keeps its command and loses its inline body).
+- **Test**: `summarize::tests::a_chat_over_the_window_is_folded_once_and_not_again` — 80% of the
+  window is the meter's warning and not the fold's mark, 95% is, a transcript that is already one
+  folded message is never folded again (which is what stops a chat whose system prompt alone fills
+  the window from folding on every turn), and an unknown window is not a reason to spend.
+  `a_folded_note_says_how_much_it_folded` pins the count in the note. The test deliberately does
+  **not** assert the exact boundary: `0.9 * 1_000_000` is a floating-point question rather than a
+  fact about the rule, so the cases sit well inside and well outside it instead. Falsified: relaxing
+  the guard from `stored > 1` to `stored > 0` fails it on
+  `assertion failed: !should_compact(950_000, 1_000_000, 1)`, and restoring passes.
+  `cargo test` 349 passed. Two things the plan guessed differently, both said out loud: the measure
+  is the provider's own `prompt_tokens` for the request just sent rather than a character estimate,
+  so it cannot drift from the meter or from what the endpoint counted; and `src/lib/context.ts`
+  needed no change, because the meter's 0.8 is a warning and the fold's 0.9 is an act.
+- **Stop**: a long chat stops at a summary instead of at a length error, without the user pressing
+  anything. One limit named: the summariser's own call is not priced into the spend view yet, which
+  is 9.5's job — and it is the same call `/summarise` has always made.
+
+### 9.2 [M] A grant that remembers its target
+- **Why**: every new write or command asks today. Claude remembers an "always for this site" and an
+  "always for this app", and generalising that to a target — a site, a command prefix, a path root —
+  is what cuts approval fatigue without loosening the model.
+- **Files**: `store/db.rs` (`tool_grants`, in the `CREATE TABLE` and as a guarded `ALTER`);
+  `tools/mod.rs` (the target each tool name reduces to); `approvals.rs` (ask the grant before
+  asking the user); `commands.rs` and `src/api.ts` (list and revoke); `SettingsDialog.tsx`.
+- **Test**: a grant skips the prompt for exactly its target and nothing else, revoking it asks
+  again, and the decision log still records the first grant.
+- **Stop**: a repeated action on one site asks once.
+
+### 9.3 [S] A chat that declares what it may send out
+- **Why**: the guard already *tries* to catch an upload by pattern-matching arguments; a policy the
+  user states is stronger and can say *why* it refused. Claude Cowork respects session egress
+  permissions, and this is the honest local equivalent.
+- **Files**: `store/settings.rs` or `db.rs` (the per-chat policy, with the serde-default habit);
+  `tools/guard.rs` (consult the policy before the heuristic); `commands.rs`; `src/types.ts`;
+  `ChatView.tsx` (the switch, and the sentence saying it is a policy and not a sandbox).
+- **Test**: a chat set to no uploads refuses an upload outright, and an ordinary local write is
+  untouched by it.
+- **Stop**: a chat set to "no uploads" cannot send a local file out, and says why when refused.
+
+### 9.4 [S] A delete is never auto-approved
+- **Why**: a delete under a pile of approvals is the one action that cannot be undone. Claude asks
+  for it separately from every other write, and the hole here is the same one the plan already
+  admits: file tools rewind, but a `rm` through `run_command` does not.
+- **Files**: `tools/guard.rs` (a delete class that no mode auto-approves); `tools/mod.rs` (the
+  class, and the tool declarations it applies to); the rewind/checkpoint path (record the pre-image
+  first, so `/rewind` can still put the file back).
+- **Test**: a recursive delete is refused under Skip, and a file-tool delete still rewinds.
+- **Stop**: no approval mode deletes a file without being asked.
+
+### 9.5 [S] Every spender is on the bill
+- **Why**: a sub-agent, a safety review, dictation and semantic lookup all spend money, and this
+  repo's own rule is that the sidebar total and the spend view are two readings of one number. A new
+  subsystem that spends invisibly breaks that rule the day it ships.
+- **Files**: `store/db.rs` (`turn_usage` gains a kind, or a parent id — the same `ALTER` habit 8.6
+  used for `task_id`); `api/models.rs` (the price of the model the sub-system calls); `commands.rs`
+  (the summariser's own spend, which is already invisible today); `SpendPanel.tsx` (the split).
+- **Test**: the sections sum to the total for a turn that includes an overhead call, and an
+  unpriced model reports unknown rather than guessing a number.
+- **Stop**: nothing can spend money without appearing on the spend view.
+
+### 9.6 [M] A safety pass before Auto acts
+- **Why**: Auto mode reviews nothing but a string table, and `guard.rs` says so out loud. A small
+  model call over the tool name, a redacted argument summary and the last few turns is the honest
+  second layer — and the fallback when it cannot answer is *ask*, never *proceed*.
+- **Files**: `tools/guard.rs` (an `Advisory` verdict beside `Allow`/`Refuse`); a new
+  `conversation/review.rs`; `conversation/agent.rs` (call it in Auto only); `api/client.rs` (a
+  non-streaming call, as the summariser already has); the spend kind from 9.5.
+- **Test**: a golden set of calls — a download-and-execute pipeline, a recursive delete, an upload of
+  a local file, an ordinary write — keeps its verdict, and a review that fails degrades to asking.
+- **Stop**: Auto no longer relies on string matches alone, and a failed review asks.
 
 ---
 

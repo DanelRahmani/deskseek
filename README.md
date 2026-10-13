@@ -225,7 +225,10 @@ Both sections are functional:
     original in place
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
-  fix is next to the warning rather than a command you have to remember
+  fix is next to the warning rather than a command you have to remember. Past 90% a run folds the
+  conversation itself: the transcript is replaced by its summary, with a note saying how many
+  messages went into it, so a chat that would have run out of room carries on instead — and a
+  scheduled run, which has nobody watching the meter, fits the same rule
 - **Per-chat cost** — the sidebar shows each conversation's accumulated spend, summed from
   real usage as every turn ends
 - **Spend** (*Spend* in the sidebar, or `/spend`) — the same figures over a window: the total,
