@@ -1086,6 +1086,28 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         ),
         (
             Tool::function(
+                "ui_windows",
+                "List the windows that are open on the user's desktop, and which one has focus. Use it to pick a window to look at or press something in, instead of guessing at a title.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "ui_click_at",
+                "Click a pixel in the picture your last ui_screenshot showed you. Use it for the controls that have no name to press — a canvas, a game, a chart. Take a screenshot first: the coordinates are pixels in that picture, not in the window's own frame. The user approves each click unless the chat is in skip mode.",
+                params(
+                    json!({
+                        "x": {"type": "integer", "description": "Pixels from the left of the picture you were shown"},
+                        "y": {"type": "integer", "description": "Pixels from the top of the picture you were shown"}
+                    }),
+                    &["x", "y"],
+                ),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
                 "ui_click",
                 "Press a control on the user's desktop — a button, a menu item, a list item — by its name or its automation id. Look with ui_snapshot first. The user approves each press unless the chat is in skip mode.",
                 params(
@@ -1323,17 +1345,20 @@ mod tests {
 
     #[test]
     fn desktop_tools_are_computer_class_and_must_be_switched_on() {
-        for name in ["ui_snapshot", "ui_screenshot", "ui_click", "ui_type"] {
+        for name in ["ui_snapshot", "ui_screenshot", "ui_windows", "ui_click", "ui_click_at", "ui_type"] {
             assert_eq!(class_of(name), ToolClass::Computer, "{name}");
             assert!(is_computer_tool(name), "{name} must follow the computer-use switch");
         }
-        // Only acting spends the run's action budget.
+        // Only acting spends the run's action budget. A coordinate click is an act
+        // like any other: it presses the mouse, whatever it is aimed at.
         assert!(crate::tools::desktop::is_action("ui_click"));
+        assert!(crate::tools::desktop::is_action("ui_click_at"));
         assert!(crate::tools::desktop::is_action("ui_type"));
         assert!(!crate::tools::desktop::is_action("ui_snapshot"));
         // Looking at the screen is not acting on it: a screenshot is approved like
         // every other computer call, but it changes nothing, so it is not budgeted.
         assert!(!crate::tools::desktop::is_action("ui_screenshot"));
+        assert!(!crate::tools::desktop::is_action("ui_windows"));
         // The gate must not catch anything that already existed.
         for name in ["read_file", "browser_open", "run_command", "fetch_url", "update_tasks"] {
             assert!(!is_computer_tool(name), "{name} must not follow the computer-use switch");

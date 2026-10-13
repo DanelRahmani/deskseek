@@ -605,10 +605,13 @@ Window "Macroeconomics II Summary.docx - Word"
 ```
 
 That is how the agent answers "what is on my screen" and reads a dialog you cannot describe.
-`ui_screenshot` photographs the window in front, for the windows that text cannot describe.
-`ui_click` presses a control by name or id, and `ui_type` types into a field. The agent is told to
-work in one-step turns — look, act once, read what the call returns — so a wrong turn costs one
-step instead of five.
+`ui_windows` lists what is open and which has focus, so it can name a window instead of guessing at
+one. `ui_screenshot` photographs the window in front, for the windows that text cannot describe,
+and `ui_click_at` presses a pixel in that picture. `ui_click` presses a control by name or id, and
+`ui_type` types into a field. The agent is told to work in one-step turns — look, act once, read
+what the call returns — so a wrong turn costs one step instead of five. It is also told the
+cheapest-first order: a connector if the user has one for that application, then the browser for
+anything on the web, and the desktop only for a window that is neither.
 
 Four rails, because this is the one feature that really moves your mouse:
 
@@ -627,9 +630,12 @@ And the limits, stated rather than papered over:
 - **A window with no standard controls reports nothing — so look at it instead.** A game, a canvas,
   a custom-drawn app has no accessibility tree to read; `ui_screenshot` sends the model a picture of
   it, scaled to 1280px on its longest side first, because a model reads a screenshot by its
-  dimensions and past that size the tokens stop buying detail. There is still no raw coordinate
-  clicking: everything goes through a control's own Invoke pattern, or the mouse, aimed at a control
-  you named.
+  dimensions and past that size the tokens stop buying detail. `ui_click_at` then presses a pixel
+  in that picture — the one action with no control behind it. That is why it needs a screenshot
+  first, and why its coordinates are pixels in *the picture you were shown* rather than pixels on
+  the screen: the window's own position is remembered when it is photographed and added back when
+  the click is aimed. Everything else still goes through a control's own Invoke pattern, or the
+  mouse, aimed at a control the agent named.
 - **It is bounded**: six levels deep, 300 controls, off-screen branches skipped. A tree read whole
   would cost more context than it is worth.
 - **A screenshot goes to whoever can use it.** It is always shown in the chat; it is *also* handed
@@ -866,7 +872,7 @@ quietly leaving them broken:
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the setup screen can build one on Docker, and the other browsing tools work without it |
 | Docker or WSL2 | running commands in a container instead of directly | No |
-| *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_screenshot`, `ui_click`, `ui_type`) | No — off by default |
+| *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_screenshot`, `ui_windows`, `ui_click`, `ui_click_at`, `ui_type`) | No — off by default |
 
 The same screen also chooses where commands run, and shows which rung that setting currently
 resolves to.

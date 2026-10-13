@@ -98,6 +98,7 @@ Changing behaviour in this app is usually changing one of these.
 | Whether a model takes an effort setting at all, and what each dialect sends for a level — `reasoning_effort` on one wire, a thinking budget on the other | `api/provider.rs`, `api/openai_compat.rs`, `api/anthropic_compat.rs` |
 | What a turn would have cost on a cheaper model — the one arithmetic that must not be done twice, and the threshold below which saying so is noise | `api/provider.rs` |
 | A tool result that took a picture: one capture, the full-size file kept and the smaller copy sent, the scale rule, and the filter that leaves an endpoint which cannot see with the text | `tools/mod.rs`, `tools/desktop.rs`, `tools/browser.rs`, `api/provider.rs` |
+| Where a coordinate click lands: the picture it is anchored to, the window origin remembered with it, and the arithmetic that turns a pixel into a screen point | `tools/desktop.rs` |
 | Who spent a row in `turn_usage` (a turn, a summary, a revision) and whether its price is known — and the one writer for a call nobody typed | `store/db.rs`, `conversation/mod.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |

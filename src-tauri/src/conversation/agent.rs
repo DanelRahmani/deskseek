@@ -461,7 +461,13 @@ items, list items and tabs all work.\n\
 there and `submit` to press Enter.\n\n\
 Work in this order: look, act once, read what the call returns, then decide the next step. Never \
 chain several actions hoping they land — the tree each action returns tells you what actually \
-happened, so a wrong turn costs one step instead of five.\n\n\
+happened, so a wrong turn costs one step instead of five.\n\
+Reach for the cheapest thing that can do the job: a connector (`mcp__…`) if the user has one for \
+that application, then `browser_*` for anything on the web, and this only for a window that is \
+neither — the desktop is the last resort because it is the one that can move the user's mouse.\n\
+When a window's controls report nothing useful, `ui_screenshot` shows you the picture and \
+`ui_click_at` presses a pixel in it. That click is the one action with no control behind it, so \
+take a fresh screenshot first and aim at what you can see.\n\n\
 Every one of these is approved by the user unless the chat is in skip mode, so say what you are \
 about to do in one line before you do it. Never press something that spends money, sends a \
 message, or deletes anything without asking first. The user's kill switch is Ctrl+Alt+Esc: if they \

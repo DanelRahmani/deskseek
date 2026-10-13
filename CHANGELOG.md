@@ -44,6 +44,7 @@ one.
 - A scheduled task can run on a model of its own — a cheap one for a nightly triage — instead of the chat's; the run's spend row names the model that really ran
 - A model with no thinking to budget can be marked as such, and the chat then shows no thinking controls at all rather than a switch that quietly does nothing
 - A screenshot now goes to the model as well as to you, when the model you are running on can see: `ui_screenshot` photographs the window in front — for the canvases and custom-drawn apps whose controls report nothing — and `browser_screenshot` sends the page it captured, both scaled to 1280px on the longest side. A text-only endpoint is sent the words instead, and a desktop screenshot keeps its full-size file
+- A window with no controls to press can be driven by **clicking a pixel in that picture** — `ui_click_at` aims at the screenshot you were last shown, so the coordinates mean what you can see rather than a place on the screen — and `ui_windows` lists what is open, and which window has focus, so the agent names a window instead of guessing at one
 - When a cheaper model of the same endpoint would have done the same work for noticeably less, the chat says what the turn would have cost there and offers the switch — a number and a suggestion, never a downgrade you did not ask for. The task form's model list shows each model's published rate
 
 ## 0.4.0 — 2026-10-12

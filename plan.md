@@ -2166,15 +2166,37 @@ than a module.
   `docs/E2E-CHECKLIST.md`.
 - **Stop**: a screenshot can be read by the model, and a model that cannot see is told so.
 
-### 9.5 [M] Computer use: a coordinate click and an app inventory
+### 9.5 [M] Computer use: a coordinate click and an app inventory ✅
 - **Why**: the desktop tool reads the accessibility tree, so a canvas or a game reports nothing and
   there is no raw coordinate click. Vision (9.1) plus a screenshot-anchored click closes that gap the
   way every vendor's computer use does.
-- **Files**: `tools/desktop.rs` (a coordinate click, an enumerated window list, and the ordering
-  sentence), `conversation/agent.rs` (the connector → browser → computer-use ordering in the prompt).
-- **Shape**: the rails stay exactly as they are — off by default, ask every time, the action cap, the
-  spacing, `Ctrl+Alt+Esc`. A coordinate click is refused outright when desktop control is off.
-- **Test**: the spacing and cap tests stay, and a coordinate click with computer use off is refused.
+- **Files**: `tools/desktop.rs` (`screen_point`, the `LAST_RECT` the capture records,
+  `shot::click_screen`, `click_at`, `windows`, and `com::window_list`); `tools/mod.rs` (the two new
+  declarations, and `is_action`); `conversation/agent.rs` (the ordering policy and the coordinate
+  rule in the desktop guidance); `Cargo.toml` (the `Win32_UI_Input_KeyboardAndMouse` feature, which
+  adds no crate); `README.md`.
+- **Shape**: the rails are untouched — off by default, ask every time, the 25-action cap, the 250 ms
+  spacing, `Ctrl+Alt+Esc` — and `ui_click_at` joins the list the budget counts, because it presses the
+  mouse whatever it is aimed at. The one design decision worth writing down is **what the coordinates
+  mean**. They are pixels in the picture the model was last shown, not pixels on the screen: the
+  window's origin is recorded when it is photographed and added back when the click is aimed, so the
+  two can never disagree about which window they describe. That is also why a click with no picture
+  behind it is **refused with a sentence** rather than attempted — (120, 40) against no screenshot is
+  a click somewhere arbitrary, which is worse than a refusal. Three smaller things: `SendInput` rather
+  than the deprecated `mouse_event`; a 60 ms settle between moving the pointer and pressing, because a
+  press that arrives first lands wherever the pointer still is; and `ui_windows` exposes the
+  enumeration `ui_snapshot` already had as its fallback, so the agent names a window that exists
+  instead of guessing a title and reading the refusal.
+- **Test**: `cargo test` — `a_pixel_in_the_picture_becomes_a_point_on_the_screen` (including a window
+  on a monitor above or left of the primary one, where the origin is negative) and
+  `a_point_outside_the_picture_is_refused_rather_than_clamped` (the far edge is one *past* the last
+  pixel, which is the off-by-one that clicks a neighbour); the tool-class test now covers both new
+  names, and asserts that looking at the screen is not budgeted while clicking it is. Falsified:
+  dropping the window's origin (`Some((origin.0 + x, origin.1 + y))` → `Some((x, y))`) fails that
+  first test with `left: Some((0, 0)), right: Some((100, 50))` — a click inside the picture's bounds,
+  so nothing is refused, landing on another application — after checking the mutation reached the
+  disk, and restoring passes. `cargo test` 442 → 444. The click itself needs a real screen and a real
+  canvas, so that is on `docs/E2E-CHECKLIST.md`.
 - **Stop**: a canvas window can be driven by coordinate, behind the same rails as every other action.
 
 ### 8.5 [M] Audio Overview (text to speech)

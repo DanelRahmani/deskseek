@@ -637,3 +637,19 @@ the parts only a person can see.
 - [ ] `browser_screenshot` names the page's scaled size in its result, and the model can describe
       something that is only in the picture
 - [ ] With computer use off, `ui_screenshot` does not appear in the tool list at all
+
+## Computer use: windows and coordinates
+
+- [ ] `ui_windows` lists the open windows with the focused one marked, and matches what is actually
+      on screen
+- [ ] `ui_click_at` before any screenshot is refused with a sentence about taking a screenshot
+      first — nothing moves
+- [ ] After `ui_screenshot` of a window that is *not* at the screen's origin, `ui_click_at` at a
+      pixel in the picture hits that pixel in that window — not the same pixel on the screen
+- [ ] A coordinate outside the picture is refused by name, with the picture's size in the sentence
+- [ ] On a canvas or game window, a click aimed from the screenshot does what it looks like it
+      should
+- [ ] `ui_click_at` spends the run's desktop action budget, and a click during a stop
+      (`Ctrl+Alt+Esc`) is refused like any other action
+- [ ] The prompt's guidance is followed: with an MCP server for the app installed, the agent prefers
+      the connector, then the browser, and reaches for the desktop last

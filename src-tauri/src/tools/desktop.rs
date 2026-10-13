@@ -103,7 +103,21 @@ impl Gate {
 /// Tools that change something on the desktop, as opposed to looking at it.
 /// These are what the per-run budget counts.
 pub fn is_action(name: &str) -> bool {
-    matches!(name, "ui_click" | "ui_type")
+    matches!(name, "ui_click" | "ui_type" | "ui_click_at")
+}
+
+/// A pixel in the last picture, as a point on the screen.
+///
+/// Pure and separate because it is the one part of a coordinate click that can be
+/// wrong without anybody noticing: an off-by-one here clicks the neighbouring
+/// control, and forgetting the window's origin clicks a different application
+/// altogether. `None` for a point outside the picture, which is a request the
+/// model got wrong rather than a place on the screen.
+pub fn screen_point(origin: (i32, i32), size: (u32, u32), x: i32, y: i32) -> Option<(i32, i32)> {
+    if x < 0 || y < 0 || x >= size.0 as i32 || y >= size.1 as i32 {
+        return None;
+    }
+    Some((origin.0 + x, origin.1 + y))
 }
 
 /// One line of the desktop tree, decoupled from COM so the formatting and the
@@ -236,7 +250,14 @@ pub async fn execute(
     let gate = &state.computer;
     match name {
         "ui_snapshot" => snapshot(Query::from_args(args)).await.map(Into::into),
+        "ui_windows" => windows().await.map(Into::into),
         "ui_screenshot" => screenshot(app, state, chat_id, call_id).await,
+        "ui_click_at" => {
+            let x = args.get("x").and_then(Value::as_i64).unwrap_or(-1) as i32;
+            let y = args.get("y").and_then(Value::as_i64).unwrap_or(-1) as i32;
+            gate.wait_turn()?;
+            click_at(x, y).await.map(Into::into)
+        }
         "ui_click" => {
             let query = Query::from_args(args);
             if !query.is_specific() {
@@ -306,6 +327,44 @@ pub async fn click(query: Query) -> Result<String, String> {
     run_blocking(move || com::click(&query)).await
 }
 
+/// The windows that are open, by title, and which one has focus.
+///
+/// The same enumeration `ui_snapshot` falls back to when a name does not match,
+/// offered up front instead: an agent that can see the list picks a window rather
+/// than guessing at a title and reading the refusal.
+#[cfg(windows)]
+pub async fn windows() -> Result<String, String> {
+    run_blocking(|| Ok(com::window_list())).await
+}
+
+/// Press the mouse at a pixel in the picture the model was last shown.
+///
+/// The one action here with no control behind it, which is the whole reason it
+/// exists: a canvas, a game or a custom-drawn chart reports nothing to press, and
+/// a picture is the only thing that says where its buttons are.
+///
+/// Refused before anything moves when there is no picture, because the
+/// coordinates are defined *by* that picture — a click at (120, 40) against no
+/// screenshot is a click somewhere arbitrary, which is worse than a refusal.
+#[cfg(windows)]
+pub async fn click_at(x: i32, y: i32) -> Result<String, String> {
+    let (origin, size) = shot::last_rect().ok_or(
+        "there is no picture to click in yet — call `ui_screenshot` first, because the coordinates \
+         are pixels in the picture you were shown",
+    )?;
+    let (screen_x, screen_y) = screen_point(origin, size, x, y).ok_or_else(|| {
+        format!(
+            "({x}, {y}) is outside the picture, which is {}×{} pixels — take a new screenshot if \
+             the window has changed",
+            size.0, size.1
+        )
+    })?;
+    run_blocking(move || shot::click_screen(screen_x, screen_y)).await?;
+    Ok(format!(
+        "Clicked at ({x}, {y}) in the picture, which is ({screen_x}, {screen_y}) on the screen."
+    ))
+}
+
 #[cfg(windows)]
 pub async fn type_text(
     query: Query,
@@ -340,6 +399,35 @@ pub struct Shot {
 fn scale_factor(width: u32, height: u32) -> u32 {
     let longest = width.max(height);
     longest.div_ceil(super::MODEL_MAX_SIDE).max(1)
+}
+
+#[cfg(test)]
+mod click_tests {
+    use super::*;
+
+    #[test]
+    fn a_pixel_in_the_picture_becomes_a_point_on_the_screen() {
+        // A window at (100, 50) that is 1920×1080: the picture's origin *is* the
+        // window's, so the screen point is the sum — which is the whole reason the
+        // origin is remembered alongside the picture.
+        assert_eq!(screen_point((100, 50), (1920, 1080), 0, 0), Some((100, 50)));
+        assert_eq!(screen_point((100, 50), (1920, 1080), 120, 40), Some((220, 90)));
+        // A negative origin is a window on a monitor to the left of or above the
+        // primary one, and the arithmetic is exactly the same.
+        assert_eq!(screen_point((-1920, 0), (800, 600), 10, 10), Some((-1910, 10)));
+    }
+
+    #[test]
+    fn a_point_outside_the_picture_is_refused_rather_than_clamped() {
+        let size = (800, 600);
+        // The far edge is one past the last pixel, which is the off-by-one that
+        // clicks a neighbouring control without anybody noticing.
+        assert_eq!(screen_point((0, 0), size, 799, 599), Some((799, 599)));
+        assert_eq!(screen_point((0, 0), size, 800, 599), None);
+        assert_eq!(screen_point((0, 0), size, 799, 600), None);
+        assert_eq!(screen_point((0, 0), size, -1, 0), None);
+        assert_eq!(screen_point((0, 0), size, 0, -1), None);
+    }
 }
 
 #[cfg(test)]
@@ -604,7 +692,7 @@ mod shot {
         DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HDC, ReleaseDC, SelectObject,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+        GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, SetCursorPos,
     };
 
     /// `PW_RENDERFULLCONTENT`: ask the window to draw itself even when it renders
@@ -626,6 +714,66 @@ mod shot {
     /// The window that was in front when the chord was pressed: its handle as an
     /// integer (a raw pointer cannot live in a `static`) and its title.
     static FRONT: Mutex<Option<(isize, String)>> = Mutex::new(None);
+
+    /// Where the last capture came from: its screen origin and its size.
+    ///
+    /// Kept because a click's coordinates are pixels in the picture the model was
+    /// *shown*, and a picture of a window has no idea where that window sits on
+    /// the screen. One static holds the pairing, so the picture and the numbers
+    /// can never disagree about which window they describe.
+    static LAST_RECT: Mutex<Option<((i32, i32), (u32, u32))>> = Mutex::new(None);
+
+    /// The origin and size of the last capture, if there has been one.
+    pub fn last_rect() -> Option<((i32, i32), (u32, u32))> {
+        *LAST_RECT.lock().unwrap()
+    }
+
+    /// Press the left button at a point on the screen.
+    ///
+    /// `SendInput` rather than the deprecated `mouse_event`: the same three lines
+    /// to call, and the one that is still supported.
+    pub fn click_screen(x: i32, y: i32) -> Result<(), String> {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+            INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT,
+            SendInput,
+        };
+
+        // SAFETY: `SetCursorPos` takes two screen coordinates and `SendInput` a
+        // pointer to a local array of the documented size. Nothing outlives the
+        // call and no handle is made or freed.
+        unsafe {
+            if SetCursorPos(x, y) == 0 {
+                return Err(format!("could not move the pointer to ({x}, {y})"));
+            }
+            // A press that arrives before the pointer has moved lands wherever it
+            // still is — which, for a click anchored to a picture, is the wrong
+            // control entirely.
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            let press = |flags: u32| INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        dx: 0,
+                        dy: 0,
+                        mouseData: 0,
+                        dwFlags: flags,
+                        time: 0,
+                        dwExtraInfo: 0,
+                    },
+                },
+            };
+            let mut events = [press(MOUSEEVENTF_LEFTDOWN), press(MOUSEEVENTF_LEFTUP)];
+            let sent = SendInput(
+                events.len() as u32,
+                events.as_mut_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            );
+            if sent != events.len() as u32 {
+                return Err("the system refused the click".to_string());
+            }
+        }
+        Ok(())
+    }
 
     pub fn remember() {
         // SAFETY: `GetForegroundWindow` takes no arguments and returns a handle
@@ -680,6 +828,10 @@ mod shot {
             if width <= 0 || height <= 0 {
                 return Err(format!("\"{title}\" has nothing to capture — it is minimised."));
             }
+            // Where this picture came from, recorded before anything can fail:
+            // a click is anchored to the *last* picture, and one that arrived
+            // without its origin would be aimed at the wrong place entirely.
+            *LAST_RECT.lock().unwrap() = Some(((rect.left, rect.top), (width as u32, height as u32)));
 
             let screen = GetDC(std::ptr::null_mut());
             if screen.is_null() {
@@ -796,6 +948,50 @@ mod com {
     fn open() -> Result<UIAutomation, String> {
         UIAutomation::new()
             .map_err(|e| format!("could not reach the Windows accessibility layer: {e}"))
+    }
+
+    /// The open windows, by title, with the one that has focus marked.
+    ///
+    /// The same enumeration `target_window` searches, exposed rather than kept
+    /// private: a model that can read the list picks a title that exists instead of
+    /// guessing one, being refused, and reading the same list from the refusal.
+    pub fn window_list() -> String {
+        let automation = match open() {
+            Ok(automation) => automation,
+            Err(err) => return err,
+        };
+        let matcher = match automation
+            .create_matcher()
+            .depth(2)
+            .timeout(0)
+            .control_type(ControlType::Window)
+            .find_all()
+        {
+            Ok(found) => found,
+            Err(err) => return format!("the desktop could not be read: {err}"),
+        };
+        let mut lines: Vec<String> = Vec::new();
+        for element in matcher {
+            let name = element.get_name().unwrap_or_default();
+            if name.trim().is_empty() {
+                // An untitled window has no name to pass to `ui_snapshot`, so
+                // listing it would only invite a call that cannot work.
+                continue;
+            }
+            let focused = element.has_keyboard_focus().unwrap_or(false);
+            lines.push(format!(
+                "  {}{}",
+                one_line(&name),
+                if focused { "  [focus]" } else { "" }
+            ));
+        }
+        if lines.is_empty() {
+            return "no top-level window is open".to_string();
+        }
+        // Focus first, because that is the window ui_snapshot reads without being
+        // told a name, and the one a screenshot would photograph.
+        lines.sort_by_key(|line| !line.contains("[focus]"));
+        format!("Open windows:\n{}", lines.join("\n"))
     }
 
     /// The window to work in: the one the model named, or the one with focus.
