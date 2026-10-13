@@ -32,6 +32,7 @@ one.
 - A chat can declare what it may send out — *Read only* (read the web, send nothing) or *No network* — and the policy is a refusal in every mode rather than one more thing to approve
 - A command that deletes files is always put to you, in every mode including *Skip*: an `rm` removes a file that `/rewind` cannot put back, because the app never saw what the shell was about to remove
 - The spend view gained *By what spent it*: the summariser and the in-place rewrite are priced onto the same rows as a turn, and a model with no published price has its tokens counted and its money marked unknown rather than guessed
+- In *Auto* mode a cheap reviewer reads each action before it runs — the tool, its redacted arguments and the last few turns — and can refuse it or hand it to you; anything it cannot read clearly is handed to you rather than waved through
 
 ## 0.4.0 — 2026-10-12
 

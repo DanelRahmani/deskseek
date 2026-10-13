@@ -587,7 +587,11 @@ fn now() -> String {
 /// Arguments are shown in the log, so the ones that look like credentials are
 /// replaced rather than printed. Deliberately blunt: a missed secret is worse
 /// than a redacted word.
-fn redact_args(args: &Value) -> String {
+///
+/// `pub(crate)` because it is the app's *one* rule for handing arguments to
+/// something outside the app — the MCP log and the safety reviewer both ask it,
+/// and a second redactor would be a second thing to keep blunt.
+pub(crate) fn redact_args(args: &Value) -> String {
     let text = redact(args).to_string();
     if text.chars().count() > LOG_ARG_CHARS {
         let head: String = text.chars().take(LOG_ARG_CHARS).collect();

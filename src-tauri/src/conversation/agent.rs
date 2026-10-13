@@ -12,6 +12,7 @@ use crate::api::models;
 use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::{self, Decision};
 use crate::conversation::assemble::{build_messages, memory_block, system_with_memory, Turn};
+use crate::conversation::review;
 use crate::conversation::summarize;
 use crate::runs::Cancel;
 use crate::store::{
@@ -919,6 +920,67 @@ async fn approve(
         );
     }
     allowed
+}
+
+/// Refuses one call, the same way every time: a strike, the event the chat shows,
+/// a line in the decision log, and the sentence the model gets in place of a tool
+/// result.
+///
+/// One function because the guard's refusal and the reviewer's are the same act
+/// with a different reason — and because the escalation threshold is read *here*,
+/// so neither of them can forget to count. A refusal produces no tool result, so
+/// the log line is the only record that it was ever tried.
+#[allow(clippy::too_many_arguments)]
+fn refuse(
+    app: &AppHandle,
+    state: &AppState,
+    chat_id: &str,
+    ws: &Path,
+    name: &str,
+    args: &Value,
+    reason: &str,
+    what: &str,
+    mode: &mut guard::PermissionMode,
+    strikes: &mut u32,
+) -> String {
+    *strikes += 1;
+    let _ = app.emit(
+        EVENT_GUARD,
+        serde_json::json!({
+            "chatId": chat_id,
+            "tool": name,
+            "args": args,
+            "reason": reason,
+            "mode": mode.as_str(),
+        }),
+    );
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::log_decision(
+            &conn,
+            chat_id,
+            name,
+            db::BLOCKED,
+            reason,
+            &approvals::args_digest(args),
+            &ws.to_string_lossy(),
+        );
+    }
+    if *mode == guard::PermissionMode::Auto && *strikes >= MAX_STRIKES {
+        *mode = guard::PermissionMode::Manual;
+        let _ = app.emit(
+            EVENT_GUARD,
+            serde_json::json!({
+                "chatId": chat_id,
+                "escalated": true,
+                "reason": "Repeated blocked actions — would you like to approve the next one yourself?",
+            }),
+        );
+    }
+    format!(
+        "{what} ({reason}). Do not retry this — tell the user what you wanted to do and ask how they \
+         would prefer to proceed."
+    )
 }
 
 /// The internet tools read the public web rather than a workspace, and the
@@ -1904,47 +1966,52 @@ pub async fn run(
                     }
                     guard::PermissionMode::Auto | guard::PermissionMode::Skip => {
                         match guard::classify(&name, &args, mode == guard::PermissionMode::Skip) {
+                            // What the string table let through is what the
+                            // reviewer is for: an action about to run with nobody
+                            // watching, which no list of patterns can judge.
+                            None if review::needs_review(mode, class, must_ask) => {
+                                match review::review(state, chat_id, &name, &args, &turns).await {
+                                    review::Verdict::Allow => true,
+                                    // The fallback, and the point of the whole
+                                    // thing: a reviewer that cannot tell hands the
+                                    // call to the user rather than waving it on.
+                                    review::Verdict::Ask => {
+                                        approve(
+                                            &app, state, chat_id, &ws, &name, class, &args,
+                                            &cancel, unattended,
+                                        )
+                                        .await
+                                    }
+                                    review::Verdict::Refuse => {
+                                        denial = Some(refuse(
+                                            &app,
+                                            state,
+                                            chat_id,
+                                            &ws,
+                                            &name,
+                                            &args,
+                                            "the reviewer judged it unsafe",
+                                            "Blocked by the safety review",
+                                            &mut mode,
+                                            &mut strikes,
+                                        ));
+                                        false
+                                    }
+                                }
+                            }
                             None => true,
                             Some(reason) => {
-                                strikes += 1;
-                                let _ = app.emit(
-                                    EVENT_GUARD,
-                                    serde_json::json!({
-                                        "chatId": chat_id,
-                                        "tool": name,
-                                        "args": args,
-                                        "reason": reason,
-                                        "mode": mode.as_str(),
-                                    }),
-                                );
-                                // A refusal produces no tool result, so this line
-                                // is the only record that it was ever tried.
-                                {
-                                    let conn = state.db.lock().unwrap();
-                                    let _ = db::log_decision(
-                                        &conn,
-                                        chat_id,
-                                        &name,
-                                        db::BLOCKED,
-                                        reason,
-                                        &approvals::args_digest(&args),
-                                        &ws.to_string_lossy(),
-                                    );
-                                }
-                                if mode == guard::PermissionMode::Auto && strikes >= MAX_STRIKES {
-                                    mode = guard::PermissionMode::Manual;
-                                    let _ = app.emit(
-                                        EVENT_GUARD,
-                                        serde_json::json!({
-                                            "chatId": chat_id,
-                                            "escalated": true,
-                                            "reason": "Repeated blocked actions — would you like to approve the next one yourself?",
-                                        }),
-                                    );
-                                }
-                                denial = Some(format!(
-                                    "Blocked by the safety guard ({}). Do not retry this — tell the user what you wanted to do and ask how they would prefer to proceed.",
-                                    reason
+                                denial = Some(refuse(
+                                    &app,
+                                    state,
+                                    chat_id,
+                                    &ws,
+                                    &name,
+                                    &args,
+                                    reason,
+                                    "Blocked by the safety guard",
+                                    &mut mode,
+                                    &mut strikes,
                                 ));
                                 false
                             }

@@ -2443,6 +2443,7 @@ pub fn size_bytes(conn: &Connection) -> u64 {
 pub const TURN: &str = "turn";
 pub const SUMMARY: &str = "summary";
 pub const REVISION: &str = "revision";
+pub const REVIEW: &str = "review";
 
 /// One API round's usage, as the agent loop hands it over.
 ///

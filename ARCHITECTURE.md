@@ -57,7 +57,7 @@ to a run without knowing anything about runs:
 | `chat-tool` | `conversation/agent.rs` | a tool call, and its result |
 | `chat-approval` | `conversation/agent.rs` | parked, waiting for `respond_approval` |
 | `chat-question` | `conversation/agent.rs` | parked, waiting for `respond_question` |
-| `chat-guard` | `conversation/agent.rs` | a call the guard refused |
+| `chat-guard` | `conversation/agent.rs` | a call the guard refused — or the reviewer did, which is the same event with a different reason |
 | `chat-artifact` | `conversation/agent.rs` | a document was published |
 | `chat-shot`, `computer-state` | `tools/browser.rs`, `tools/desktop.rs` | a screenshot; the desktop-control gate |
 | `chat-notify` | `notify.rs` | something finished — the in-app event; `notify.rs` decides whether a toast goes with it |
@@ -89,6 +89,7 @@ Changing behaviour in this app is usually changing one of these.
 | Who spent a row in `turn_usage` (a turn, a summary, a revision) and whether its price is known — and the one writer for a call nobody typed | `store/db.rs`, `conversation/mod.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |
+| Which actions an unattended run puts to a reviewer first, and what an unreadable answer means (an `ask`, never an `allow`) | `conversation/review.rs` |
 | What a chat may send out — the three rungs, and which calls each one refuses | `tools/guard.rs` |
 | That a delete is never waived by a mode — which commands delete, and why a write can be put back while a removal cannot | `tools/guard.rs` |
 | What a grant covers — the target a call reduces to (a site, a program, a folder, an app), and whether a stored grant answers for it | `approvals.rs`, `store/db.rs` |

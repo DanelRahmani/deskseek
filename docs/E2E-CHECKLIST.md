@@ -315,6 +315,12 @@ the parts only a person can see.
       decisions* records the answer
 - [ ] Answer that prompt with *Always allow*: the button names `rm` rather than `run_command`, and
       the next delete of that kind in the folder runs without a prompt
+- [ ] In *Auto*, with the API key in place, run something ordinary (a `cargo test`): the run is a
+      little slower than in *Skip*, and *Spend → By what spent it* grows a *Reviews* row with one
+      call per action
+- [ ] Pull the network cable (or point the base URL at a dead port) and run *Auto* again: the
+      review cannot be made, so every action is put to you as an approval prompt rather than
+      running — the fallback is asking, never proceeding
 
 ## Where commands run
 

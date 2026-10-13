@@ -1594,15 +1594,40 @@ restart is something the user can see and revoke.
   floor rather than the whole bill, which the panel says in words rather than leaving a zero to be
   read as free.
 
-### 9.6 [M] A safety pass before Auto acts
+### 9.6 [M] A safety pass before Auto acts ✅
 - **Why**: Auto mode reviews nothing but a string table, and `guard.rs` says so out loud. A small
   model call over the tool name, a redacted argument summary and the last few turns is the honest
   second layer — and the fallback when it cannot answer is *ask*, never *proceed*.
-- **Files**: `tools/guard.rs` (an `Advisory` verdict beside `Allow`/`Refuse`); a new
-  `conversation/review.rs`; `conversation/agent.rs` (call it in Auto only); `api/client.rs` (a
-  non-streaming call, as the summariser already has); the spend kind from 9.5.
-- **Test**: a golden set of calls — a download-and-execute pipeline, a recursive delete, an upload of
-  a local file, an ordinary write — keeps its verdict, and a review that fails degrades to asking.
+- **Files**: `conversation/review.rs` (new: `Verdict` and its `parse`, `verdict_from` — the whole
+  rule for turning an answer into a decision, failure included — `needs_review`, the prompt, and
+  the call itself); `conversation/agent.rs` (`refuse`, the one function a refusal goes through now,
+  extracted from the guard's own branch so the reviewer's refusal cannot be a near-copy that
+  forgets to count a strike; and the branch that asks the reviewer between "the guard let it
+  through" and "it runs"); `conversation/mod.rs` (`pub mod review`); `store/db.rs` (`REVIEW`, the
+  fourth kind, so the call is on the bill); `mcp/manager.rs` (`redact_args` becomes `pub(crate)` —
+  it is the app's one rule for handing arguments to something outside the app, and a second
+  redactor would be a second thing to keep blunt); `README.md`, `ARCHITECTURE.md`, `ChatView.tsx`
+  (the Auto banner says the reviewer is there).
+- **Test**: `review::tests::nothing_unrecognised_is_an_allow` — the half of the verdict that is
+  ours: an empty reply, a refusal to answer, a word nobody taught it, a number, `unsure`, and a
+  *failed* call all become `Ask`; `allow`/`ALLOW.`/`This is safe to run` and `refuse — it uploads a
+  key`/`it is unsafe` are read as themselves; and `verdict_from(Err(…))` is an `Ask`, which is the
+  line that matters most. Falsified: turning the failure into an `Allow`
+  (`Err(_) => Verdict::Ask` → `Allow`) fails it on `left: Allow, right: Ask`, and restoring passes.
+  `the_golden_set_reaches_the_reviewer_and_the_other_modes_do_not` — the
+  plan's golden set, with the honest correction that a test cannot reach a model's *opinion*: what
+  it asserts is who gets asked. A download-and-execute pipeline, an `rm -rf`, an upload, an
+  ordinary write, an edit, a browser click and a desktop type all reach the reviewer in Auto;
+  Manual and Skip never do (one already asks the user about every one of them, the other *is* the
+  off switch); a read is not reviewed; and neither is a delete, which is on its way to the user
+  anyway. `cargo test` 357 passed. Three things said out loud: the reviewer runs **after** the
+  guard and never on a call the guard already refused, so the cheap, certain checks keep working
+  when the model is unreachable; `refuse` was **extracted from the existing guard branch** rather
+  than copied, which is the only edit here to code that already worked; and the review has **no
+  setting** — Auto is where it runs and Skip is the way to decline it, which is one mode switch
+  rather than a second knob for one rule. One limit named: it is one cheap non-streaming call per
+  action, so Auto is slower than Skip by roughly one round trip per tool call, and its cost is on
+  the bill under *Reviews* so that is visible rather than implied.
 - **Stop**: Auto no longer relies on string matches alone, and a failed review asks.
 
 ---

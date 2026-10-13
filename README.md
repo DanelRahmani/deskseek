@@ -333,7 +333,12 @@ because it is the only rung with something to approve:
 - **Auto** — run without asking. A safety guard refuses known-catastrophic commands (disk
   formatting, `git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`,
   download-and-execute pipelines) and commands that upload local data to the network. Three
-  refusals in one run drop the chat back to *Ask first* automatically
+  refusals in one run drop the chat back to *Ask first* automatically. What the guard lets
+  through is then read by a **small, cheap reviewer** — the tool, its redacted arguments and the
+  last few turns — which answers *allow*, *refuse* or *ask*: a refusal stops the call and says so,
+  and an *ask* becomes the approval prompt, so a reviewer that cannot tell hands the decision to
+  you rather than waving it through. It is one extra cheap call per action, and it appears in the
+  spend view under *By what spent it* like every other call
 - **Skip** — never ask. Only the catastrophic tier is still refused
 
 The one thing every mode stops for is a **delete**. `write_file` and `edit_file` record a file's
@@ -345,8 +350,10 @@ narrow answer now: the grant names the program (`Always allow rm for this folder
 
 One honest caveat, stated plainly in the app too: **the guard is a heuristic, not a security
 boundary.** It catches the patterns a confused or prompt-injected model reaches for. It is not a
-sandbox, and a missing match is not proof of safety. The real containment is the workspace path
-sandbox plus the API key being stripped from every child process.
+sandbox, and a missing match is not proof of safety. The reviewer above is a *second opinion* for
+the same reason and has the same limit — it is a cheap model reading a summary, not a proof. The
+real containment is the workspace path sandbox plus the API key being stripped from every child
+process.
 
 **Every decision is written down.** *Settings → Tools* lists the last hundred, newest first: what
 you were asked, what you said, and the refusals the guard made without asking. It is there because
