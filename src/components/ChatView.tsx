@@ -628,8 +628,8 @@ export function ChatView({
           }`}
         >
           {chat.permission_mode === "skip"
-            ? "Skip mode: writes and commands run without asking. Only catastrophic commands (disk formatting, forced history rewrites, publishing) are refused."
-            : "Auto mode: writes and commands run without asking. A safety guard refuses catastrophic commands and uploads of local data."}
+            ? "Skip mode: writes and commands run without asking. Only catastrophic commands (disk formatting, forced history rewrites, publishing) are refused — and a delete is always put to you."
+            : "Auto mode: writes and commands run without asking. A safety guard refuses catastrophic commands and uploads of local data, and a delete is always put to you."}
         </div>
       )}
 

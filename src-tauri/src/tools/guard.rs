@@ -245,6 +245,59 @@ fn sends_data_out(cmd: &str) -> bool {
     UPLOAD_TOOLS.iter().any(|t| cmd.contains(t)) && UPLOAD_FLAGS.iter().any(|f| cmd.contains(f))
 }
 
+/// Whether a call deletes something.
+///
+/// A delete is not a write with a different verb. A write can be put back —
+/// `write_file` and `edit_file` record the file's pre-image before they touch it,
+/// which is what `/rewind` walks — and a file removed from a shell cannot be,
+/// because the app never saw its contents. So this is the one predicate that
+/// overrules every *mode*: a delete is asked about in manual, in auto and in
+/// skip alike. The guard's own tiers still refuse the catastrophic deletes
+/// outright, mode or no mode.
+///
+/// A grant is deliberately not a mode: an "always allow" is the user's explicit,
+/// visible, revocable answer for exactly one tool and target, and since 9.2 the
+/// target of a command is the program itself — `rm`, not `run_command` — so
+/// answering it is a narrow thing to have said.
+pub fn is_delete(tool: &str, args: &Value) -> bool {
+    if tool != "run_command" {
+        return false;
+    }
+    let Some(command) = args.get("command").and_then(Value::as_str) else {
+        return false;
+    };
+    let cmd = command.to_lowercase();
+    const DELETERS: &[&str] = &["rm", "del", "erase", "rmdir", "rd", "remove-item", "ri"];
+    leading_words(&cmd).iter().any(|w| DELETERS.contains(w))
+        // `git clean -fd` and `git rm` remove files whose contents git may never
+        // have had; their verb is the second word rather than the first.
+        || ["git clean", "git rm"].iter().any(|p| cmd.contains(p))
+}
+
+/// The leading word of every command in a line: the line split at the separators
+/// that begin a new one, each piece's first word taken, `sudo` stepped over and a
+/// path to the program reduced to its name.
+///
+/// Reading the *leading* words rather than searching the text is the whole point:
+/// `npm run formatter` is not an `rm`, and a command that merely mentions one in
+/// an argument is not a delete either.
+fn leading_words(cmd: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for piece in cmd.split([';', '|', '&', '\n', '\r']) {
+        let mut words = piece.split_whitespace();
+        let mut first = words.next().unwrap_or("");
+        if matches!(first, "sudo" | "doas") {
+            first = words.next().unwrap_or("");
+        }
+        let name = first.rsplit(['/', '\\']).next().unwrap_or(first);
+        let name = name.strip_suffix(".exe").unwrap_or(name);
+        if !name.is_empty() {
+            out.push(name);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -306,6 +359,37 @@ mod tests {
         assert_eq!(Egress::parse("none"), Egress::None);
         assert_eq!(Egress::parse("nonsense"), Egress::All);
         assert_eq!(Egress::None.as_str(), "none");
+    }
+
+    #[test]
+    fn a_delete_is_never_waived_by_a_mode() {
+        // Whatever the mode, these are asked about — which is what "no mode
+        // auto-approves a delete" means, and the loop reads this predicate to
+        // decide exactly that.
+        for line in [
+            "rm -rf target",
+            "sudo rm -rf build",
+            "Remove-Item -Recurse -Force out",
+            "del /q notes.txt",
+            "erase notes.txt",
+            "rd /s /q build",
+            "cd src && rm old.rs",
+            "git clean -fd",
+            "git rm tracked.txt",
+            "/bin/rm -f x",
+        ] {
+            assert!(is_delete("run_command", &cmd(line)), "{line} is a delete");
+        }
+        // And it reads the leading words rather than searching the text: a word
+        // that merely contains one is not a delete, and neither is a write.
+        for line in ["cargo test", "npm run formatter", "grep -r rm .", "cargo build"] {
+            assert!(!is_delete("run_command", &cmd(line)), "{line} is not a delete");
+        }
+        assert!(!is_delete("write_file", &json!({"path": "a.md"})));
+        assert!(!is_delete("run_command", &json!({})));
+        // The catastrophic tier still refuses outright — a mode is not the only
+        // thing standing between an `rm` and the filesystem root.
+        assert!(reason("rm -rf /", true).is_some());
     }
 
     #[test]

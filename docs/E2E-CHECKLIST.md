@@ -305,6 +305,11 @@ the parts only a person can see.
       and a `browser_type` are still refused
 - [ ] Both switches say they are a policy and not a sandbox, in the row and in the notice set when
       they are changed
+- [ ] Set the chat to *Skip*, then ask it to `rm -rf` a folder it created: it still stops and asks,
+      the card says the change is one `/rewind` will not put back, and *Settings → Tools → Recent
+      decisions* records the answer
+- [ ] Answer that prompt with *Always allow*: the button names `rm` rather than `run_command`, and
+      the next delete of that kind in the folder runs without a prompt
 
 ## Where commands run
 

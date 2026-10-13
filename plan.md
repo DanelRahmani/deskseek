@@ -1527,14 +1527,32 @@ restart is something the user can see and revoke.
   switch would be a second control for one rule, and the chat is the unit the user thinks in.
 - **Stop**: a chat set to "no uploads" cannot send a local file out, and says why when refused.
 
-### 9.4 [S] A delete is never auto-approved
+### 9.4 [S] A delete is never auto-approved ✅
 - **Why**: a delete under a pile of approvals is the one action that cannot be undone. Claude asks
   for it separately from every other write, and the hole here is the same one the plan already
   admits: file tools rewind, but a `rm` through `run_command` does not.
-- **Files**: `tools/guard.rs` (a delete class that no mode auto-approves); `tools/mod.rs` (the
-  class, and the tool declarations it applies to); the rewind/checkpoint path (record the pre-image
-  first, so `/rewind` can still put the file back).
-- **Test**: a recursive delete is refused under Skip, and a file-tool delete still rewinds.
+- **Files**: `tools/guard.rs` (`is_delete` — the one rule saying which commands delete, and
+  `leading_words`, which reads the *leading* word of each command in a line rather than searching
+  the text, so `npm run formatter` is not an `rm` and `grep -r rm .` is not one either);
+  `conversation/agent.rs` (`must_ask`, computed once beside the policy check and read by the one
+  branch that forces an approval, so "a delete is never waived" cannot become three answers in
+  three branches; plus a line in the auto and skip prompt sections so the model says what it is
+  removing instead of discovering the rule a prompt at a time); `README.md`, `ChatView.tsx` (the
+  Skip banner and the Agent rung now say a delete is still put to you).
+- **Test**: `guard::tests::a_delete_is_never_waived_by_a_mode` — `rm`, `sudo rm`, `Remove-Item`,
+  `del`, `erase`, `rd`, a chained `cd src && rm old.rs`, `git clean -fd`, `git rm` and `/bin/rm`
+  all count; `cargo test`, `npm run formatter`, `grep -r rm .` and a `write_file` do not; a missing
+  argument is not a delete; and the catastrophic tier still refuses `rm -rf /` outright. The loop
+  half is structural — one predicate, one branch — because `approve()` cannot be built without an
+  `AppHandle`. Falsified: dropping `"rm"` from the delete list fails it on the first case
+  (`rm -rf target`), and restoring passes. `cargo test` 354 passed. Two deviations, both said out
+  loud: there is **no fifth
+  `ToolClass`** (a class is a property of a *tool*, and `run_command` is both an ordinary command
+  and a delete — the predicate is the only shape that can tell two calls of one tool apart), and
+  **`tools/mod.rs` needed no change** for the same reason. One limit named: a *grant* still waives
+  the prompt — an "always allow" is the user's explicit, visible, revocable answer for one tool and
+  target, and 9.2 made that target the program (`rm`, not `run_command`), so answering it is a
+  narrow thing to have said. What a mode may never do is decide it on the user's behalf.
 - **Stop**: no approval mode deletes a file without being asked.
 
 ### 9.5 [S] Every spender is on the bill

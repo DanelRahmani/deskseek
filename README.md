@@ -318,7 +318,8 @@ Each conversation carries its own **mode**, chosen beside the message box and cy
   `browser_eval` are all actions on someone else's site, so they wait until the chat is allowed
   to act. Useful for "tell me what you would do" on a codebase you have not handed over yet
 - **Agent** — every tool, and nothing asks: it works until the job is done. The guard still
-  refuses the catastrophic tier, so autonomous is not unchecked
+  refuses the catastrophic tier, so autonomous is not unchecked — and a delete is still put to
+you, because that is the one change no rewind can undo
 
 In *Standard* the mode is followed by the chat's **approval mode**, which only exists there
 because it is the only rung with something to approve:
@@ -329,6 +330,13 @@ because it is the only rung with something to approve:
   download-and-execute pipelines) and commands that upload local data to the network. Three
   refusals in one run drop the chat back to *Ask first* automatically
 - **Skip** — never ask. Only the catastrophic tier is still refused
+
+The one thing every mode stops for is a **delete**. `write_file` and `edit_file` record a file's
+previous contents, which is what `/rewind` walks, but a file an `rm` removes was never the app's to
+remember — so a command that deletes (`rm`, `del`, `rd`, `Remove-Item`, `git clean`, `git rm`) is
+put to you whatever the mode says, *Skip* included. Answering "always" still works, and it is a
+narrow answer now: the grant names the program (`Always allow rm for this folder`), not
+`run_command`
 
 One honest caveat, stated plainly in the app too: **the guard is a heuristic, not a security
 boundary.** It catches the patterns a confused or prompt-injected model reaches for. It is not a

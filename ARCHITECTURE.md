@@ -89,6 +89,7 @@ Changing behaviour in this app is usually changing one of these.
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |
 | What a chat may send out — the three rungs, and which calls each one refuses | `tools/guard.rs` |
+| That a delete is never waived by a mode — which commands delete, and why a write can be put back while a removal cannot | `tools/guard.rs` |
 | What a grant covers — the target a call reduces to (a site, a program, a folder, an app), and whether a stored grant answers for it | `approvals.rs`, `store/db.rs` |
 | Where a command actually runs, and the job object that kills its children with it | `tools/sandbox_exec.rs`, `tools/job.rs` |
 | The workspace path sandbox — the real containment, as opposed to the guard's heuristics | `tools/sandbox.rs` |

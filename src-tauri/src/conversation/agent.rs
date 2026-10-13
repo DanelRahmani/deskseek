@@ -550,13 +550,15 @@ This chat is in auto mode: file writes and commands run without asking, so say w
 doing in one line as you go. A safety guard refuses catastrophic commands (disk formatting, \
 `git reset --hard`, `git push --force`, publishing to a registry, `rm -rf /`) and commands that \
 upload local data to the network. A refusal is final — do not retry it; tell the user what you \
-wanted to do instead.",
+wanted to do instead. A command that deletes files is always put to the user before it runs, \
+whatever the mode: say what you are removing and why.",
             ),
             guard::PermissionMode::Skip => base.push_str(
                 "\n\n# Approvals\n\n\
 This chat is in skip mode: nothing is shown to the user for approval; it all just runs. Say what \
 you are doing as you go. Only catastrophic commands (disk formatting, forced history rewrites, \
-publishing, `rm -rf /`) are still refused — a refusal is final, so do not retry it.",
+publishing, `rm -rf /`) are still refused — a refusal is final, so do not retry it. A command that \
+deletes files is still put to the user before it runs: say what you are removing and why.",
             ),
         }
     }
@@ -1828,6 +1830,11 @@ pub async fn run(
                     ));
                 }
             }
+            // Whether this call has to be put to the user whatever the mode is.
+            // One rule, in the guard, so "a delete is never waived" cannot drift
+            // into three different answers in three branches of this loop.
+            let must_ask = guard::is_delete(&name, &args);
+
             // What this chat said it may send out comes before everything else:
             // before the mode, before the guard and before the user is asked. A
             // declared policy is a refusal rather than a second opinion, which is
@@ -1869,11 +1876,13 @@ pub async fn run(
                 false
             } else if matches!(class, ToolClass::Read | ToolClass::Internal) {
                 true
-            } else if class == ToolClass::Computer && mode != guard::PermissionMode::Skip {
-                // Driving a browser means acting as the user on sites nobody here
-                // controls. That is never auto-approved, however permissive the
-                // chat's mode is: no string heuristic can tell a click on a
-                // "Delete account" button from a click on a link.
+            } else if must_ask || (class == ToolClass::Computer && mode != guard::PermissionMode::Skip) {
+                // A delete is asked about whatever the mode is, Skip included:
+                // it is the one action a rewind cannot put back, because the app
+                // never saw what the shell is about to remove. The browser tools
+                // are in here for their own reason — acting as the user on a site
+                // nobody here controls — and Skip is the one mode that waives
+                // those, deliberately and only for them.
                 approve(&app, state, chat_id, &ws, &name, class, &args, &cancel, unattended)
                     .await
             } else {

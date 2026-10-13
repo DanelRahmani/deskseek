@@ -30,6 +30,7 @@ one.
 - A chat that has nearly filled the model's context window folds itself into a summary between turns rather than waiting for you to notice, and the note says how many messages went into it
 - A permanent "always allow" now names what it covers — the program, folder, app or site — so allowing `cargo` in a folder no longer allows every command in it, and the grants list shows each one's target
 - A chat can declare what it may send out — *Read only* (read the web, send nothing) or *No network* — and the policy is a refusal in every mode rather than one more thing to approve
+- A command that deletes files is always put to you, in every mode including *Skip*: an `rm` removes a file that `/rewind` cannot put back, because the app never saw what the shell was about to remove
 
 ## 0.4.0 — 2026-10-12
 
