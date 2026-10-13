@@ -364,6 +364,8 @@ export type ScheduledDraft = {
   target: string;
   filter: string;
   interval_secs: number;
+  /** The model it runs on, or `""` for the chat's own. */
+  model: string;
 };
 
 /**

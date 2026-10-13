@@ -405,7 +405,13 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     last_state  TEXT,
     last_checked_at INTEGER,
     -- What the last check found or did, in words, for the panel.
-    last_note   TEXT NOT NULL DEFAULT ''
+    last_note   TEXT NOT NULL DEFAULT '',
+    -- The model this task runs on, or '' for the chat's own. A pin is a model id
+    -- and nothing more: the endpoint is whatever is default when the task fires,
+    -- because a task outlives any particular one. Appended last on purpose, so a
+    -- database written before this column and a fresh one have it in the same
+    -- place — the ALTER can only ever append.
+    model       TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_tasks(next_run_at);
@@ -548,6 +554,10 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let _ = conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN last_checked_at INTEGER", []);
     let _ = conn.execute(
         "ALTER TABLE scheduled_tasks ADD COLUMN last_note TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN model TEXT NOT NULL DEFAULT ''",
         [],
     );
 
@@ -1877,11 +1887,13 @@ pub struct ScheduledRow {
     pub last_checked_at: Option<i64>,
     /// What the last check found, in words.
     pub last_note: String,
+    /// The model this task runs on, or empty for the chat's own.
+    pub model: String,
 }
 
 const SCHEDULED_COLS: &str = "id, title, prompt, chat_id, project_id, freq, time, weekday, nth, \
                               enabled, next_run_at, last_run_at, created_at, kind, target, filter, \
-                              interval_secs, last_state, last_checked_at, last_note";
+                              interval_secs, last_state, last_checked_at, last_note, model";
 
 fn scheduled_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledRow> {
     Ok(ScheduledRow {
@@ -1905,6 +1917,7 @@ fn scheduled_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledRow> {
         last_state: r.get(17)?,
         last_checked_at: r.get(18)?,
         last_note: r.get(19)?,
+        model: r.get(20)?,
     })
 }
 
@@ -1919,7 +1932,7 @@ pub fn list_scheduled(conn: &Connection) -> rusqlite::Result<Vec<ScheduledRow>> 
 /// Adds a task. `next_run_at` comes from the caller, so the row has no clock of
 /// its own and a test can schedule a task into the past. `spec` is the whole
 /// watching half — which change the task waits for — and is a cadence unless the
-/// caller says otherwise.
+/// caller says otherwise. `model` is a pin, and blank means the chat's own.
 #[allow(clippy::too_many_arguments)]
 pub fn create_scheduled(
     conn: &Connection,
@@ -1932,18 +1945,20 @@ pub fn create_scheduled(
     weekday: i64,
     nth: i64,
     spec: &triggers::Spec,
+    model: &str,
     next_run_at: i64,
 ) -> rusqlite::Result<ScheduledRow> {
     let id = uuid::Uuid::new_v4().to_string();
     let ts = now_ts();
     let title = title.trim();
     let title = if title.is_empty() { "Scheduled task" } else { title };
+    let model = model.trim();
     let kind = spec.kind_id();
     conn.execute(
         "INSERT INTO scheduled_tasks
          (id, title, prompt, chat_id, project_id, freq, time, weekday, nth, enabled, next_run_at,
-          created_at, kind, target, filter, interval_secs)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13, ?14, ?15)",
+          created_at, kind, target, filter, interval_secs, model)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             id,
             title,
@@ -1959,7 +1974,8 @@ pub fn create_scheduled(
             kind,
             spec.target,
             spec.filter,
-            spec.interval_secs
+            spec.interval_secs,
+            model
         ],
     )?;
     Ok(ScheduledRow {
@@ -1983,6 +1999,7 @@ pub fn create_scheduled(
         last_state: None,
         last_checked_at: None,
         last_note: String::new(),
+        model: model.to_string(),
     })
 }
 
@@ -1993,6 +2010,9 @@ pub fn create_scheduled(
 /// target and the filter that were there a moment ago, so carrying it forward
 /// would compare a new folder against an old folder's contents and fire on the
 /// difference, which is not a change in anything the user is watching.
+///
+/// `model` is a pin, and blank means the chat's own — an edit that clears it is
+/// a real edit, which is why it is written rather than left alone.
 #[allow(clippy::too_many_arguments)]
 pub fn update_scheduled(
     conn: &Connection,
@@ -2007,6 +2027,7 @@ pub fn update_scheduled(
     nth: i64,
     enabled: bool,
     spec: &triggers::Spec,
+    model: &str,
     next_run_at: i64,
 ) -> rusqlite::Result<()> {
     let title = title.trim();
@@ -2015,7 +2036,7 @@ pub fn update_scheduled(
         "UPDATE scheduled_tasks
          SET title = ?2, prompt = ?3, chat_id = ?4, project_id = ?5, freq = ?6, time = ?7,
              weekday = ?8, nth = ?9, enabled = ?10, next_run_at = ?11, kind = ?12, target = ?13,
-             filter = ?14, interval_secs = ?15, last_state = NULL
+             filter = ?14, interval_secs = ?15, last_state = NULL, model = ?16
          WHERE id = ?1",
         params![
             id,
@@ -2032,10 +2053,27 @@ pub fn update_scheduled(
             spec.kind_id(),
             spec.target,
             spec.filter,
-            spec.interval_secs
+            spec.interval_secs,
+            model.trim()
         ],
     )?;
     Ok(())
+}
+
+/// A task's model pin, when it has one and the task still exists.
+///
+/// `None` means "no pin", which is also what a task deleted between its run
+/// starting and this read gets: a pin that vanished is not a reason to fail a
+/// turn, and the chat's own model is the answer either way.
+pub fn scheduled_model(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row("SELECT model FROM scheduled_tasks WHERE id = ?1", [id], |r| {
+        r.get::<_, String>(0)
+    })
+    .optional()
+    .ok()
+    .flatten()
+    .map(|model| model.trim().to_string())
+    .filter(|model| !model.is_empty())
 }
 
 pub fn delete_scheduled(conn: &Connection, id: &str) -> rusqlite::Result<()> {
@@ -3094,6 +3132,9 @@ mod tests {
             weekday,
             nth,
             &triggers::Spec::default(),
+            // No pin: the chat's own model, which is what every task had before
+            // a task could name one.
+            "",
             next_run_at,
         )
     }
@@ -3125,6 +3166,7 @@ mod tests {
             nth,
             enabled,
             &triggers::Spec::default(),
+            "",
             next_run_at,
         )
     }
@@ -3313,6 +3355,12 @@ mod tests {
         assert!(upgraded.last_state.is_none());
         assert!(upgraded.last_checked_at.is_none());
         assert_eq!(upgraded.last_note, "");
+        // And the `model` ALTER ran: a task written before a task could name a
+        // model has no pin, which is what a default of '' says. `list_scheduled`
+        // selects every column, so this is a real read of a column only the ALTER
+        // could have added.
+        assert_eq!(upgraded.model, "");
+        assert!(scheduled_model(&conn, "task-1").is_none());
         // And the new features work against the upgraded file too.
         schedule(&conn, "t", "p", "daily", "09:00", 0, 1, 1).unwrap();
         assert_eq!(list_scheduled(&conn).unwrap().len(), 2);
@@ -4451,6 +4499,7 @@ mod tests {
             0,
             1,
             &watching,
+            "",
             1_000,
         )
         .unwrap();
@@ -4484,6 +4533,7 @@ mod tests {
             1,
             true,
             &triggers::Spec::new("git", "C:\\src", "main", 60),
+            "deepseek-flash",
             2_000,
         )
         .unwrap();
@@ -4492,6 +4542,48 @@ mod tests {
         assert_eq!(after.target, "C:\\src");
         assert_eq!(after.filter, "main");
         assert!(after.last_state.is_none(), "an edit re-arms the trigger");
+        // A pin given on an edit is written, not ignored: clearing one is a real
+        // edit too, and leaving the column alone would make that impossible.
+        assert_eq!(after.model, "deepseek-flash");
+        assert_eq!(scheduled_model(&conn, &task.id).as_deref(), Some("deepseek-flash"));
+    }
+
+    #[test]
+    fn a_task_can_pin_a_model_and_no_pin_reads_as_none() {
+        let conn = mem();
+        let task = schedule(&conn, "Nightly triage", "triage", "daily", "03:00", 0, 1, 1).unwrap();
+        // Nothing was pinned, so the chat's own model is the answer — which is
+        // what every task made before a task could name one gets.
+        assert_eq!(task.model, "");
+        assert_eq!(scheduled_model(&conn, &task.id), None);
+        // A task that does not exist is the same answer: a pin that vanished is
+        // not a reason to fail a turn.
+        assert_eq!(scheduled_model(&conn, "no such task"), None);
+
+        update_scheduled(
+            &conn,
+            &task.id,
+            "Nightly triage",
+            "triage",
+            None,
+            None,
+            "daily",
+            "03:00",
+            0,
+            1,
+            true,
+            &triggers::Spec::default(),
+            "deepseek-flash",
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(scheduled_model(&conn, &task.id).as_deref(), Some("deepseek-flash"));
+
+        // And blanking it puts the task back on the chat's model rather than on a
+        // model id that is the empty string.
+        reschedule(&conn, &task.id, "Nightly triage", "triage", "daily", "03:00", 0, 1, true, 1_000)
+            .unwrap();
+        assert_eq!(scheduled_model(&conn, &task.id), None);
     }
 
     #[test]
@@ -4509,6 +4601,7 @@ mod tests {
             0,
             1,
             &triggers::Spec::new("file", "C:\\inbox", "", 300),
+            "",
             1_000,
         )
         .unwrap();

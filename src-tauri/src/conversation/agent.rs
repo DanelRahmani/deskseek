@@ -1252,6 +1252,9 @@ async fn run_tool(
             draft.weekday,
             draft.nth,
             &crate::triggers::Spec::default(),
+            // No pin: the model's tool describes a clock and a prompt, and the
+            // cheap-model choice is one the user makes in the panel.
+            "",
         )?;
         // Say the cadence it actually ended up with, not the one that was asked
         // for: a frequency this build does not know falls back to daily, and the
@@ -1620,9 +1623,13 @@ async fn run_tool(
 /// of waiting in silence.
 ///
 /// `task_id` is the scheduled task this run belongs to, when there is one. It is
-/// written onto the run's `turn_usage` row and nothing else reads it here, so the
-/// Scheduled panel can list what a task has run and what it has cost from the
-/// same rows the spend view sums.
+/// written onto the run's `turn_usage` row, so the Scheduled panel can list what
+/// a task has run and what it has cost from the same rows the spend view sums.
+///
+/// A task may also pin a model, and that is the one other thing this reads the id
+/// for: the pin is resolved once here and used for the request, the price and the
+/// usage row, so a cheap nightly task's spend row names the cheap model it really
+/// ran on.
 pub async fn run(
     app: AppHandle,
     state: &AppState,
@@ -1637,6 +1644,17 @@ pub async fn run(
         let conn = state.db.lock().unwrap();
         db::get_chat(&conn, chat_id).map_err(|e| e.to_string())?
     };
+    // The model this run is actually on. A scheduled task may pin one, and the
+    // pin wins for the run only — the chat's own model is left where it was, so a
+    // task pointed at an existing conversation does not quietly move that
+    // conversation on to a cheaper model. Blank is the ordinary case and means
+    // the chat's own.
+    let model = task_id
+        .and_then(|id| {
+            let conn = state.db.lock().unwrap();
+            db::scheduled_model(&conn, id)
+        })
+        .unwrap_or_else(|| chat.model.clone());
 
     let workspace: Option<PathBuf> = workspace_for(state, &chat);
     let tools = tools_for_chat(state, &settings, &chat).await;
@@ -1648,7 +1666,7 @@ pub async fn run(
     // The endpoint's own record for this chat's model: which window it has, what
     // it costs, and whether it can be sent a picture. Resolved once for the run,
     // so every round of it is priced by the same table.
-    let model_info = settings.model_info(&chat.model);
+    let model_info = settings.model_info(&model);
     // Resolved once, so every command in this run takes the same path — and so
     // a mid-run Docker shutdown cannot change the answer halfway through.
     let plan = sandbox_exec::plan_for(
@@ -1713,7 +1731,7 @@ pub async fn run(
         let messages = build_messages(&system, &turns, None, tools_present);
 
         let request = ChatRequest {
-            model: chat.model.clone(),
+            model: model.clone(),
             messages,
             stream: true,
             stream_options: Some(StreamOptions {
@@ -1823,7 +1841,7 @@ pub async fn run(
                 chat_id,
                 &run_id,
                 &db::TurnUsage {
-                    model: &chat.model,
+                    model: &model,
                     kind: db::TURN,
                     priced: price.is_some(),
                     prompt_tokens: outcome.usage.prompt_tokens,
@@ -2121,7 +2139,7 @@ pub async fn run(
             let conn = state.db.lock().unwrap();
             db::list_messages(&conn, chat_id).map(|rows| rows.len()).unwrap_or(0)
         };
-        if summarize::should_compact(usage.prompt_tokens, settings.context_for(&chat.model), stored) {
+        if summarize::should_compact(usage.prompt_tokens, settings.context_for(&model), stored) {
             if let Ok((summary, _, _)) = summarize::summarize_chat(state, chat_id, false).await {
                 let conn = state.db.lock().unwrap();
                 let _ = summarize::fold(&conn, chat_id, &summary);

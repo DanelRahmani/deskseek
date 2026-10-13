@@ -6,7 +6,7 @@ import { Icon, IconButton } from "./Icon";
 import { QuestionPrompt, answerFrom } from "./QuestionPrompt";
 import { money } from "./SpendPanel";
 import { when } from "../lib/time";
-import type { McpServer, ParkedRequest, ProjectRow, ScheduledTask, TaskRun } from "../types";
+import type { McpServer, ModelInfo, ParkedRequest, ProjectRow, ScheduledTask, TaskRun } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -138,6 +138,7 @@ const BLANK: ScheduledDraft = {
   target: "",
   filter: "",
   interval_secs: 300,
+  model: "",
 };
 
 /**
@@ -153,6 +154,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [servers, setServers] = useState<McpServer[]>([]);
+  const [models, setModels] = useState<ModelInfo[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<ScheduledDraft>(BLANK);
@@ -163,16 +165,18 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const [runs, setRuns] = useState<Record<string, TaskRun[]>>({});
 
   const reload = useCallback(async () => {
-    const [list, projectList, waiting, mcpServers] = await Promise.all([
+    const [list, projectList, waiting, mcpServers, modelList] = await Promise.all([
       api.listScheduled(),
       api.listProjects(),
       api.listParked(),
       api.mcpServers(),
+      api.listModels(),
     ]);
     setTasks(list);
     setProjects(projectList);
     setParked(waiting);
     setServers(mcpServers);
+    setModels(modelList);
   }, []);
 
   useEffect(() => {
@@ -277,6 +281,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
         target: task.target,
         filter: task.filter,
         interval_secs: task.interval_secs,
+        model: task.model,
         enabled: !task.enabled,
       });
       await reload();
@@ -455,7 +460,10 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
               </button>
             </div>
 
-            <p className="mt-1 text-[11px] text-neutral-500">{describe(task)}</p>
+            <p className="mt-1 text-[11px] text-neutral-500">
+              {describe(task)}
+              {task.model ? ` · ${task.model}` : ""}
+            </p>
             <p className="mt-0.5 text-[11px] text-neutral-500">
               {nextLine(task)}
               {isTrigger(task.kind) && task.last_checked_at
@@ -509,6 +517,12 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
                           open
                         </button>
                       )}
+                      <span
+                        className="max-w-[7rem] shrink-0 truncate text-neutral-500"
+                        title={`Ran on ${run.model}`}
+                      >
+                        {run.model}
+                      </span>
                       <span className="shrink-0 tabular-nums text-neutral-400">
                         {money(run.cost_usd)}
                       </span>
@@ -674,6 +688,24 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
                 )}
               </>
             )}
+            <select
+              value={form.model}
+              onChange={(e) => patch({ model: e.target.value })}
+              className={field}
+              title="Which model this task runs on"
+            >
+              <option value="">The chat's own model</option>
+              {models.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] leading-relaxed text-neutral-600">
+              A nightly triage does not need the frontier model. A pin is a model id, and the
+              endpoint is whatever is default when the task fires — the run's own spend row says
+              which model it really ran on.
+            </p>
             <select
               value={form.project_id ?? ""}
               onChange={(e) => patch({ project_id: e.target.value || null })}

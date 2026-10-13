@@ -2038,18 +2038,33 @@ than a module.
   endpoint per dialect, and one against a local model with no key at all.
 - **Stop**: adding an endpoint is a form and no code, and switching endpoint runs a turn.
 
-### 2.2 [S] Per-task and per-chat model selection
+### 2.2 [S] Per-task and per-chat model selection ✅
 - **Why**: a scheduled triage at 06:00 does not need the frontier model, and its bill should say so.
   The chat side already has a model picker; what is missing is the unattended half.
-- **Files**: `store/db.rs` (a `model` column on `scheduled_tasks`, `CREATE TABLE` plus a guarded
-  `ALTER`), `schedule.rs` / `commands.rs` (the field through create and update), `ScheduledPanel.tsx`
-  (the picker, listing the default endpoint's models), `ChatView.tsx` (the existing picker, now fed
-  by the endpoint rather than a const).
-- **Shape**: the task's model travels with the run: `fire_scheduled` pins the chat's model for an
-  unattended run, and the `turn_usage` row already records the model that ran. A PIN is a model id,
-  not an endpoint: the endpoint is whatever is default when the task fires.
-- **Test**: a scheduled row round-trips its model, an upgrade from a pre-2.2 table gets the column
-  with the endpoint's first model as the default, and the spend row for a task names the pinned model.
+- **Files**: `store/db.rs` (a `model` column on `scheduled_tasks`, in the `CREATE TABLE` *and* as a
+  guarded `ALTER`, appended last in both so a fresh file and an upgraded one hold it in the same
+  place; `scheduled_model`, the one reader); `commands.rs` (the field through `create_scheduled_task`
+  and both scheduling commands, and the fresh chat a run creates); `conversation/agent.rs` (the pin
+  resolved once for a run, and used for the request, the price, the window and the usage row);
+  `ScheduledPanel.tsx` (a picker on the form, the pin on the row, and the model chip in the run
+  list), `types.ts`, `api.ts`.
+- **Shape**: the pin is a **model id and nothing more** — the endpoint is whatever is default when
+  the task fires, because a task outlives any particular endpoint. Blank is the ordinary value and
+  means the chat's own model, which is exactly what every task made before this column existed gets.
+  The pin wins for the **run only**: `run` resolves it once into a local `model`, so a task pointed
+  at an existing conversation does not quietly move that conversation on to a cheaper model. Two
+  smaller decisions, taken to keep one answer per question: the fresh chat a run creates is *also*
+  created on the pin, so opening it later and carrying on does not change what ran; and `run` reads
+  the pin from the row rather than taking it as a parameter, so the tick and *Run now* cannot pass
+  it differently.
+- **Test**: `cargo test` — `a_task_can_pin_a_model_and_no_pin_reads_as_none` (blank reads as none, a
+  task that does not exist reads as none, an edit writes a pin, and blanking it puts the task back on
+  the chat's model); the trigger round-trip test gained the pin surviving an edit; and the upgrade
+  test asserts an old task's `model` is `''` on a real file. Falsified: dropping the blank filter in
+  `scheduled_model` fails that test with `left: Some(""), right: None` — the empty string handed to
+  the run as a model id — after checking the mutation had reached the disk, and restoring passes.
+  `cargo test` 430 → 431. What a unit test cannot reach is the wiring from a fired task to the
+  request, so the six lines for it are on `docs/E2E-CHECKLIST.md`.
 - **Stop**: a scheduled task can be pinned to a cheaper model and its spend rows say which ran.
 
 ### 2.3 [S] Reasoning-effort control

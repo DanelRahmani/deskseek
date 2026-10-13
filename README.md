@@ -146,7 +146,9 @@ Both sections are functional:
   the schedule. Each run goes through the ordinary turn path in a fresh chat, so a daily task does
   not become one conversation that grows forever, and the chat appears in the sidebar under the
   task's title. *Run now* fires it without moving when it next runs on its own; *Pause* leaves it
-  in the list and stops the clock
+  in the list and stops the clock. A task can also name the **model it runs on**, or leave it to
+  the chat's own — a nightly triage does not need the frontier model, and the run's own spend row
+  names whichever model it really ran on
   - Three things are deliberate rather than missing. A run starts in **auto** — nobody is watching
     at 09:00 — so it never waits for an ordinary approval; the catastrophic guard still applies,
     and a few tools are never auto-approved at all. One of *those*, or a question the model asks,
@@ -517,7 +519,8 @@ serves, and there are exactly two dialects in the code:
 - **The base URL is the endpoint's root**, without the dialect's own path: no `/chat/completions`,
   no `/v1/messages`. The dialect appends what it needs.
 - **A model is chosen per chat**, from the list the endpoint declares — so a picker cannot offer
-  something the endpoint does not serve.
+  something the endpoint does not serve. A scheduled task can pin one of its own, which applies to
+  its runs and leaves the chat it lands in alone.
 - **A price nobody published is not zero.** An endpoint with no rate — anything on localhost, most
   gateways — has its tokens counted and its money shown as *unknown*, on the same `turn_usage` rows
   the spend view sums.

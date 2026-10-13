@@ -113,6 +113,12 @@ export interface ScheduledTask {
   last_checked_at: number | null;
   /** What the last check found, in words. */
   last_note: string;
+  /**
+   * The model this task runs on, or an empty string for the chat's own. A pin is
+   * a model id and nothing more: the endpoint is whatever is default when the
+   * task fires.
+   */
+  model: string;
 }
 
 /**

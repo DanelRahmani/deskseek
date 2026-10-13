@@ -729,6 +729,9 @@ mod tests {
             last_state: None,
             last_checked_at: None,
             last_note: String::new(),
+            // No pin: none of these tests cares which model the run would use,
+            // and blank is the ordinary value.
+            model: String::new(),
         }
     }
 

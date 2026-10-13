@@ -2109,7 +2109,8 @@ pub fn list_scheduled(state: State<'_, AppState>) -> Result<Vec<db::ScheduledRow
 /// (`Schedule::parse`) and the same clock. A second copy of this would be a
 /// second answer to "when does it first run". `spec` is the watching half — a
 /// cadence unless the caller says otherwise — and it is what decides whether
-/// "first run" means a time or the first look.
+/// "first run" means a time or the first look. `model` is the model this task
+/// runs on, or blank for the chat's own.
 #[allow(clippy::too_many_arguments)]
 pub fn create_scheduled_task(
     state: &AppState,
@@ -2122,6 +2123,7 @@ pub fn create_scheduled_task(
     weekday: i64,
     nth: i64,
     spec: &triggers::Spec,
+    model: &str,
 ) -> Result<db::ScheduledRow, String> {
     if prompt.trim().is_empty() {
         return Err("A scheduled task needs something to do.".to_string());
@@ -2144,6 +2146,7 @@ pub fn create_scheduled_task(
         sched.weekday as i64,
         sched.nth as i64,
         spec,
+        model,
         next,
     )
     .map_err(|e| e.to_string())
@@ -2168,6 +2171,7 @@ pub fn create_scheduled(
     target: String,
     filter: String,
     interval_secs: i64,
+    model: Option<String>,
 ) -> Result<db::ScheduledRow, String> {
     let spec = triggers::Spec::new(&kind, &target, &filter, interval_secs);
     create_scheduled_task(
@@ -2181,6 +2185,7 @@ pub fn create_scheduled(
         weekday,
         nth,
         &spec,
+        model.as_deref().unwrap_or(""),
     )
 }
 
@@ -2206,6 +2211,7 @@ pub fn update_scheduled(
     target: String,
     filter: String,
     interval_secs: i64,
+    model: Option<String>,
 ) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Err("A scheduled task needs something to do.".to_string());
@@ -2231,6 +2237,7 @@ pub fn update_scheduled(
         sched.nth as i64,
         enabled,
         &spec,
+        model.as_deref().unwrap_or(""),
         next,
     )
     .map_err(|e| e.to_string())
@@ -2286,6 +2293,14 @@ pub async fn fire_scheduled(
     task: &db::ScheduledRow,
 ) -> Result<String, String> {
     let settings = state.settings.lock().unwrap().clone();
+    // What a fresh chat for this run is created on: the task's pin when it has
+    // one, so the conversation the user later opens is on the same model that
+    // ran it, and the standing default otherwise.
+    let fresh_model = if task.model.trim().is_empty() {
+        settings.model_for("chat")
+    } else {
+        task.model.trim().to_string()
+    };
     // Whether this run got a chat of its own. A chat the task already owns keeps
     // the skills it has; only a brand-new one takes the standing defaults.
     let (chat_id, fresh) = {
@@ -2316,7 +2331,7 @@ pub async fn fire_scheduled(
                     &conn,
                     "chat",
                     folder.as_deref(),
-                    &settings.model_for("chat"),
+                    &fresh_model,
                     settings.thinking,
                     &settings.effort,
                     "auto",

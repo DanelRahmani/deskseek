@@ -585,3 +585,17 @@ the parts only a person can see.
       row's cost, and an endpoint whose peak multiplier is 1 does not
 - [ ] Clearing the key for the endpoint in use makes Send refuse by name, and restoring it works
       again
+
+## A task's model
+
+- [ ] A task created with no model shows no pin on its row, and its run's spend entry names the
+      model the chat was on
+- [ ] A task pinned to the cheaper model runs on it — the run's spend entry and the model chip in
+      its run list name the cheap model, not the chat's
+- [ ] The chat a pinned task starts is on the pinned model as well, so opening it and carrying on
+      does not silently change what ran
+- [ ] A task pointed at an *existing* chat runs on its pin while that chat's own model is left
+      alone — reopening the chat shows its original model
+- [ ] Pausing and resuming a pinned task keeps the pin
+- [ ] A task pinned to a model the endpoint does not list still runs, and its spend entry reads
+      *unknown* rather than a price
