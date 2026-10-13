@@ -1879,47 +1879,77 @@ it opens rather than replaying the whole time it was closed.
   limit named: a file is noticed up to one interval late, because the check is a poll rather than an
   OS watch — and a change that happened and was undone while the app was shut is simply never seen.
 
-### 7.3 [S] A monitor — a page condition, on an interval
+### 7.3 [S] A monitor — a page condition, on an interval ✅
 - **Why**: half the useful automations are "tell me when this changes". The archive calls it a
   monitor: a prompt, an interval, a bounded check and a state.
-- **Files**: `src-tauri/src/triggers.rs` (a third kind and the fetch); `commands.rs`/`lib.rs`
-  (nothing new — the same branch); `src/components/ScheduledPanel.tsx` (the interval and the
-  filter become "look for"). No new dependency: the fetch is `browse::fetch_url`, which the
-  `fetch_url` tool already uses, so one place owns "how this app reads a page".
+- **Files**: `src-tauri/src/triggers.rs` (`Kind::Url`, `page_fingerprint` and `url_fingerprint`,
+  and `look` takes the app's HTTP client again); `src/components/ScheduledPanel.tsx` (a fourth kind,
+  and the labels that differ per kind instead of a single guess). `commands.rs`, `lib.rs` and the
+  database are untouched: the branch, the columns and the run path are the ones 7.2 landed.
 - **Shape**: a *url* trigger fingerprints the page. With a filter it fingerprints *whether the page
-  says it* (`yes`/`no`) and so fires on the transition to present — the predicate case. With an
-  empty filter it fingerprints a hash of the page's text and so fires on any change — the "tell me
-  when this changes" case. Both share the edge rule and the cap, because they are the same trigger
-  with a different fingerprint.
-- **Test**: the pure half in `triggers::tests` — an empty filter hashes, a filter looks for its own
-  text and is case-insensitive, and a fingerprint carried forward from a previous poll of the same
-  text is `Same`. Falsified: making the filtered case return the text instead of `yes`/`no` fails
-  on the length, and restoring passes.
-- **Stop**: "tell me when this page changes" starts a task without a cadence. One limit named: the
-  check honours no per-chat egress policy, because a monitor has no chat until it fires — the URL
-  is one *you* typed into the form rather than one a model chose, which is the line that makes it
-  a declared destination and not an egress decision.
+  says it* (`yes`/`no`) and so fires on the transition to present — the predicate case. With a blank
+  filter it fingerprints a hash of the page's text and so fires on any change — the "tell me when
+  this changes" case. Both are the same trigger with a different fingerprint, and both reuse the
+  edge rule and the cap. The fetch is `browse::fetch_url`, the one the `fetch_url` tool already
+  uses, so nothing new decides how this app reads a page; no new dependency was needed.
+- **Test**: `triggers::tests` grew two, both over the pure half —
+  `a_page_condition_fires_on_the_transition_it_describes` (a page that does not say it is `no`,
+  `Now IN STOCK.` is `yes` because the page's capitalisation is not the point, becoming true is a
+  `Fire` and staying true is `Same`) and `an_empty_page_filter_watches_the_whole_page` (a blank
+  filter and no filter are the same trigger, one character is a change).
+  `a_trigger_needs_something_to_watch` now loops all three kinds and holds each refusal to naming
+  its own field — `folder`, `repository`, `URL`. Falsified: making the filtered branch return the
+  page's text instead of `yes`/`no` fails on the string length, and restoring passes. `cargo test`
+  381 passed. Three things said out loud: the check is a **fetch of a page the user typed**, not a
+  model-chosen destination, so it is a declared destination and needs no egress decision — a monitor
+  has no chat until it fires, and there is no chat policy to consult at the moment it looks; the
+  fingerprint is of the page's *text*, with the markup stripped, so a rotating ad script or a
+  changing nonce in an attribute does not wake a task; and the archive's "or a file stat" half of
+  this item is the file trigger 7.2 already built, deliberately not a second one.
+- **Stop**: "tell me when this changes" starts a task without a cadence. One limit named: it looks
+  on the interval, so a page that changes and changes back between two looks is never seen, and a
+  page that needs JavaScript to say anything reads as whatever the server sent.
 
-### 3.3 [M] MCP events — a server wakes a task
+### 3.3 [M] MCP events — a server wakes a task ✅
 - **Why**: ChatGPT lets a user act on updates a server pushes, turning a polling schedule into an
-  event. DeskSeek's MCP client is complete; what was missing is that the client was built with no
-  handler at all, so a server-initiated notification had nowhere to land.
-- **Files**: `src-tauri/src/mcp/manager.rs` (a `ClientHandler` that forwards a custom notification
-  to the app, and the two `serve` calls that install it); `triggers.rs` (the `mcp` kind and
-  `matching_tasks`); `src/components/ScheduledPanel.tsx` (an *MCP event* kind with a server picker).
+  event. DeskSeek's MCP client was complete apart from one thing: it was built with no handler at
+  all — `()` — so a notification from a server had nowhere to land and was dropped without a trace.
+- **Files**: `src-tauri/src/mcp/manager.rs` (`Events`, the `ClientHandler` the client is now built
+  with, `Events::new`, `Logs::handle`, and the two `serve` calls that install it); `triggers.rs`
+  (`Kind::Mcp`, `NEVER`, `matching_tasks`, `on_mcp_event`, and the `polled` guard the tick needs);
+  `src/components/ScheduledPanel.tsx` (the fifth kind, its own labels, a server picker reading
+  `api.mcpServers()`, and a row that never renders the never-due sentinel as a date). `db.rs` and
+  `commands.rs` are untouched: the columns, the cap, `fire_scheduled` and the panel row are 7.2's.
 - **Shape**: rmcp already routes any `notifications/*` a server sends to `on_custom_notification`,
-  so the handler is a struct with the app handle and a channel; the `Client` type alias grows the
-  handler from `()` to that struct. A notification names its server and its method; every enabled
-  `mcp` trigger whose target is that server and whose filter is that method fires. An `mcp` trigger
-  is never polled, so its `next_run_at` is the never-due sentinel and the tick skips it.
-- **Test**: `triggers::tests::one_notification_matches_the_tasks_that_asked_for_it` — a payload
-  matches on both server and method, a different method matches nothing, and a server the user did
-  not subscribe to matches nothing. The handler's own half needs a live server, so it is E2E.
-- **Stop**: a server can wake a task without a cadence. One limit named, and it is the archive's own
-  open decision: events that arrive while the app is closed are **dropped**, not replayed — unlike
-  a missed cadence, which fires once on the next launch. There is no backlog to replay because
-  nothing is listening while the app is shut, and inventing one would mean a server able to queue
-  runs inside DeskSeek. A server that sends nothing gets nothing; nothing here polls it.
+  so the handler is a struct holding the server's name and the window, and the `Client` alias grows
+  the handler from `()` to that struct — the one-line change the archive meant by "an extension
+  rather than a rewrite". The notification is handed to `triggers::on_mcp_event` on a spawned task,
+  because it arrives inside the client's own read loop and a run must not hold the handshake open.
+  Every enabled `mcp` trigger whose target is that server, and whose filter is the method (or blank,
+  or `*`), fires; the run path is `fire_scheduled`, so it parks and is billed like any other. An
+  `mcp` trigger is never polled, so its `next_run_at` is `NEVER` and the tick skips it before it
+  looks — and recording a run keeps it never-due rather than accidentally scheduling a check.
+- **Test**: `triggers::tests` grew three — `one_notification_matches_the_tasks_that_asked_for_it`
+  (the named method and the wildcard both match; a different method matches only the wildcard; a
+  server nobody subscribed to wakes nothing; and a `file` trigger naming the same folder is not an
+  MCP trigger), `a_disabled_trigger_is_not_woken` (pausing has to stop an event, not just a poll),
+  and `an_mcp_trigger_is_never_due_and_is_never_looked_at` (`first_check` is `NEVER`, `polled` is
+  false, and the sentinel did not leak into the polled kinds). Falsified: making `matching_tasks`
+  stop comparing the server's name (`…eq_ignore_ascii_case(server.trim())` → `!row.target.trim()
+  .is_empty()`) fails `one_notification_matches_the_tasks_that_asked_for_it` with `left: 3, right: 2`
+  — a server nobody subscribed to woke a task — and restoring passes. `cargo test` 384 passed. The
+  handler's own half needs a server that pushes something, so it is E2E. Three things said out loud:
+  the client
+  used to be `RunningService<RoleClient, ()>` and is now built with a handler, which is the whole
+  of the protocol-side change; the `Events` struct **deliberately implements nothing else**, because
+  sampling, elicitation and roots are the server asking the app for something and there is nothing
+  to ask for; and the archive's open decision — whether app-closed events are replayed on launch —
+  is taken as **no**. A notification that arrives while the app is shut is gone, because there was
+  nothing listening and a backlog would mean a server able to queue runs inside DeskSeek.
+- **Stop**: a server can wake a task without a cadence. One limit named: almost nothing in the MCP
+  ecosystem sends a server-initiated notification today, so in practice this is a hook waiting for
+  one — which is why its test is over the matching rule rather than over a real server, and why the
+  panel's own text says the task runs only while the app is open rather than promising otherwise.
 
 ---
 

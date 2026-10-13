@@ -6,7 +6,7 @@ import { Icon, IconButton } from "./Icon";
 import { QuestionPrompt, answerFrom } from "./QuestionPrompt";
 import { money } from "./SpendPanel";
 import { when } from "../lib/time";
-import type { ParkedRequest, ProjectRow, ScheduledTask, TaskRun } from "../types";
+import type { McpServer, ParkedRequest, ProjectRow, ScheduledTask, TaskRun } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -27,18 +27,32 @@ const KINDS = [
   { id: "cadence", label: "On a schedule" },
   { id: "file", label: "When a file changes" },
   { id: "git", label: "When a git ref moves" },
+  { id: "url", label: "When a page changes" },
+  { id: "mcp", label: "When a server sends something" },
 ];
 
 /** What each kind watches, as the form's own label for it. */
 const TARGET_LABEL: Record<string, string> = {
   file: "Folder to watch",
   git: "Repository folder",
+  url: "Page URL",
+  mcp: "Server name",
+};
+
+/** The noun the refusal sentence uses, so it says which field is missing. */
+const TARGET_NOUN: Record<string, string> = {
+  file: "folder",
+  git: "repository",
+  url: "URL",
+  mcp: "server",
 };
 
 /** What counts as a change, and the example that makes the field legible. */
 const FILTER_LABEL: Record<string, string> = {
   file: "Only files matching, e.g. *.csv — blank watches everything",
   git: "Ref, e.g. main — blank means HEAD",
+  url: "Text to look for, e.g. In stock — blank fires on any change",
+  mcp: "Method, e.g. notifications/changed — blank means anything it sends",
 };
 
 /** The check interval, in the minutes a person thinks in rather than seconds. */
@@ -70,6 +84,18 @@ function describe(task: ScheduledTask): string {
       task.target || "a folder that is no longer set"
     }`;
   }
+  if (task.kind === "url") {
+    const needle = task.filter.trim();
+    const page = task.target || "a page that is no longer set";
+    return needle ? `When ${page} comes to say "${needle}"` : `When ${page} changes`;
+  }
+  if (task.kind === "mcp") {
+    const method = task.filter.trim();
+    const server = task.target || "a server that is no longer set";
+    return method && method !== "*"
+      ? `When ${server} sends ${method}`
+      : `When ${server} sends anything`;
+  }
   if (task.freq === "hourly") return `Every hour at :${task.time.slice(-2)}`;
   if (task.freq === "weekdays") return `Weekdays at ${task.time}`;
   if (task.freq === "weekly") return `Every ${WEEKDAYS[task.weekday]} at ${task.time}`;
@@ -82,6 +108,18 @@ function describe(task: ScheduledTask): string {
 /** A trigger looks, rather than runs, so its second line says so. */
 function isTrigger(task: ScheduledTask): boolean {
   return task.kind !== "cadence";
+}
+
+/**
+ * The second line of a task's row. A pushed trigger has no next look at all, and
+ * its `next_run_at` is the never-due sentinel — which must never be rendered as a
+ * date, or the panel would offer a year that has not happened.
+ */
+function nextLine(task: ScheduledTask): string {
+  if (!task.enabled) return "Paused";
+  if (task.kind === "mcp") return `Waiting on ${task.target}`;
+  if (isTrigger(task)) return `Next check: ${when(task.next_run_at)}`;
+  return `Next: ${when(task.next_run_at)}`;
 }
 
 const BLANK: ScheduledDraft = {
@@ -111,6 +149,7 @@ const BLANK: ScheduledDraft = {
 export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [servers, setServers] = useState<McpServer[]>([]);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [form, setForm] = useState<ScheduledDraft>(BLANK);
@@ -121,14 +160,16 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const [runs, setRuns] = useState<Record<string, TaskRun[]>>({});
 
   const reload = useCallback(async () => {
-    const [list, projectList, waiting] = await Promise.all([
+    const [list, projectList, waiting, mcpServers] = await Promise.all([
       api.listScheduled(),
       api.listProjects(),
       api.listParked(),
+      api.mcpServers(),
     ]);
     setTasks(list);
     setProjects(projectList);
     setParked(waiting);
+    setServers(mcpServers);
   }, []);
 
   useEffect(() => {
@@ -198,7 +239,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
       return;
     }
     if (form.kind !== "cadence" && !form.target.trim()) {
-      setStatus(`A trigger needs something to watch: a ${TARGET_LABEL[form.kind].toLowerCase()}.`);
+      setStatus(`A trigger needs something to watch: a ${TARGET_NOUN[form.kind]}.`);
       return;
     }
     setBusy(true);
@@ -413,11 +454,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
 
             <p className="mt-1 text-[11px] text-neutral-500">{describe(task)}</p>
             <p className="mt-0.5 text-[11px] text-neutral-500">
-              {task.enabled
-                ? isTrigger(task)
-                  ? `Next check: ${when(task.next_run_at)}`
-                  : `Next: ${when(task.next_run_at)}`
-                : "Paused"}
+              {nextLine(task)}
               {isTrigger(task) && task.last_checked_at
                 ? ` · last checked ${when(task.last_checked_at)}`
                 : ""}
@@ -514,13 +551,29 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
             </select>
             {watching && (
               <>
-                <input
-                  value={form.target}
-                  onChange={(e) => patch({ target: e.target.value })}
-                  placeholder={TARGET_LABEL[form.kind]}
-                  className={field}
-                  title={TARGET_LABEL[form.kind]}
-                />
+                {form.kind === "mcp" ? (
+                  <select
+                    value={form.target}
+                    onChange={(e) => patch({ target: e.target.value })}
+                    className={field}
+                    title="Which server wakes this task"
+                  >
+                    <option value="">Pick a server…</option>
+                    {servers.map((server) => (
+                      <option key={server.name} value={server.name}>
+                        {server.name}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    value={form.target}
+                    onChange={(e) => patch({ target: e.target.value })}
+                    placeholder={TARGET_LABEL[form.kind]}
+                    className={field}
+                    title={TARGET_LABEL[form.kind]}
+                  />
+                )}
                 <input
                   value={form.filter}
                   onChange={(e) => patch({ filter: e.target.value })}
@@ -528,23 +581,33 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
                   className={field}
                   title={FILTER_LABEL[form.kind]}
                 />
-                <select
-                  value={form.interval_secs}
-                  onChange={(e) => patch({ interval_secs: Number(e.target.value) })}
-                  className={field}
-                  title="How often it looks"
-                >
-                  {INTERVALS.map((interval) => (
-                    <option key={interval.secs} value={interval.secs}>
-                      {interval.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-[11px] leading-relaxed text-neutral-600">
-                  It looks on that interval and starts a run only when what it sees has changed
-                  — a folder that stays busy starts one run, not fifty. A change it never sees
-                  while the app is closed does not start one later.
-                </p>
+                {form.kind === "mcp" ? (
+                  <p className="text-[11px] leading-relaxed text-neutral-600">
+                    {servers.length === 0
+                      ? "No servers set up yet — add one under Customise → Connectors."
+                      : "Nothing is polled: the task starts when the server pushes that notification, and only while the app is open. An event that arrives while it is closed is not replayed."}
+                  </p>
+                ) : (
+                  <>
+                    <select
+                      value={form.interval_secs}
+                      onChange={(e) => patch({ interval_secs: Number(e.target.value) })}
+                      className={field}
+                      title="How often it looks"
+                    >
+                      {INTERVALS.map((interval) => (
+                        <option key={interval.secs} value={interval.secs}>
+                          {interval.label}
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] leading-relaxed text-neutral-600">
+                      It looks on that interval and starts a run only when what it sees has changed
+                      — a folder that stays busy starts one run, not fifty. A change it never sees
+                      while the app is closed does not start one later. Six runs an hour is the cap.
+                    </p>
+                  </>
+                )}
               </>
             )}
             {!watching && (

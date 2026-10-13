@@ -157,6 +157,20 @@ Both sections are functional:
     to is gone, and re-running the task is the way to pick it up. And a window missed while the
     app was closed fires **once** on the next launch rather than catching up on every missed
     occurrence
+  - A task can also be woken by **something changing** rather than by a clock, which is the other
+    kinds in the same form. Point it at a **folder** (optionally only files matching a pattern like
+    `*.csv`), at a **git repository** and a ref, or at a **page** — with a word to wait for, or with
+    nothing and it fires on any change at all. The fourth kind is the one DeskSeek does not check
+    for you: pick an **MCP server**, and if you like the notification it should react to, and the
+    server waking it starts the run. Two rules make them usable rather than noisy. A **look is not a
+    run**: it starts something only when what it sees *differs* from what it saw last time, so a
+    folder that stays busy starts one run and not fifty, and a page that merely contains a word is
+    not the same as a page that has just come to say it. And **six runs an hour** is the cap, which
+    delays rather than drops — a change it will not fire on yet is still pending, and the row says
+    so in words rather than going quiet. **Honest limits:** the check is a poll on the interval you
+    choose, so a change is noticed up to one interval late, and it only looks while the app is open.
+    A change that happened and was undone while DeskSeek was closed is never seen, and an MCP event
+    that arrived then is not replayed — unlike a missed cadence, which fires once on the next launch
 - **It tells you when it is done** — a conversation that finishes while you are reading another one
   gets a green dot on its sidebar row, cleared the moment you open it; a scheduled task starting,
   or the assistant calling `notify_user` at the end of a long job, raises an **OS notification** as

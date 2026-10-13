@@ -104,6 +104,8 @@ Changing behaviour in this app is usually changing one of these.
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |
+| What makes a task due when it is not a clock: the two fingerprints, the edge rule that makes a poll not a run, the cap, and the matching rule a server's notification goes through | `triggers.rs` |
+| Where a server-initiated notification lands: the `ClientHandler` the MCP client is built with, and why it implements nothing else | `mcp/manager.rs` |
 | The workspace watcher, and its refcounted roots | `fs_watch.rs` |
 | What a backup carries, and what it deliberately leaves out | `backup.rs` |
 | What the decision-and-spend export carries: the panels' own reads, digests and never arguments | `store/db.rs` |

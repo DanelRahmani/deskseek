@@ -30,13 +30,16 @@
 //! watched by the file tree's refcounted watcher, which belongs to the chats that
 //! are open rather than to the tasks that are armed.
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::commands;
 use crate::store::db;
+use crate::tools::browse;
 use crate::AppState;
 
 /// The scheduler ticks every 30 seconds, so nothing can be noticed faster than
@@ -48,8 +51,12 @@ pub const MIN_INTERVAL_SECS: i64 = 30;
 pub const DEFAULT_INTERVAL_SECS: i64 = 300;
 /// At most this many runs an hour, however much the thing being watched flaps.
 /// The cap *delays* rather than drops: a change it refuses to fire on is left
-/// pending, so it fires as soon as the hour clears.
+/// pending, so it fires as soon as the hour clears. It holds for a pushed event
+/// too, or a chatty server would be a way round it.
 pub const MAX_FIRES_PER_HOUR: i64 = 6;
+/// For a trigger that is pushed rather than polled, so the tick can never find it
+/// due.
+pub const NEVER: i64 = i64::MAX;
 
 /// One hour, in the units every timestamp here uses.
 const HOUR: i64 = 3_600;
@@ -64,6 +71,10 @@ pub enum Kind {
     File,
     /// A git ref resolves to a different commit.
     Git,
+    /// A page's text changes, or comes to say something it did not before.
+    Url,
+    /// A server sends a notification. Pushed by the server, never polled.
+    Mcp,
 }
 
 impl Kind {
@@ -74,6 +85,8 @@ impl Kind {
         match value.trim().to_ascii_lowercase().as_str() {
             "file" => Some(Self::File),
             "git" => Some(Self::Git),
+            "url" => Some(Self::Url),
+            "mcp" => Some(Self::Mcp),
             _ => None,
         }
     }
@@ -82,7 +95,15 @@ impl Kind {
         match self {
             Self::File => "file",
             Self::Git => "git",
+            Self::Url => "url",
+            Self::Mcp => "mcp",
         }
+    }
+
+    /// Whether the tick has to look at it. An `mcp` trigger is woken by the
+    /// server, so it is never due and the tick must leave it alone.
+    pub fn polled(self) -> bool {
+        !matches!(self, Self::Mcp)
     }
 
     /// What this kind watches, for the form's label and for an error message.
@@ -90,6 +111,8 @@ impl Kind {
         match self {
             Self::File => "folder",
             Self::Git => "repository",
+            Self::Url => "URL",
+            Self::Mcp => "server",
         }
     }
 }
@@ -103,11 +126,13 @@ impl Kind {
 pub struct Spec {
     /// `None` is a cadence: the calendar in `schedule.rs` decides when it runs.
     pub kind: Option<Kind>,
-    /// Folder or repository — what is watched.
+    /// Folder, repository, URL or server name — what is watched.
     pub target: String,
-    /// Glob, or ref name. Blank means "any file" and "HEAD".
+    /// Glob, ref name, the text to look for, or the notification method. Blank
+    /// means "any file", "HEAD", "any change to the page", and "anything this
+    /// server sends".
     pub filter: String,
-    /// Seconds between checks.
+    /// Seconds between checks. Ignored by an `mcp` trigger, which is pushed.
     pub interval_secs: i64,
 }
 
@@ -139,7 +164,8 @@ impl Spec {
     }
 
     /// Every trigger needs something to look at. The filter is optional: a blank
-    /// one means "any file in this folder" and "whatever HEAD points at".
+    /// one means "any file in this folder", "whatever HEAD points at", and "any
+    /// change to the page".
     pub fn validate(&self) -> Result<(), String> {
         let Some(kind) = self.kind else {
             return Ok(());
@@ -163,10 +189,15 @@ impl Spec {
     ///
     /// A new trigger looks soon rather than at the next round hour: the user set
     /// it up to watch something now, and waiting until 09:00 to arm it would make
-    /// an afternoon's edit look like it had not saved.
+    /// an afternoon's edit look like it had not saved. An `mcp` trigger has no
+    /// clock at all, so it is never due and only the server wakes it.
     pub fn first_check(&self, now: i64) -> Option<i64> {
-        self.kind?;
-        Some(now + self.interval())
+        let kind = self.kind?;
+        Some(if kind.polled() {
+            now + self.interval()
+        } else {
+            NEVER
+        })
     }
 }
 
@@ -271,8 +302,50 @@ pub async fn git_fingerprint(repo: &Path, reference: &str) -> Result<String, Str
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+/// What a page's text means.
+///
+/// With a filter, *whether* the page says it — the predicate case, which fires on
+/// the transition to present. Without one, a hash of the text, so any change at
+/// all moves it — the "tell me when this changes" case. Two branches of one rule:
+/// both are something a later look can differ from.
+///
+/// Pure, so the predicate is pinned by a test rather than by a server.
+pub fn page_fingerprint(text: &str, filter: &str) -> String {
+    let needle = filter.trim();
+    if needle.is_empty() {
+        return format!("{:016x}", hash(text));
+    }
+    // Case-insensitive, because a page's own capitalisation is not what anyone
+    // means by "tell me when it says this".
+    let found = text.to_lowercase().contains(&needle.to_lowercase());
+    if found { "yes" } else { "no" }.to_string()
+}
+
+/// What a page says right now, fetched through the same `browse::fetch_url` the
+/// `fetch_url` tool uses — so one place owns "how this app reads a page" and a
+/// monitor sees what the model would have seen.
+pub async fn url_fingerprint(
+    http: &reqwest::Client,
+    url: &str,
+    filter: &str,
+) -> Result<String, String> {
+    Ok(page_fingerprint(&browse::fetch_url(http, url).await?, filter))
+}
+
+/// Not cryptographic and does not need to be: this only has to notice that two
+/// pages differ, not resist anybody forging one that does not.
+fn hash(text: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// Looks at what a trigger watches, right now.
-async fn look(kind: Kind, task: &db::ScheduledRow) -> Result<String, String> {
+async fn look(
+    http: &reqwest::Client,
+    kind: Kind,
+    task: &db::ScheduledRow,
+) -> Result<String, String> {
     let target = task.target.trim();
     if target.is_empty() {
         return Err(format!(
@@ -283,6 +356,10 @@ async fn look(kind: Kind, task: &db::ScheduledRow) -> Result<String, String> {
     match kind {
         Kind::File => file_fingerprint(Path::new(target), &task.filter),
         Kind::Git => git_fingerprint(Path::new(target), &task.filter).await,
+        Kind::Url => url_fingerprint(http, target, &task.filter).await,
+        // Unreachable: `tick` returns before this for a pushed trigger, and this
+        // says so rather than pretending an MCP event has a fingerprint.
+        Kind::Mcp => Err("an MCP event is pushed by the server, not checked".to_string()),
     }
 }
 
@@ -295,6 +372,9 @@ pub async fn tick(app: &AppHandle, state: &AppState, task: &db::ScheduledRow) {
     let Some(kind) = Kind::parse(&task.kind) else {
         return;
     };
+    if !kind.polled() {
+        return;
+    }
 
     let now = db::now_ts();
     // Move the next check on *first*, exactly as the calendar path does: a check
@@ -303,7 +383,7 @@ pub async fn tick(app: &AppHandle, state: &AppState, task: &db::ScheduledRow) {
     let next = now + task.interval_secs.max(MIN_INTERVAL_SECS);
     touch(state, &task.id, next, now);
 
-    let fingerprint = match look(kind, task).await {
+    let fingerprint = match look(&state.http, kind, task).await {
         Ok(fingerprint) => fingerprint,
         Err(err) => {
             // A trigger that cannot look has to say so, or a mistyped folder is a
@@ -361,6 +441,85 @@ fn note(state: &AppState, id: &str, text: &str) {
 fn remember(state: &AppState, id: &str, fingerprint: &str, note: &str) {
     let conn = state.db.lock().unwrap();
     let _ = db::set_scheduled_state(&conn, id, fingerprint, note);
+}
+
+/// The tasks a server's notification should wake: the server's name has to match,
+/// and so does the method — unless the filter is blank or `*`, which is how a task
+/// says "anything this server sends".
+///
+/// Pure over the rows, so the matching rule is testable without a server, a
+/// socket or a handshake.
+pub fn matching_tasks<'a>(
+    rows: &'a [db::ScheduledRow],
+    server: &str,
+    method: &str,
+) -> Vec<&'a db::ScheduledRow> {
+    rows.iter()
+        .filter(|row| row.enabled)
+        .filter(|row| Kind::parse(&row.kind) == Some(Kind::Mcp))
+        .filter(|row| row.target.trim().eq_ignore_ascii_case(server.trim()))
+        .filter(|row| {
+            let filter = row.filter.trim();
+            filter.is_empty() || filter == "*" || filter.eq_ignore_ascii_case(method.trim())
+        })
+        .collect()
+}
+
+/// A server pushed a notification: wake every task that asked for it.
+///
+/// The counterpart of `tick` for the one kind that is pushed rather than polled.
+/// It reads the same table, honours the same cap and starts a run through the
+/// same `fire_scheduled`, so a server-woken task parks, notifies and is billed
+/// exactly like one that woke on a clock.
+///
+/// Nothing is buffered and nothing is replayed. A notification that arrives while
+/// the app is closed is gone: there was no listener, and inventing a backlog would
+/// mean a server able to queue runs inside DeskSeek — which is the archive's open
+/// decision, taken here as "dropped".
+pub async fn on_mcp_event(app: &AppHandle, server: &str, method: &str) {
+    let Some(state) = app.try_state::<AppState>() else {
+        return;
+    };
+    let now = db::now_ts();
+    let woken: Vec<db::ScheduledRow> = {
+        let conn = state.db.lock().unwrap();
+        let rows = db::list_scheduled(&conn).unwrap_or_default();
+        matching_tasks(&rows, server, method)
+            .into_iter()
+            .cloned()
+            .collect()
+    };
+
+    for task in woken {
+        let recent = {
+            let conn = state.db.lock().unwrap();
+            db::fires_since(&conn, &task.id, now - HOUR).unwrap_or(0)
+        };
+        if recent >= MAX_FIRES_PER_HOUR {
+            note(
+                &state,
+                &task.id,
+                &format!(
+                    "{server} sent {method}, but {MAX_FIRES_PER_HOUR} runs an hour is the cap — waiting"
+                ),
+            );
+            continue;
+        }
+        {
+            let conn = state.db.lock().unwrap();
+            // `NEVER` rather than a time: a pushed trigger has no next check, and
+            // recording the run must not make it due.
+            let _ = db::mark_scheduled_ran(&conn, &task.id, NEVER, now);
+            let _ = db::set_scheduled_note(
+                &conn,
+                &task.id,
+                &format!("{server} sent {method} — starting a run"),
+            );
+        }
+        if let Err(err) = commands::fire_scheduled(app, &state, &task).await {
+            eprintln!("trigger {} could not start a run: {err}", task.id);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -445,9 +604,14 @@ mod tests {
 
     #[test]
     fn a_trigger_needs_something_to_watch() {
-        let bare = Spec::new("file", "  ", "", DEFAULT_INTERVAL_SECS);
-        let err = bare.validate().unwrap_err();
-        assert!(err.contains("folder"), "it names what is missing, got {err:?}");
+        // Each kind is refused by the name of what it wants, so the sentence in
+        // the panel says which field is missing rather than "invalid".
+        for (kind, noun) in [("file", "folder"), ("git", "repository"), ("url", "URL")] {
+            let err = Spec::new(kind, "  ", "", DEFAULT_INTERVAL_SECS)
+                .validate()
+                .unwrap_err();
+            assert!(err.contains(noun), "{kind} should name a {noun}, got {err:?}");
+        }
 
         // A cadence has no target to be missing.
         assert!(Spec::default().validate().is_ok());
@@ -477,5 +641,124 @@ mod tests {
             Some(1_900)
         );
         assert!(Spec::default().first_check(1_000).is_none());
+    }
+
+    #[test]
+    fn a_page_condition_fires_on_the_transition_it_describes() {
+        // A filter is a predicate: the page says it or it does not, so a page
+        // that keeps saying the same thing is Same and only becoming true is a
+        // Fire.
+        let says = |text: &str| page_fingerprint(text, "in stock");
+        assert_eq!(says("Sold out and unlikely to return"), "no");
+        assert_eq!(
+            says("Now IN STOCK!"),
+            "yes",
+            "the page's own capitalisation is not the thing anyone means"
+        );
+        assert_eq!(says("In stock"), "yes");
+        assert_eq!(
+            decide(Some(&says("Sold out")), &says("In stock")),
+            Decision::Fire,
+            "becoming true is the fire"
+        );
+        assert_eq!(
+            decide(Some(&says("In stock")), &says("In stock")),
+            Decision::Same,
+            "staying true is not"
+        );
+    }
+
+    #[test]
+    fn an_empty_page_filter_watches_the_whole_page() {
+        // The other half of the same rule: no filter means the fingerprint is a
+        // hash of the text, so any change at all moves it.
+        let before = page_fingerprint("Price: 10", "");
+        assert_eq!(
+            page_fingerprint("Price: 10", "   "),
+            before,
+            "a blank filter and no filter are the same trigger"
+        );
+        let after = page_fingerprint("Price: 11", "");
+        assert_ne!(after, before, "one character is a change");
+        assert_eq!(decide(Some(&before), &after), Decision::Fire);
+    }
+
+    /// A row with only the trigger half filled in, which is all these tests read.
+    fn row(kind: &str, target: &str, filter: &str) -> db::ScheduledRow {
+        db::ScheduledRow {
+            id: "t".to_string(),
+            title: "T".to_string(),
+            prompt: "do it".to_string(),
+            chat_id: None,
+            project_id: None,
+            freq: "daily".to_string(),
+            time: "09:00".to_string(),
+            weekday: 0,
+            nth: 1,
+            enabled: true,
+            next_run_at: NEVER,
+            last_run_at: None,
+            created_at: 0,
+            kind: kind.to_string(),
+            target: target.to_string(),
+            filter: filter.to_string(),
+            interval_secs: DEFAULT_INTERVAL_SECS,
+            last_state: None,
+            last_checked_at: None,
+            last_note: String::new(),
+        }
+    }
+
+    #[test]
+    fn one_notification_matches_the_tasks_that_asked_for_it() {
+        let rows = vec![
+            row("mcp", "fs", "notifications/changed"),
+            row("mcp", "fs", "*"),
+            row("mcp", "github", "notifications/changed"),
+            // A trigger of another kind that happens to name the same thing must
+            // never be woken by an MCP event.
+            row("file", "fs", "notifications/changed"),
+        ];
+
+        let hits = matching_tasks(&rows, "fs", "notifications/changed");
+        assert_eq!(hits.len(), 2, "the named method and the wildcard both match");
+        assert!(hits.iter().all(|woken| woken.target == "fs"));
+
+        assert_eq!(
+            matching_tasks(&rows, "fs", "notifications/other").len(),
+            1,
+            "only the wildcard wanted a method it did not name"
+        );
+        assert!(
+            matching_tasks(&rows, "someone-else", "*").is_empty(),
+            "a server the user did not subscribe to wakes nothing"
+        );
+    }
+
+    #[test]
+    fn a_disabled_trigger_is_not_woken() {
+        let mut off = row("mcp", "fs", "ping");
+        off.enabled = false;
+        assert!(
+            matching_tasks(&[off], "fs", "ping").is_empty(),
+            "pausing a task has to stop it being woken, not just being polled"
+        );
+    }
+
+    #[test]
+    fn an_mcp_trigger_is_never_due_and_is_never_looked_at() {
+        let pushed = Spec::new("mcp", "fs", "*", 60);
+        assert_eq!(
+            pushed.first_check(1_000),
+            Some(NEVER),
+            "a pushed trigger has no next check to be due at"
+        );
+        assert!(!Kind::Mcp.polled());
+        // And the polled kinds still are, so "never due" is about this kind
+        // rather than about the sentinel leaking into the others.
+        assert_eq!(
+            Spec::new("file", "C:\\x", "", 900).first_check(1_000),
+            Some(1_900)
+        );
     }
 }

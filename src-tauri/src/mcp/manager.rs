@@ -11,12 +11,13 @@ use std::time::{Duration, Instant};
 
 use http::{HeaderName, HeaderValue};
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, ContentBlock, ResourceContents, Tool as McpSpec,
+    CallToolRequestParams, CallToolResult, ContentBlock, CustomNotification, ResourceContents,
+    Tool as McpSpec,
 };
-use rmcp::service::RunningService;
+use rmcp::service::{NotificationContext, RunningService};
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::{which_command, StreamableHttpClientTransport, TokioChildProcess};
-use rmcp::{RoleClient, ServiceExt};
+use rmcp::{ClientHandler, RoleClient, ServiceExt};
 use serde::Serialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
@@ -39,8 +40,55 @@ const LOG_ARG_CHARS: usize = 300;
 pub const EVENT_LOG: &str = "mcp-log";
 pub const EVENT_READY: &str = "mcp-ready";
 
-type Client = RunningService<RoleClient, ()>;
+type Client = RunningService<RoleClient, Events>;
 type JsonObject = serde_json::Map<String, Value>;
+
+/// The client half of the MCP handshake, which exists for exactly one reason.
+///
+/// rmcp routes everything a server pushes to a handler, and this app had none —
+/// `()` — so a server-initiated notification had nowhere to land and was dropped
+/// without a trace. That is the whole gap 3.3 describes: the client was complete
+/// apart from a place for an event to arrive.
+///
+/// The methods left unimplemented are the ones DeskSeek deliberately does not
+/// answer. Sampling, elicitation and roots are the *server* asking us for
+/// something, and there is nothing here to ask for.
+pub struct Events {
+    server: String,
+    app: Option<AppHandle>,
+}
+
+impl Events {
+    fn new(server: &str, app: Option<AppHandle>) -> Self {
+        Self {
+            server: server.to_string(),
+            app,
+        }
+    }
+}
+
+impl ClientHandler for Events {
+    async fn on_custom_notification(
+        &self,
+        notification: CustomNotification,
+        _context: NotificationContext<RoleClient>,
+    ) -> () {
+        // No window, so nothing to wake and nobody to tell.
+        let Some(app) = self.app.clone() else { return };
+        let server = self.server.clone();
+        let method = notification.method.clone();
+        // Spawned rather than awaited: this runs inside the client's own read
+        // loop, and a trigger that starts a run must not hold the handshake open
+        // behind it.
+        tauri::async_runtime::spawn(async move {
+            crate::triggers::on_mcp_event(&app, &server, &method).await;
+        });
+    }
+
+    fn get_info(&self) -> rmcp::model::ClientConfig {
+        rmcp::model::ClientConfig::default()
+    }
+}
 
 /// A tool as the server describes it, before we rename it.
 struct Discovered {
@@ -148,6 +196,12 @@ impl Logs {
             .into_iter()
             .flat_map(|name| all[name].iter().cloned())
             .collect()
+    }
+
+    /// The window to report through. The trigger sink is the second thing that
+    /// needs it, and it wants the same one the logs already emit to.
+    fn handle(&self) -> Option<AppHandle> {
+        self.app.clone()
     }
 
     /// Told when discovery finishes, so the UI can say what the model can
@@ -503,7 +557,7 @@ async fn start_server(
 /// one.
 async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String> {
     if server.is_remote() {
-        return connect_http(server).await;
+        return connect_http(server, logs).await;
     }
     // `which_command` resolves Windows shims like `npx.cmd`, which
     // `tokio::process::Command` alone will not find.
@@ -529,7 +583,9 @@ async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String>
         tokio::spawn(async move { read_stderr(stderr, name, logs).await });
     }
 
-    ().serve(transport)
+    // The handler is what gives a server somewhere to push to; see `Events`.
+    Events::new(&server.name, logs.handle())
+        .serve(transport)
         .await
         .map_err(|e| format!("MCP handshake failed: {e}"))
 }
@@ -541,7 +597,7 @@ async fn connect(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String>
 /// through; rmcp rejects the reserved ones (Accept, Mcp-Session-Id,
 /// Last-Event-Id) itself, so a typo surfaces as a clear start error rather than
 /// a half-open session. The URL is used verbatim.
-async fn connect_http(server: &McpServer) -> Result<Client, String> {
+async fn connect_http(server: &McpServer, logs: &Arc<Logs>) -> Result<Client, String> {
     let url = server.url.as_deref().unwrap_or_default().trim();
     let mut config = StreamableHttpClientTransportConfig::default();
     config.uri = url.into();
@@ -552,7 +608,8 @@ async fn connect_http(server: &McpServer) -> Result<Client, String> {
             .map_err(|_| format!("the value of '{name}' is not a valid HTTP header value"))?;
         config.custom_headers.insert(header, value);
     }
-    ().serve(StreamableHttpClientTransport::from_config(config))
+    Events::new(&server.name, logs.handle())
+        .serve(StreamableHttpClientTransport::from_config(config))
         .await
         .map_err(|e| format!("MCP handshake failed: {e}"))
 }
