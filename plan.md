@@ -9,15 +9,21 @@ the tree's roles and its keys are one edit to the same recursion. **Phase 8
 (8.1–8.13) is done and committed, still local, and unreleased**: its items are
 below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, and
 which of it is worth having here) is
-[`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is planned
-below and is being built; its items stay local and unreleased with Phase 8's. The next
-release is **0.5.0**, and `CHANGELOG.md`'s top section is what its tag will print.
+[`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is done and
+committed too, still local and unreleased with Phase 8's — the two phases are twenty
+commits sitting on top of `origin/main`, and nothing in either has been in a real
+window yet. The next release is **0.5.0**, and `CHANGELOG.md`'s top section is what
+its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
 draft, the interrupted-run banner, backup/restore, the database sweep, the
-decision log, a pulled network) are written down and armed but unrun. Only a
-window can confirm them; none is reachable from `cargo test`.
+decision log, a pulled network) are written down and armed but unrun — and Phase 9
+added seven more of the same kind: a fold's note, an `Always allow cargo` that then
+does not ask again, a chat set to *No network* refusing a fetch, a delete still
+prompting in *Skip*, the *By what spent it* rows, and an *Auto* run whose reviewer
+cannot be reached. Only a window can confirm them; none is reachable from
+`cargo test`.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
