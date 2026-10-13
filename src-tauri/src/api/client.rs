@@ -1,12 +1,19 @@
-//! HTTP client for the DeepSeek chat-completions API.
+//! The HTTP engine that drives a turn: one retry ladder, one SSE reader, and one
+//! place that decides whether a failure is worth trying again.
+//!
+//! Dialect-agnostic on purpose. Which headers, which body and how a stream payload
+//! is read are the dialect's business — see `api::provider` — so a second wire
+//! shape adds no second loop, no second retry rule and no second error
+//! classification.
 
 use std::time::Duration;
 
 use anyhow::{anyhow, Context};
 use futures_util::StreamExt;
 
+use crate::api::provider::{self, DialectImpl, Endpoint, WirePart};
 use crate::api::stream::{MessageAccumulator, SseBuffer};
-use crate::api::types::{ChatMessage, ChatRequest, StreamChunk, Usage};
+use crate::api::types::{ChatMessage, ChatRequest, Usage};
 use crate::runs::Cancel;
 
 /// Long timeout: a thinking-mode answer with a 384K output budget can stream
@@ -84,34 +91,42 @@ impl StreamOutcome {
 
 pub struct Client {
     http: reqwest::Client,
-    base_url: String,
-    api_key: String,
+    endpoint: Endpoint,
+    /// `None` for an endpoint that needs no key, which is every model on
+    /// localhost and some gateways beside them.
+    key: Option<String>,
 }
 
 impl Client {
-    pub fn new(http: reqwest::Client, api_key: String, base_url: String) -> Self {
+    pub fn new(http: reqwest::Client, endpoint: Endpoint, key: Option<String>) -> Self {
         Self {
             http,
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key,
+            endpoint,
+            key,
         }
     }
 
-    /// Verify the key by listing models — cheap, spends no tokens.
+    fn imp(&self) -> &'static dyn DialectImpl {
+        self.endpoint.dialect.imp()
+    }
+
+    /// Verify the credentials by listing models — cheap, spends no tokens.
     pub async fn check_auth(&self) -> anyhow::Result<()> {
-        let resp = self
-            .http
-            .get(format!("{}/models", self.base_url))
-            .bearer_auth(&self.api_key)
+        let imp = self.imp();
+        let mut request = self.http.get(imp.models_url(&self.endpoint.base_url));
+        for (name, value) in imp.headers(self.key.as_deref()) {
+            request = request.header(name, value);
+        }
+        let resp = request
             .send()
             .await
-            .context("could not reach DeepSeek")?;
+            .with_context(|| format!("could not reach {}", self.endpoint.label))?;
         if resp.status().is_success() {
             Ok(())
         } else {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            Err(anyhow!("{status}: {body}"))
+            Err(anyhow!("{status}: {}", body.trim()))
         }
     }
 
@@ -133,6 +148,14 @@ impl Client {
     where
         F: FnMut(StreamEvent),
     {
+        let imp = self.imp();
+        let label = self.endpoint.label.clone();
+        // The model record decides what the turn may carry — a picture for a model
+        // that can see, a lower output ceiling for one that declares a small one —
+        // so it is resolved once here rather than guessed at in a dialect.
+        let model = self.endpoint.model_or_unlisted(&req.model);
+        let wire = self.endpoint.wire(&model, req, self.key.as_deref());
+
         let mut attempt = 0u32;
         let resp = loop {
             // Stopped while backing off: nothing was said, so nothing is kept.
@@ -140,13 +163,11 @@ impl Client {
                 return Ok(StreamOutcome::stopped());
             }
             attempt += 1;
-            let sent = self
-                .http
-                .post(format!("{}/chat/completions", self.base_url))
-                .bearer_auth(&self.api_key)
-                .json(req)
-                .send()
-                .await;
+            let mut request = self.http.post(&wire.url);
+            for (name, value) in &wire.headers {
+                request = request.header(*name, value);
+            }
+            let sent = request.json(&wire.body).send().await;
             let worth_retrying = match &sent {
                 Ok(resp) => is_transient(resp.status()),
                 Err(_) => true,
@@ -162,7 +183,7 @@ impl Client {
                         Interruption {
                             transport: true,
                             message: format!(
-                                "DeepSeek kept failing ({status}, {MAX_ATTEMPTS} tries): {}",
+                                "{label} kept failing ({status}, {MAX_ATTEMPTS} tries): {}",
                                 body.trim()
                             ),
                             partial: None,
@@ -170,7 +191,7 @@ impl Client {
                     }
                     Err(e) => Interruption {
                         transport: true,
-                        message: format!("Could not reach DeepSeek ({MAX_ATTEMPTS} tries): {e}"),
+                        message: format!("Could not reach {label} ({MAX_ATTEMPTS} tries): {e}"),
                         partial: None,
                     },
                 });
@@ -186,7 +207,7 @@ impl Client {
             let body = resp.text().await.unwrap_or_default();
             return Err(Interruption {
                 transport: false,
-                message: format!("DeepSeek refused the request ({status}): {}", body.trim()),
+                message: format!("{label} refused the request ({status}): {}", body.trim()),
                 partial: None,
             });
         }
@@ -219,7 +240,7 @@ impl Client {
                 Err(e) => {
                     return Err(Interruption {
                         transport: true,
-                        message: format!("The connection to DeepSeek dropped mid-answer: {e}"),
+                        message: format!("The connection to {label} dropped mid-answer: {e}"),
                         partial: Some(acc.into_message()),
                     });
                 }
@@ -228,19 +249,21 @@ impl Client {
                 if payload == "[DONE]" {
                     continue;
                 }
-                // A malformed chunk is skipped rather than aborting the answer.
-                let Ok(chunk) = serde_json::from_str::<StreamChunk>(&payload) else {
+                // Whatever this dialect makes of it. A payload it does not
+                // understand yields nothing and is skipped rather than aborting an
+                // answer that is otherwise fine.
+                let parts: Vec<WirePart> = imp.parts(&payload);
+                if parts.is_empty() {
                     continue;
-                };
-                if let Some(u) = &chunk.usage {
-                    usage = u.clone();
                 }
-                for choice in &chunk.choices {
-                    if let Some(fr) = &choice.finish_reason {
-                        finish_reason = Some(fr.clone());
+                for part in &parts {
+                    match part {
+                        WirePart::Usage(reported) => provider::merge_usage(&mut usage, reported),
+                        WirePart::Finish(reason) => finish_reason = Some(reason.clone()),
+                        _ => {}
                     }
                 }
-                let applied = acc.apply(&chunk);
+                let applied = acc.apply(&parts);
                 if !applied.content.is_empty() {
                     on_event(StreamEvent::Content(applied.content));
                 }
@@ -276,61 +299,34 @@ impl Client {
         user: &str,
         json_mode: bool,
     ) -> anyhow::Result<(String, crate::api::types::Usage)> {
-        let body = serde_json::json!({
-            "model": model,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user }
-            ],
-            "stream": false,
-            "thinking": { "type": "disabled" },
-            "response_format": { "type": if json_mode { "json_object" } else { "text" } },
-            "max_tokens": 2048
-        });
-
-        let resp = self
-            .http
-            .post(format!("{}/chat/completions", self.base_url))
-            .bearer_auth(&self.api_key)
+        let imp = self.imp();
+        let body = imp.nonstream_body(model, system, user, json_mode);
+        let mut request = self.http.post(imp.chat_url(&self.endpoint.base_url));
+        for (name, value) in imp.headers(self.key.as_deref()) {
+            request = request.header(name, value);
+        }
+        let resp = request
             .json(&body)
             .send()
             .await
-            .context("request to DeepSeek failed")?;
+            .with_context(|| format!("request to {} failed", self.endpoint.label))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("DeepSeek API error {status}: {body}"));
+            return Err(anyhow!(
+                "{} error {status}: {}",
+                self.endpoint.label,
+                body.trim()
+            ));
         }
 
-        let parsed: CompletionResponse = resp.json().await.context("unreadable response")?;
-        let CompletionResponse { choices, usage } = parsed;
-        let text = choices
-            .into_iter()
-            .next()
-            .and_then(|c| c.message.content)
-            .and_then(|content| match content {
-                crate::api::types::Content::Text(text) => Some(text),
-                crate::api::types::Content::Parts(_) => None,
-            })
-            .ok_or_else(|| anyhow!("the model returned an empty response"))?;
-        Ok((text, usage.unwrap_or_default()))
+        let parsed: serde_json::Value = resp.json().await.context("unreadable response")?;
+        // The dialect reads its own reply shape, because the two share no field
+        // names: one has `choices[0].message.content`, the other `content[]`.
+        imp.reply(&parsed)
+            .ok_or_else(|| anyhow!("the model returned an empty response"))
     }
-}
-
-#[derive(serde::Deserialize)]
-struct CompletionResponse {
-    #[serde(default)]
-    choices: Vec<CompletionChoice>,
-    /// Absent only if the endpoint declines to report it; a non-streaming reply
-    /// carries it in practice.
-    #[serde(default)]
-    usage: Option<crate::api::types::Usage>,
-}
-
-#[derive(serde::Deserialize)]
-struct CompletionChoice {
-    message: ChatMessage,
 }
 
 #[cfg(test)]

@@ -82,7 +82,10 @@ export const api = {
   setApiKey: (key: string) => invoke<void>("set_api_key", { key }),
   clearApiKey: () => invoke<void>("clear_api_key"),
   testConnection: () => invoke<void>("test_connection"),
+  /** Check a saved endpoint by id — including one that is not the default. */
+  testEndpoint: (id: string) => invoke<void>("test_endpoint", { id }),
 
+  /** The models the default endpoint offers. */
   listModels: () => invoke<ModelInfo[]>("list_models"),
 
   probeEnvironment: () => invoke<EnvProbe>("probe_environment"),

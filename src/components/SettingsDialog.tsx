@@ -7,6 +7,7 @@ import { COMMANDS, MODES } from "./ChatView";
 import { RUNG_LABEL, SANDBOX_MODES } from "./SetupPanel";
 import { SearxngInstall } from "./SearxngInstall";
 import { MemorySection } from "./MemorySection";
+import { EndpointsSection } from "./EndpointsSection";
 import { Icon } from "./Icon";
 import { when } from "../lib/time";
 import type {
@@ -177,7 +178,7 @@ const SECTIONS: { id: SettingsSection; label: string; keywords: string }[] = [
     label: "Appearance",
     keywords: "theme colour color font size accent dark light motion density contrast",
   },
-  { id: "access", label: "Access", keywords: "api key token base url endpoint documents folder" },
+  { id: "access", label: "Access", keywords: "api key token base url endpoint dialect provider model documents folder" },
   {
     id: "prompt",
     label: "Models & prompt",
@@ -461,6 +462,13 @@ export function SettingsDialog({
 
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
+
+  // Which endpoint the key fields below belong to. An id that names nothing
+  // falls back on the Rust side, so the label has to fall back the same way or
+  // it would name an endpoint the app is not using.
+  const defaultEndpoint =
+    form.endpoints.find((endpoint) => endpoint.id === form.defaultEndpoint) ?? form.endpoints[0];
+  const defaultLabel = defaultEndpoint?.label ?? "this endpoint";
 
   const saveKey = async () => {
     if (!apiKey.trim()) return;
@@ -829,15 +837,20 @@ export function SettingsDialog({
 
           {tab === "access" && (
             <>
-              <label className="block text-xs text-neutral-500">Base URL</label>
-              <input
-                className={inputCls}
-                value={form.baseUrl}
-                onChange={(e) => set("baseUrl", e.target.value)}
-                spellCheck={false}
+              <EndpointsSection
+                endpoints={form.endpoints}
+                defaultEndpoint={form.defaultEndpoint}
+                onChange={(endpoints, defaultEndpoint) =>
+                  setForm((f) => ({ ...f, endpoints, defaultEndpoint }))
+                }
+                save={saveAll}
+                onStatus={setStatus}
+                busy={busy}
               />
+
+              <div className="border-t border-neutral-800 pt-4">
               <label className="block text-xs text-neutral-500">
-                API key {keyMask ? `(stored: ${keyMask})` : "(not set)"}
+                API key for {defaultLabel} {keyMask ? `(stored: ${keyMask})` : "(not set)"}
               </label>
               <div className="flex gap-2">
                 <input
@@ -863,13 +876,18 @@ export function SettingsDialog({
                   Clear
                 </button>
               </div>
+              <p className="mt-1 text-[11px] text-neutral-600">
+                Stored in the OS keychain against this endpoint, never in the settings file. An
+                endpoint whose reference is blank — a model on this machine — needs no key.
+              </p>
               <button
                 onClick={testKey}
                 disabled={busy}
-                className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
+                className="mt-2 rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
               >
                 Test connection
               </button>
+              </div>
 
               <div className="border-t border-neutral-800 pt-4">
                 <label className="block text-xs text-neutral-500">

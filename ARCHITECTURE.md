@@ -22,7 +22,10 @@ commands.rs                  every command the window may ask for, and nothing e
   |
   v
 conversation/agent.rs        the agent loop: stream a turn, run its tools, repeat
-  |-- api/client.rs          HTTP + SSE to DeepSeek
+  |-- api/client.rs          HTTP + SSE: the retry ladder, the reader, and which failures are
+  |     provider.rs           which endpoint a turn runs against, and the one seam a wire shape
+  |                           lives behind; openai_compat.rs / anthropic_compat.rs are the two
+  |                           shapes, each pure so a wire format is testable without a network
   |-- tools/mod.rs           the built-in toolset, and how risky each call is
   |     guard.rs             what may run without asking
   |     sandbox.rs           the workspace path sandbox — the real containment
@@ -87,7 +90,10 @@ Changing behaviour in this app is usually changing one of these.
 | The `messages` array sent to the API, including `reasoning_content` echoed back on prior assistant turns whenever the request carries tools | `conversation/assemble.rs` |
 | The agent loop, and the system prompt: the profile, the looked-up memory, the skills and design-system catalogue, the instructions, the project's rules | `conversation/agent.rs` |
 | When a run folds its own chat, and what a folded transcript is — the one note both `/compact` and the automatic fold go through | `conversation/summarize.rs` |
-| Model prices, which hours are off-peak, and each model's context window | `api/models.rs` |
+| Model prices, which hours are off-peak, and each model's context window | `api/provider.rs` (the records), `api/models.rs` (the clock and the budget) |
+| Which wire shape a request takes, and the two dialects that own them — one place per dialect, so adding a dialect cannot add a second loop | `api/provider.rs`, `api/openai_compat.rs`, `api/anthropic_compat.rs` |
+| The HTTP engine every dialect shares: the retry ladder, the SSE reader, and transport-versus-refusal | `api/client.rs` |
+| Which endpoint a turn runs against, and which keychain account its key is in | `store/settings.rs`, `store/keychain.rs` |
 | Who spent a row in `turn_usage` (a turn, a summary, a revision) and whether its price is known — and the one writer for a call nobody typed | `store/db.rs`, `conversation/mod.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |

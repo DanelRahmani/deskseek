@@ -171,7 +171,7 @@ pub struct ChatRequest {
     pub tools: Option<Vec<Tool>>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default, Serialize)]
+#[derive(Debug, Clone, Deserialize, Default, Serialize, PartialEq)]
 pub struct Usage {
     #[serde(default)]
     pub prompt_tokens: u32,

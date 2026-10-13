@@ -1,8 +1,14 @@
-//! Server-sent-events parsing and delta accumulation.
+//! Server-sent-events parsing and turn accumulation.
 //!
-//! Both pieces are pure so they can be unit-tested without a network.
+//! Both pieces are pure so they can be unit-tested without a network, and both
+//! work in the app's own terms — `WirePart`s — rather than in either dialect's:
+//! that is what lets one accumulator serve two wire shapes and stops a second
+//! dialect from becoming a second loop.
 
-use crate::api::types::{ChatMessage, Content, StreamChunk, ToolCall, ToolCallDelta};
+use std::collections::BTreeMap;
+
+use crate::api::provider::WirePart;
+use crate::api::types::{ChatMessage, Content, ToolCall};
 
 /// Incremental `data:` line extractor. Feed it raw response bytes; it returns
 /// every complete payload (including the literal `[DONE]` terminator).
@@ -38,64 +44,81 @@ impl SseBuffer {
     }
 }
 
-/// The text added by a single chunk, for forwarding to the UI.
+/// The text added by a single payload, for forwarding to the UI.
 #[derive(Default, Debug, PartialEq)]
 pub struct AppliedDelta {
     pub content: String,
     pub reasoning: String,
 }
 
-/// Rebuilds one assistant message from the streamed deltas. Tool calls arrive
-/// fragmented, so they are merged by `index`.
+/// Rebuilds one assistant message from the streamed parts. Tool calls arrive
+/// fragmented, so they are merged by the dialect's own index.
 #[derive(Default)]
 pub struct MessageAccumulator {
     pub content: String,
     pub reasoning: String,
-    tool_calls: Vec<ToolCall>,
+    /// Keyed by the dialect's index rather than held in a list.
+    ///
+    /// Anthropic numbers content blocks, so a text block occupies 0 and the first
+    /// tool call arrives at 1: a list would then carry an empty slot at the front
+    /// and hand the model a tool call with no name. Keying on the number and
+    /// emitting in order is right for both, because OpenAI's zero-based numbering
+    /// is a special case of it.
+    tool_calls: BTreeMap<usize, ToolCall>,
 }
 
 impl MessageAccumulator {
-    pub fn apply(&mut self, chunk: &StreamChunk) -> AppliedDelta {
+    pub fn apply(&mut self, parts: &[WirePart]) -> AppliedDelta {
         let mut applied = AppliedDelta::default();
-        for choice in &chunk.choices {
-            if let Some(c) = &choice.delta.content {
-                if !c.is_empty() {
-                    self.content.push_str(c);
-                    applied.content.push_str(c);
+        for part in parts {
+            match part {
+                WirePart::Text(text) => {
+                    self.content.push_str(text);
+                    applied.content.push_str(text);
                 }
-            }
-            if let Some(r) = &choice.delta.reasoning_content {
-                if !r.is_empty() {
-                    self.reasoning.push_str(r);
-                    applied.reasoning.push_str(r);
+                WirePart::Reasoning(text) => {
+                    self.reasoning.push_str(text);
+                    applied.reasoning.push_str(text);
                 }
-            }
-            if let Some(calls) = &choice.delta.tool_calls {
-                for call in calls {
-                    self.merge_tool_call(call);
-                }
+                WirePart::ToolDelta {
+                    index,
+                    id,
+                    name,
+                    args,
+                } => self.merge_tool_call(*index, id.as_deref(), name.as_deref(), args.as_deref()),
+                // Usage and the stop reason are the loop's business, not the
+                // message's.
+                WirePart::Usage(_) | WirePart::Finish(_) => {}
             }
         }
         applied
     }
 
-    fn merge_tool_call(&mut self, delta: &ToolCallDelta) {
-        while self.tool_calls.len() <= delta.index {
-            self.tool_calls.push(ToolCall::new(String::new()));
+    fn merge_tool_call(
+        &mut self,
+        index: usize,
+        id: Option<&str>,
+        name: Option<&str>,
+        args: Option<&str>,
+    ) {
+        let slot = self.tool_calls.entry(index).or_insert_with(|| {
+            ToolCall {
+                id: String::new(),
+                kind: "function".to_string(),
+                function: crate::api::types::FunctionCall {
+                    name: String::new(),
+                    arguments: String::new(),
+                },
+            }
+        });
+        if let Some(id) = id {
+            slot.id = id.to_string();
         }
-        let slot = &mut self.tool_calls[delta.index];
-        if let Some(id) = &delta.id {
-            if !id.is_empty() {
-                slot.id = id.clone();
-            }
+        if let Some(name) = name {
+            slot.function.name.push_str(name);
         }
-        if let Some(func) = &delta.function {
-            if let Some(name) = &func.name {
-                slot.function.name.push_str(name);
-            }
-            if let Some(args) = &func.arguments {
-                slot.function.arguments.push_str(args);
-            }
+        if let Some(args) = args {
+            slot.function.arguments.push_str(args);
         }
     }
 
@@ -113,7 +136,11 @@ impl MessageAccumulator {
             } else {
                 Some(self.reasoning)
             },
-            tool_calls: if has_tools { Some(self.tool_calls) } else { None },
+            tool_calls: if has_tools {
+                Some(self.tool_calls.into_values().collect())
+            } else {
+                None
+            },
             tool_call_id: None,
         }
     }
@@ -122,10 +149,6 @@ impl MessageAccumulator {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn chunk(json: &str) -> StreamChunk {
-        serde_json::from_str(json).expect("valid chunk")
-    }
 
     #[test]
     fn sse_buffer_emits_only_complete_lines_and_survives_split_chunks() {
@@ -146,39 +169,57 @@ mod tests {
     }
 
     #[test]
-    fn accumulator_joins_content_and_reasoning_deltas() {
+    fn accumulator_joins_content_and_reasoning_parts() {
         let mut acc = MessageAccumulator::default();
-        acc.apply(&chunk(r#"{"choices":[{"delta":{"reasoning_content":"think"}}]}"#));
-        acc.apply(&chunk(r#"{"choices":[{"delta":{"content":"Hel"}}]}"#));
-        let applied = acc.apply(&chunk(r#"{"choices":[{"delta":{"content":"lo"}}]}"#));
+        acc.apply(&[WirePart::Reasoning("think".to_string())]);
+        acc.apply(&[WirePart::Text("Hel".to_string())]);
+        let applied = acc.apply(&[WirePart::Text("lo".to_string())]);
         assert_eq!(applied.content, "lo");
         assert_eq!(acc.content, "Hello");
         assert_eq!(acc.reasoning, "think");
     }
 
     #[test]
-    fn tool_call_arguments_are_merged_across_chunks() {
+    fn tool_call_arguments_are_merged_across_parts() {
         let mut acc = MessageAccumulator::default();
-        acc.apply(&chunk(
-            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"get_weather","arguments":"{\"loc"}}]}}]}"#,
-        ));
-        acc.apply(&chunk(
-            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ation\":\"Paris\"}"}}]}}]}"#,
-        ));
+        acc.apply(&[WirePart::ToolDelta {
+            index: 0,
+            id: Some("call_1".to_string()),
+            name: Some("read_file".to_string()),
+            args: Some("{\"pa".to_string()),
+        }]);
+        acc.apply(&[WirePart::ToolDelta {
+            index: 0,
+            id: None,
+            name: None,
+            args: Some("th\":\"a.txt\"}".to_string()),
+        }]);
         let msg = acc.into_message();
         let calls = msg.tool_calls.expect("tool calls present");
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].id, "call_1");
-        assert_eq!(calls[0].function.name, "get_weather");
-        assert_eq!(calls[0].function.arguments, r#"{"location":"Paris"}"#);
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].kind, "function");
+        assert_eq!(calls[0].function.arguments, r#"{"path":"a.txt"}"#);
     }
 
     #[test]
     fn two_parallel_tool_calls_keep_their_own_indices() {
         let mut acc = MessageAccumulator::default();
-        acc.apply(&chunk(
-            r#"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"one","arguments":"{}"}},{"index":1,"id":"b","function":{"name":"two","arguments":"{}"}}]}}]}"#,
-        ));
+        acc.apply(&[
+            WirePart::ToolDelta {
+                index: 0,
+                id: Some("a".to_string()),
+                name: Some("one".to_string()),
+                args: Some("{}".to_string()),
+            },
+            WirePart::ToolDelta {
+                index: 1,
+                id: Some("b".to_string()),
+                name: Some("two".to_string()),
+                args: Some("{}".to_string()),
+            },
+        ]);
         let calls = acc.into_message().tool_calls.unwrap();
         assert_eq!(calls.len(), 2);
         assert_eq!(calls[0].function.name, "one");
@@ -186,9 +227,30 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_at_a_block_offset_does_not_leave_an_empty_one_behind() {
+        // The Anthropic case: a text block took index 0, so the first tool call is
+        // at 1. A list would carry a nameless call at the front and send the model
+        // a tool that does not exist.
+        let mut acc = MessageAccumulator::default();
+        acc.apply(&[
+            WirePart::Text("let me look".to_string()),
+            WirePart::ToolDelta {
+                index: 1,
+                id: Some("toolu_1".to_string()),
+                name: Some("read_file".to_string()),
+                args: Some("{}".to_string()),
+            },
+        ]);
+        let calls = acc.into_message().tool_calls.unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(calls[0].id, "toolu_1");
+    }
+
+    #[test]
     fn no_tool_calls_yields_none() {
         let mut acc = MessageAccumulator::default();
-        acc.apply(&chunk(r#"{"choices":[{"delta":{"content":"hi"}}]}"#));
+        acc.apply(&[WirePart::Text("hi".to_string())]);
         assert!(acc.into_message().tool_calls.is_none());
     }
 }

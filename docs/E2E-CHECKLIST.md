@@ -561,3 +561,27 @@ the parts only a person can see.
 - [ ] Closing the main window hides it — the process keeps running, and the tray icon still brings
       it back
 - [ ] *Quit* ends the process, and no MCP server or browser child is left behind
+
+## Endpoints
+
+- [ ] *Settings → Access* lists one endpoint on a fresh install, DeepSeek, marked as the one in use
+- [ ] A real turn runs against the default endpoint, and its spend row in the spend view names the
+      model that ran
+- [ ] Adding **Anthropic** fills in the dialect and the base URL, and a chat run against it answers
+      — the Anthropic-compatible dialect on a real endpoint, mid-stream tool calls included
+- [ ] Adding **Ollama** (a local model, no key) and switching the default to it runs a turn with
+      nothing in the keychain, and the spend row for that turn says *unknown* rather than `$0.00`
+- [ ] *Save & test* on an endpoint the app has never saved reports that it must be saved first
+      rather than failing as a bad key
+- [ ] A base URL ending in a slash still joins correctly — `https://host/` must not become
+      `//chat/completions`
+- [ ] A base URL without `http://` or `https://`, and a blank one, are each refused by name when
+      tested rather than failing later as a bad key
+- [ ] Switching the default endpoint back to DeepSeek leaves the earlier chats working, and the
+      model picker now lists the new endpoint's models
+- [ ] A chat whose model the current endpoint does not list still sends, and its spend reads
+      *unknown*
+- [ ] Saving an endpoint with a rate and then sending the same prompt during peak hours doubles the
+      row's cost, and an endpoint whose peak multiplier is 1 does not
+- [ ] Clearing the key for the endpoint in use makes Send refuse by name, and restoring it works
+      again

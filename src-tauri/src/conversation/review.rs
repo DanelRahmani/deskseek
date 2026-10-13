@@ -16,9 +16,7 @@
 
 use serde_json::Value;
 
-use crate::api::client::Client;
 use crate::conversation::assemble::Turn;
-use crate::store::keychain;
 use crate::tools::{guard, ToolClass};
 use crate::AppState;
 
@@ -139,27 +137,26 @@ fn request_for(tool: &str, args: &Value, turns: &[Turn]) -> String {
 /// a review nobody asked for is still a call the user paid for. The verdict is
 /// the *whole* answer, failure included — see `verdict_from`.
 pub async fn review(state: &AppState, chat_id: &str, tool: &str, args: &Value, turns: &[Turn]) -> Verdict {
-    let Some(api_key) = keychain::get_api_key().ok().flatten() else {
-        // No key, no second opinion. The user decides, which is the safe default
-        // rather than an accident.
+    let settings = state.settings.lock().unwrap().clone();
+    // No endpoint, no key, or a key that will not read: no second opinion. The
+    // user decides, which is the safe default rather than an accident.
+    let Ok(client) = crate::conversation::client(state, &settings) else {
         return Verdict::Ask;
     };
-    let settings = state.settings.lock().unwrap().clone();
-    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+    // The cheapest model the endpoint publishes, chosen in the settings rather
+    // than named here: the constant this replaced was DeepSeek's id, and a second
+    // endpoint as the default would have failed every review with a 400.
+    let model = settings.summary_model();
     let reply = client
-        .complete(
-            crate::conversation::summarize::SUMMARY_MODEL,
-            REVIEW_SYSTEM_PROMPT,
-            &request_for(tool, args, turns),
-            false,
-        )
+        .complete(&model, REVIEW_SYSTEM_PROMPT, &request_for(tool, args, turns), false)
         .await;
     if let Ok((_, usage)) = &reply {
         crate::conversation::record_overhead(
             state,
+            &settings,
             chat_id,
             crate::store::db::REVIEW,
-            crate::conversation::summarize::SUMMARY_MODEL,
+            &model,
             usage,
         );
     }

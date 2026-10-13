@@ -1,36 +1,54 @@
-//! The API key lives in the OS keychain (Credential Manager / Keychain /
-//! Secret Service) — never in a config file and never in a log.
+//! API keys live in the OS keychain (Credential Manager / Keychain / Secret
+//! Service) — never in a config file and never in a log.
+//!
+//! One account per endpoint. An endpoint's `key_ref` is the account name, and a
+//! blank `key_ref` means the endpoint needs no key at all, which is the honest
+//! setting for a model on localhost.
 
 const SERVICE: &str = "deskseek";
-const ACCOUNT: &str = "api_key";
 
-fn entry() -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| e.to_string())
+/// The account the app's key has always been stored under.
+///
+/// Endpoint one keeps it, so an existing install does not paste its key again —
+/// which is the one visible cost this whole feature could have had.
+pub const DEFAULT_REF: &str = "api_key";
+
+fn entry(key_ref: &str) -> Result<keyring::Entry, String> {
+    keyring::Entry::new(SERVICE, key_ref).map_err(|e| e.to_string())
 }
 
-pub fn set_api_key(key: &str) -> Result<(), String> {
-    entry()?
+pub fn set_key(key_ref: &str, key: &str) -> Result<(), String> {
+    if key_ref.trim().is_empty() {
+        return Err("this endpoint has no key reference".to_string());
+    }
+    entry(key_ref)?
         .set_password(key)
-        .map_err(|e| format!("could not store key in the OS keychain: {e}"))
+        .map_err(|e| format!("could not store the key in the OS keychain: {e}"))
 }
 
-pub fn get_api_key() -> Result<Option<String>, String> {
-    match entry()?.get_password() {
+pub fn get_key(key_ref: &str) -> Result<Option<String>, String> {
+    if key_ref.trim().is_empty() {
+        return Ok(None);
+    }
+    match entry(key_ref)?.get_password() {
         Ok(secret) => Ok(Some(secret)),
         Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("could not read key from the OS keychain: {e}")),
+        Err(e) => Err(format!("could not read the key from the OS keychain: {e}")),
     }
 }
 
-pub fn has_api_key() -> bool {
-    matches!(get_api_key(), Ok(Some(k)) if !k.is_empty())
+pub fn has_key(key_ref: &str) -> bool {
+    matches!(get_key(key_ref), Ok(Some(key)) if !key.is_empty())
 }
 
-pub fn delete_api_key() -> Result<(), String> {
-    match entry()?.delete_credential() {
+pub fn delete_key(key_ref: &str) -> Result<(), String> {
+    if key_ref.trim().is_empty() {
+        return Ok(());
+    }
+    match entry(key_ref)?.delete_credential() {
         Ok(()) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("could not remove key from the OS keychain: {e}")),
+        Err(e) => Err(format!("could not remove the key from the OS keychain: {e}")),
     }
 }
 
@@ -60,5 +78,23 @@ mod tests {
     #[test]
     fn short_keys_are_fully_masked() {
         assert_eq!(mask("abc"), "••••");
+    }
+
+    #[test]
+    fn an_endpoint_with_no_key_reference_never_touches_the_keychain() {
+        // A local model has no key, and asking the OS store about a blank account
+        // is not just pointless — it can surface an error that is not one.
+        assert_eq!(get_key("").unwrap(), None);
+        assert!(!has_key("   "));
+        assert!(delete_key("").is_ok());
+        assert!(set_key("", "sk-abc").is_err());
+    }
+
+    #[test]
+    fn the_default_reference_is_the_account_the_app_already_used() {
+        // Renaming this would silently orphan the stored key, so it is asserted
+        // rather than left to a comment.
+        assert_eq!(DEFAULT_REF, "api_key");
+        assert_eq!(crate::api::provider::seed()[0].key_ref, DEFAULT_REF);
     }
 }

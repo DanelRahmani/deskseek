@@ -15,7 +15,10 @@ committed too, still local and unreleased with Phase 8's, and so is **Phase 10 (
 top of `origin/main`, and nothing in any of them has been in a real window yet. Phase 11 ends with
 one small fix commit of its own: the git check had been spawning `git` directly, which on Windows
 flashes a console window — every interval, forever — and leaves a child behind on a hard kill, so it
-was moved onto `exec::capture`, the one recipe this app has for running a program. Phase 10's other
+was moved onto `exec::capture`, the one recipe this app has for running a program. **Phase 12
+(2.1–2.3, 13.2, 9.1, 9.5, 8.5, 10.3)** is the widest-blast-radius phase in the whole document — the
+two wire dialects and then everything they unblock — and it is the one the 2026-10-13 decision was
+recorded for. Phase 10's other
 archive item, **9.4**, is deliberately not here: it is "V1 once 6.3 exists", and 6.3 — `recorder.rs`,
 reached through 6.2's plugin bundles — does not. One commit in Phase 11 covers two items, **7.3 and
 3.3 together**, because they are the same enum, the same form and the same panel row: splitting them
@@ -1976,20 +1979,160 @@ it opens rather than replaying the whole time it was closed.
 
 ---
 
+## Phase 12: Providers, then everything they unblock
+
+Eight items in the archive's order, and the order is the argument: the two wire dialects first,
+because a half-migrated provider layer is worse than a single-provider app; then the three decisions
+that ride on it (per-task model, effort, the routing suggestion); then the four capabilities that
+only exist once a model can see or speak (vision, computer use, audio, dictation). The 2026-10-13
+decision recorded at the top of this file is what makes this cheaper than the teardown the archive
+first implied — two dialects, each one wire shape, and every named vendor is configuration rather
+than a module.
+
+### 2.1 [M] Two wire dialects, N endpoints ✅
+- **Why**: every competitor lets the model be chosen, and it is a cost decision before it is a brand
+  one — a cheap model for a nightly triage, an expensive one for a hard refactor. It is also the gate
+  on the last four items of this phase: nothing that needs vision or speech starts until a second
+  wire shape exists.
+- **Files**: new `api/provider.rs` (`Dialect`, `Endpoint`, `Model`, `Price`, the `DialectImpl` seam,
+  `Wire`, `WirePart`, `merge_usage`, `messages_for`, and the seed endpoint); new
+  `api/openai_compat.rs` and `api/anthropic_compat.rs` (one wire shape each, every method pure so a
+  wire format is testable without a network); `api/client.rs` (the HTTP/SSE/retry engine, now
+  parameterised by an endpoint and delegating every shape question to the dialect);
+  `api/stream.rs` (the accumulator, rewritten over `WirePart`s and keyed by the dialect's own tool
+  index rather than by position — Anthropic numbers *content blocks*, so a text block can occupy 0
+  and the first tool call 1, and a list would hand the model a nameless call at the front);
+  `api/models.rs` (reduced to the clock and the budget, since a rate belongs on the endpoint's model
+  record); `store/settings.rs` (`endpoints` + `default_endpoint`, the legacy `base_url` folded in and
+  blanked once, and the three lookups — `model_info`, `context_for`, `summary_model`);
+  `store/keychain.rs` (a key per `key_ref`); the five `Client::new` call sites; `commands.rs`
+  (endpoint-scoped key commands, `test_endpoint`, `list_models` from the endpoint, and one
+  `ready_to_send` that both turn paths and the environment probe share);
+  `src/components/EndpointsSection.tsx` (new), `SettingsDialog.tsx`, `types.ts`, `api.ts`.
+- **Shape**: one place per dialect knows a wire shape and nothing else does — the seam is a trait,
+  so "exactly one place" is structural rather than a rule somebody has to remember. DeepSeek is
+  endpoint one, speaks the OpenAI dialect and keeps the keychain account the key was already stored
+  under, so an existing install re-enters nothing; the migration is idempotent and blanks the old
+  field as it folds it in. Three deviations from the archive's Files list, all of them smaller: the
+  price table lives on the model records rather than in `models.rs`, because a rate belongs to an
+  *endpoint and* a model — the same id can cost different money in two places; `api/models.rs`
+  keeps only the clock rule and the budget rule; and the front end needed a component the archive
+  did not name, because an endpoint list is a list of forms. Two things the OpenAI dialect does that
+  the other cannot, said out loud rather than hidden: it takes `max_tokens` as optional (so nothing
+  is sent, and DeepSeek's own maximum applies) where Anthropic requires it and gets the model's
+  declared output capped at 32,000; and its `thinking` field and `reasoning_content` echo are
+  DeepSeek's extensions to the dialect, which a stricter server would call a third dialect — a
+  dialect, not a vendor client. Anthropic's prior-turn reasoning is deliberately **not** echoed
+  back, because this wire refuses a `thinking` block without its signature, which is what lets one
+  history serve both.
+- **Test**: `cargo test` — per dialect, the exact request body asserted field by field, the stream
+  assembly, the tool-call round trip across fragmented chunks, a payload neither dialect knows being
+  skipped rather than fatal, the base-URL join with a trailing slash, the non-stream reply, and the
+  unlisted-model and unknown-price paths. The Anthropic side gets the three shapes that make it a
+  second dialect rather than a copy: `system` as a parameter, `tool_use`/`tool_result` blocks, and
+  parallel results gathered into **one** user message. Falsified: making a missing rate read as zero
+  (`let price = self.price?` → `unwrap_or(Price { .. 0.0 })`) fails
+  `a_rate_nobody_published_is_unknown_and_not_zero` with `left: Some(0.0), right: None` — the spend
+  view quietly agreeing with a guessed number — and restoring passes. `cargo test` 385 → 430. Two
+  things need a real window and are on `docs/E2E-CHECKLIST.md` instead: a live turn against a real
+  endpoint per dialect, and one against a local model with no key at all.
+- **Stop**: adding an endpoint is a form and no code, and switching endpoint runs a turn.
+
+### 2.2 [S] Per-task and per-chat model selection
+- **Why**: a scheduled triage at 06:00 does not need the frontier model, and its bill should say so.
+  The chat side already has a model picker; what is missing is the unattended half.
+- **Files**: `store/db.rs` (a `model` column on `scheduled_tasks`, `CREATE TABLE` plus a guarded
+  `ALTER`), `schedule.rs` / `commands.rs` (the field through create and update), `ScheduledPanel.tsx`
+  (the picker, listing the default endpoint's models), `ChatView.tsx` (the existing picker, now fed
+  by the endpoint rather than a const).
+- **Shape**: the task's model travels with the run: `fire_scheduled` pins the chat's model for an
+  unattended run, and the `turn_usage` row already records the model that ran. A PIN is a model id,
+  not an endpoint: the endpoint is whatever is default when the task fires.
+- **Test**: a scheduled row round-trips its model, an upgrade from a pre-2.2 table gets the column
+  with the endpoint's first model as the default, and the spend row for a task names the pinned model.
+- **Stop**: a scheduled task can be pinned to a cheaper model and its spend rows say which ran.
+
+### 2.3 [S] Reasoning-effort control
+- **Why**: a slider over how much thought a model puts in — the cheapest way to buy quality only
+  where it is needed.
+- **Files**: `api/provider.rs` (`Dialect::supports_effort`, and the two mappings), the two dialect
+  modules (OpenAI's `reasoning_effort`, Anthropic's `thinking.budget_tokens`), `ChatView.tsx` (an
+  effort control that says so when the endpoint has no such parameter rather than showing a switch
+  that does nothing).
+- **Shape**: effort is per dialect and honest about it. A dialect with no notion of effort says so
+  in the UI and omits the field rather than sending something the endpoint will ignore.
+- **Test**: each dialect maps its effort levels to the field it actually sends, and a dialect
+  without effort produces no field at all.
+- **Stop**: the effort control either works or says it cannot, and never silently does nothing.
+
+### 13.2 [S] Cheap-model routing with a recommendation
+- **Why**: every vendor picks a model per surface and prices it; the honest app-side counterpart of
+  a routing habit is a suggestion at the point of the decision.
+- **Files**: `api/provider.rs` (the estimate: what the pinning would have cost at the other model's
+  rate), `ChatView.tsx` and `ScheduledPanel.tsx` (the suggestion line beside the picker).
+- **Shape**: **never silently route.** A suggestion with the reason and the estimate is honest; a
+  silent downgrade that changes an answer's quality is not. It is text next to the control, and the
+  control stays the user's.
+- **Test**: the estimator says "cheaper" only when the other model is in fact cheaper for the tokens
+  just spent, and says nothing when there is one model to choose from or no price to compare.
+- **Stop**: a cheaper model is suggested with a number, and never chosen for the user.
+
+### 9.1 [M] Vision into tool results
+- **Why**: the README says screenshots go to the user's eyes because DeepSeek's API is text-only. A
+  vision-capable model removes the reason, and one change upgrades both browser control and computer
+  use from blind to able to see what happened.
+- **Files**: `api/types.rs` (a tool result that carries parts), `api/openai_compat.rs` (image parts
+  on the wire), `tools/browser.rs` and `tools/desktop.rs` (a capture that returns a path, downscaled
+  once), `conversation/agent.rs` (the result shape), `ToolCallCard.tsx` (show the image the model
+  saw), `README.md` (the "goes to your eyes" paragraph is revised, not left to contradict).
+- **Shape**: downscale once, keep the full-size file, and send the smaller one — the rule the
+  attachment path already states. A tool result carrying an image says so in text too, for the
+  model's benefit. A model without vision degrades to the text part with an explicit note rather
+  than sending an image the endpoint will reject.
+- **Test**: the result-shape test asserts an image part and a text part together, and that a
+  non-vision model gets the text part and the note.
+- **Stop**: a screenshot can be read by the model, and a model that cannot see is told so.
+
+### 9.5 [M] Computer use: a coordinate click and an app inventory
+- **Why**: the desktop tool reads the accessibility tree, so a canvas or a game reports nothing and
+  there is no raw coordinate click. Vision (9.1) plus a screenshot-anchored click closes that gap the
+  way every vendor's computer use does.
+- **Files**: `tools/desktop.rs` (a coordinate click, an enumerated window list, and the ordering
+  sentence), `conversation/agent.rs` (the connector → browser → computer-use ordering in the prompt).
+- **Shape**: the rails stay exactly as they are — off by default, ask every time, the action cap, the
+  spacing, `Ctrl+Alt+Esc`. A coordinate click is refused outright when desktop control is off.
+- **Test**: the spacing and cap tests stay, and a coordinate click with computer use off is refused.
+- **Stop**: a canvas window can be driven by coordinate, behind the same rails as every other action.
+
+### 8.5 [M] Audio Overview (text to speech)
+- **Why**: the most-loved notebook feature is two voices discussing the sources. It is also the one
+  that needs a paid third-party service, so it has to be an explicit, priced action.
+- **Files**: new `src-tauri/src/tools/audio.rs` (a script over the chat or folder, then a TTS call,
+  then the clip saved beside the sources), an endpoint for speech (`key_ref`), `artifact` /
+  `ArtifactPanel.tsx` (a player), `commands.rs`.
+- **Shape**: the estimate shows before it runs, per minute, and the clip is a file like any other so
+  it can be reopened. It refuses rather than runs when no speech endpoint is configured.
+- **Test**: the script shape and the refusal when no speech endpoint exists; the call itself is E2E.
+- **Stop**: an audio overview can be produced, with its price shown first.
+
+### 10.3 [M] Dictation
+- **Why**: talking is faster than typing for some inputs, and both vendors ship it.
+- **Files**: new `src-tauri/src/tools/speech.rs` (speech to text), a chord or a button in
+  `ChatView.tsx`, the composer.
+- **Shape**: push to talk, transcribe, and **insert into the composer rather than sending** —
+  matching the prompt-library rule that text goes into the box to edit. Which platform is supported
+  is said plainly rather than silently omitted.
+- **Test**: the composer receives text and no turn starts; the transcription call is E2E.
+- **Stop**: a spoken sentence lands in the composer, editable, and is not sent until the user says so.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
-The archive's phase plan runs **8 to 13**, and this file has taken 8, 9, 10 and 11 and stopped. Two
-phases are still proposals in [`ReverseEngineering.md`](ReverseEngineering.md) and have never been
-written up here as items:
+The archive's phase plan runs **8 to 13**. This file has taken 8, 9, 10, 11 and 12; one phase is
+still a proposal in [`ReverseEngineering.md`](ReverseEngineering.md) and has never been written up
+here as items:
 
-- **Phase 12 — Providers, then everything they unblock.** The two wire dialects (`openai-compatible`
-  and `anthropic-compatible`) as configuration rather than a client per vendor, then per-task model,
-  effort, the routing suggestion, and after them the capabilities that only exist once a model can
-  see or speak: vision, computer use, audio, dictation. This is where the widest blast radius in the
-  whole document lives — a half-migrated provider layer is worse than a single-provider app — which
-  is why it is a phase of its own. The decision of 2026-10-13 recorded at the top of this file is
-  what makes it cheaper than the teardown first implied, and it is written down there specifically so
-  that nothing through Phase 11 has foreclosed it.
 - **Phase 13 — Grounded research.** Notebooks and sources, grounded retrieval, the notebook surface,
   study outputs, data tables, semantic lookup. It wants the memory and retrieval path settled first,
   which is what Phases 8 through 11 were.
@@ -1999,7 +2142,7 @@ activity timeline, share snapshots, and the plugin and recording work — each o
 real week of using the phases above or a task that actually needs it.
 
 So a ✅ on every item in this file means **the plan as written is built**, not that the roadmap is
-finished. Nothing in Phases 1 to 11 is waiting on either of the two, and neither of them is started.
+finished. Nothing in Phases 1 to 12 is waiting on Phase 13, and it is not started.
 
 ---
 

@@ -342,6 +342,7 @@ pub fn run() {
             commands::set_api_key,
             commands::clear_api_key,
             commands::test_connection,
+            commands::test_endpoint,
             commands::list_models,
             commands::list_chats,
             commands::create_chat,

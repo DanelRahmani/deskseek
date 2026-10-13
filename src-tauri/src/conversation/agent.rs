@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use crate::api::client::{Client, StreamEvent};
+use crate::api::client::StreamEvent;
 use crate::api::models;
 use crate::api::types::{ChatRequest, StreamOptions, Thinking, Tool};
 use crate::approvals::{self, Decision};
@@ -16,7 +16,7 @@ use crate::conversation::review;
 use crate::conversation::summarize;
 use crate::runs::Cancel;
 use crate::store::{
-    db, keychain,
+    db,
     settings::{Instruction, Settings},
 };
 use crate::tools::{self, browser, desktop, docs, exec, guard, sandbox_exec, ToolClass};
@@ -1632,7 +1632,6 @@ pub async fn run(
     unattended: bool,
     task_id: Option<&str>,
 ) -> Result<(), String> {
-    let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
     let settings = state.settings.lock().unwrap().clone();
     let chat = {
         let conn = state.db.lock().unwrap();
@@ -1645,7 +1644,11 @@ pub async fn run(
     let tool_list = tools.list;
     let tools_present = !tool_list.is_empty();
 
-    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+    let client = super::client(state, &settings)?;
+    // The endpoint's own record for this chat's model: which window it has, what
+    // it costs, and whether it can be sent a picture. Resolved once for the run,
+    // so every round of it is priced by the same table.
+    let model_info = settings.model_info(&chat.model);
     // Resolved once, so every command in this run takes the same path — and so
     // a mid-run Docker shutdown cannot change the answer halfway through.
     let plan = sandbox_exec::plan_for(
@@ -1797,7 +1800,7 @@ pub async fn run(
         };
 
         let peak = models::is_peak(chrono::Utc::now());
-        let price = models::cost_usd(&chat.model, &outcome.usage, peak);
+        let price = model_info.cost(&outcome.usage, peak);
         if let Some(cost) = price {
             cost_total += cost;
         }
@@ -2118,7 +2121,7 @@ pub async fn run(
             let conn = state.db.lock().unwrap();
             db::list_messages(&conn, chat_id).map(|rows| rows.len()).unwrap_or(0)
         };
-        if summarize::should_compact(usage.prompt_tokens, models::context_for(&chat.model), stored) {
+        if summarize::should_compact(usage.prompt_tokens, settings.context_for(&chat.model), stored) {
             if let Ok((summary, _, _)) = summarize::summarize_chat(state, chat_id, false).await {
                 let conn = state.db.lock().unwrap();
                 let _ = summarize::fold(&conn, chat_id, &summary);
@@ -2172,9 +2175,8 @@ pub async fn revise_selection(
     if instruction.trim().is_empty() {
         return Err("Say what the change should be.".to_string());
     }
-    let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
     let settings = state.settings.lock().unwrap().clone();
-    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+    let client = super::client(state, &settings)?;
 
     // The document around the selection is shown, but marked, so "which part is
     // mine to change" is unambiguous however the passage is punctuated.
@@ -2189,12 +2191,25 @@ pub async fn revise_selection(
     );
 
     let (raw, usage) = client
-        .complete(&settings.chat_model, REVISE_SYSTEM_PROMPT, &request, false)
+        .complete(
+            &settings.model_for("chat"),
+            REVISE_SYSTEM_PROMPT,
+            &request,
+            false,
+        )
         .await
         .map_err(|e| e.to_string())?;
     // One call, one row: the revision is priced and written down like a turn, so
     // a document edit cannot be the thing that spends money unseen.
-    super::record_overhead(state, chat_id, db::REVISION, &settings.chat_model, &usage);
+    let revision_model = settings.model_for("chat");
+    super::record_overhead(
+        state,
+        &settings,
+        chat_id,
+        db::REVISION,
+        &revision_model,
+        &usage,
+    );
     let text = unwrap_fence(&raw);
     if text.trim().is_empty() {
         return Err("The model returned nothing, so the document was left alone.".to_string());

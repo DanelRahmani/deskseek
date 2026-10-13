@@ -7,7 +7,7 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::api::models::{self, ModelInfo};
+use crate::api::provider::Model;
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
 use crate::backup;
@@ -194,40 +194,104 @@ async fn restore_into(
 
 // ------------------------------------------------------------------- key
 
-#[tauri::command]
-pub fn has_api_key() -> bool {
-    keychain::has_api_key()
+/// Whether the default endpoint could be called at all.
+///
+/// An endpoint that needs no key is ready; one that needs a key is ready only
+/// once it is stored. The same check the client makes, said early so the error
+/// names the setting rather than the request.
+fn ready_to_send(state: &AppState) -> Result<(), String> {
+    let settings = state.settings.lock().unwrap();
+    let endpoint = settings
+        .endpoint()
+        .ok_or("No endpoint is configured — add one in Settings")?;
+    if endpoint.has_key() && !keychain::has_key(&endpoint.key_ref) {
+        return Err(format!("No API key set for {}", endpoint.label));
+    }
+    Ok(())
 }
 
 #[tauri::command]
-pub fn masked_api_key() -> Result<Option<String>, String> {
-    Ok(keychain::get_api_key()?.map(|k| keychain::mask(&k)))
+pub fn has_api_key(state: State<'_, AppState>) -> bool {
+    ready_to_send(&state).is_ok()
 }
 
 #[tauri::command]
-pub fn set_api_key(key: String) -> Result<(), String> {
+pub fn masked_api_key(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    let settings = state.settings.lock().unwrap();
+    let Some(endpoint) = settings.endpoint() else {
+        return Ok(None);
+    };
+    Ok(keychain::get_key(&endpoint.key_ref)?.map(|key| keychain::mask(&key)))
+}
+
+#[tauri::command]
+pub fn set_api_key(state: State<'_, AppState>, key: String) -> Result<(), String> {
     if key.trim().is_empty() {
         return Err("API key is empty".to_string());
     }
-    keychain::set_api_key(key.trim())
+    let settings = state.settings.lock().unwrap();
+    let endpoint = settings
+        .endpoint()
+        .ok_or("No endpoint is configured — add one in Settings")?;
+    // The key never travels through the window, so it is stored against the
+    // endpoint's own keychain account: two endpoints do not share one secret.
+    keychain::set_key(&endpoint.key_ref, key.trim())
 }
 
 #[tauri::command]
-pub fn clear_api_key() -> Result<(), String> {
-    keychain::delete_api_key()
+pub fn clear_api_key(state: State<'_, AppState>) -> Result<(), String> {
+    let settings = state.settings.lock().unwrap();
+    let Some(endpoint) = settings.endpoint() else {
+        return Ok(());
+    };
+    keychain::delete_key(&endpoint.key_ref)
 }
 
 #[tauri::command]
 pub async fn test_connection(state: State<'_, AppState>) -> Result<(), String> {
-    let key = keychain::get_api_key()?.ok_or("No API key set")?;
-    let base_url = state.settings.lock().unwrap().base_url.clone();
-    let client = crate::api::client::Client::new(state.http.clone(), key, base_url);
-    client.check_auth().await.map_err(|e| e.to_string())
+    let settings = state.settings.lock().unwrap().clone();
+    crate::conversation::client(&state, &settings)?
+        .check_auth()
+        .await
+        .map_err(|e| e.to_string())
 }
 
+/// Checks one endpoint by id — including one that is not the default.
+///
+/// The key comes from the keychain rather than from the window, so an endpoint
+/// being tested has to be saved first for its key to be found. That is the whole
+/// reason the settings dialog saves before it tests.
 #[tauri::command]
-pub fn list_models() -> Vec<ModelInfo> {
-    models::MODELS.to_vec()
+pub async fn test_endpoint(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let settings = state.settings.lock().unwrap().clone();
+    let endpoint = settings
+        .endpoints
+        .iter()
+        .find(|endpoint| endpoint.id == id)
+        .ok_or("that endpoint is not saved yet")?
+        .clone();
+    endpoint.validate()?;
+    let key = keychain::get_key(&endpoint.key_ref)?;
+    crate::api::client::Client::new(state.http.clone(), endpoint, key)
+        .check_auth()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The models the default endpoint offers, for the pickers.
+///
+/// Read from the settings rather than shipped as a constant: the list belongs to
+/// the endpoint, and a second endpoint's models are not this app's business to
+/// guess at.
+#[tauri::command]
+pub fn list_models(state: State<'_, AppState>) -> Vec<Model> {
+    state
+        .settings
+        .lock()
+        .unwrap()
+        .endpoint()
+        .map(|endpoint| endpoint.models.clone())
+        .unwrap_or_default()
 }
 
 // ----------------------------------------------------------------- chats
@@ -245,11 +309,7 @@ pub fn create_chat(
     workspace: Option<String>,
 ) -> Result<db::ChatRow, String> {
     let settings = state.settings.lock().unwrap().clone();
-    let model = if kind == "coding" {
-        settings.coding_model.clone()
-    } else {
-        settings.chat_model.clone()
-    };
+    let model = settings.model_for(&kind);
     let chat = {
         let conn = state.db.lock().unwrap();
         db::create_chat(
@@ -348,7 +408,7 @@ pub async fn resend_last_turn(
     chat_id: String,
     text: Option<String>,
 ) -> Result<(), String> {
-    keychain::get_api_key()?.ok_or("No API key set")?;
+    ready_to_send(&state)?;
     {
         let conn = state.db.lock().unwrap();
         let turn = db::last_user_message(&conn, &chat_id)
@@ -1944,7 +2004,7 @@ pub async fn start_turn(
     unattended: bool,
     task_id: Option<&str>,
 ) -> Result<(), String> {
-    keychain::get_api_key()?.ok_or("No API key set")?;
+    ready_to_send(state)?;
 
     let chat = {
         let conn = state.db.lock().unwrap();
@@ -2256,7 +2316,7 @@ pub async fn fire_scheduled(
                     &conn,
                     "chat",
                     folder.as_deref(),
-                    &settings.chat_model,
+                    &settings.model_for("chat"),
                     settings.thinking,
                     &settings.effort,
                     "auto",
@@ -2395,7 +2455,7 @@ pub async fn probe_environment(state: State<'_, AppState>) -> Result<EnvProbe, S
     let searxng_ok = browse::searxng_ready(&state.http, &settings.searxng_url).await;
 
     Ok(EnvProbe {
-        has_api_key: keychain::has_api_key(),
+        has_api_key: ready_to_send(&state).is_ok(),
         docker_cli: docker.is_some(),
         docker_running: caps.docker_running,
         docker_version: docker.as_deref().map(first_line).unwrap_or_default(),

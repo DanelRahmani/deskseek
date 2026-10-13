@@ -5,18 +5,12 @@
 
 use serde::Deserialize;
 
-use crate::api::client::Client;
 use crate::memory::SUMMARY_SYSTEM_PROMPT;
-use crate::store::{db, keychain};
+use crate::store::db;
 use crate::AppState;
 
 /// Trim the transcript so a very long chat still summarises cheaply.
 const MAX_TRANSCRIPT_CHARS: usize = 48_000;
-
-/// The model the app summarises with — its own cheapest, because neither
-/// summarising nor folding needs reasoning. Named here so the price on the row it
-/// writes is the price of the model that was actually called.
-pub const SUMMARY_MODEL: &str = "deepseek-flash";
 
 /// The fraction of the model's window at which a run folds its own chat.
 ///
@@ -224,8 +218,8 @@ pub async fn summarize_chat(
     chat_id: &str,
     propose_memory: bool,
 ) -> Result<(String, usize, Option<String>), String> {
-    let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
     let settings = state.settings.lock().unwrap().clone();
+    let client = super::client(state, &settings)?;
 
     let (rows, chat_title) = {
         let conn = state.db.lock().unwrap();
@@ -239,19 +233,17 @@ pub async fn summarize_chat(
         return Err("nothing to summarise yet".to_string());
     }
 
-    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+    // The cheapest model the endpoint publishes, chosen in the settings: the id
+    // this used to be a constant for was DeepSeek's, and a second endpoint as the
+    // default would have failed every summary with a 400.
+    let model = settings.summary_model();
     let (raw, usage) = client
-        .complete(
-            SUMMARY_MODEL,
-            SUMMARY_SYSTEM_PROMPT,
-            &transcript(&rows),
-            true,
-        )
+        .complete(&model, SUMMARY_SYSTEM_PROMPT, &transcript(&rows), true)
         .await
         .map_err(|e| e.to_string())?;
     // Paid for by the user, typed by nobody: onto the same bill the turns are on,
     // so "what did this cost" has one answer rather than one per feature.
-    super::record_overhead(state, chat_id, db::SUMMARY, SUMMARY_MODEL, &usage);
+    super::record_overhead(state, &settings, chat_id, db::SUMMARY, &model, &usage);
 
     let mut parsed = parse_summary(&raw)?;
     let drafts: Vec<db::ProposalDraft> = std::mem::take(&mut parsed.memory)

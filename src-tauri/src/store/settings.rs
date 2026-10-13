@@ -1,11 +1,11 @@
-//! User settings, stored as JSON next to the database. Never contains the API
-//! key — that lives in the OS keychain.
+//! User settings, stored as JSON next to the database. Never contains an API
+//! key — those live in the OS keychain, one account per endpoint.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+use crate::api::provider::{self, Endpoint, Model};
 
 /// The base prompt a fresh install starts with.
 ///
@@ -67,8 +67,23 @@ check behind for non-trivial logic."
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// Every endpoint the user can choose between, each with its own dialect,
+    /// base URL, key reference and model list. See `api::provider`.
+    #[serde(default)]
+    pub endpoints: Vec<Endpoint>,
+    /// Which endpoint a new turn uses. An id that names nothing falls back to the
+    /// first, so deleting an endpoint cannot leave the app unable to send.
+    #[serde(default)]
+    pub default_endpoint: String,
+    /// The single base URL this app had before it knew about endpoints.
+    ///
+    /// Read once, folded into endpoint one and blanked — never a second answer to
+    /// the same question. See `Settings::migrate`.
+    #[serde(default)]
     pub base_url: String,
+    /// The model a new *chat* starts on.
     pub chat_model: String,
+    /// The model a new *coding* chat starts on.
     pub coding_model: String,
     pub system_prompt: String,
     pub thinking: bool,
@@ -221,7 +236,9 @@ fn default_true() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            base_url: DEFAULT_BASE_URL.to_string(),
+            endpoints: provider::seed(),
+            default_endpoint: provider::SEED_ENDPOINT_ID.to_string(),
+            base_url: String::new(),
             chat_model: "deepseek-flash".to_string(),
             coding_model: "deepseek-v4-pro".to_string(),
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
@@ -261,10 +278,133 @@ impl Default for Settings {
 /// Loads settings, falling back to defaults when the file is missing or
 /// unreadable — a corrupt config should never stop the app starting.
 pub fn load(path: &Path) -> Settings {
-    std::fs::read_to_string(path)
+    let mut settings: Settings = std::fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    settings.migrate();
+    settings
+}
+
+impl Settings {
+    /// The endpoint a turn runs against: the default one, or the first.
+    ///
+    /// The fallback is what makes deleting an endpoint safe — an id that names
+    /// nothing must not leave the app unable to send anything.
+    pub fn endpoint(&self) -> Option<&Endpoint> {
+        self.endpoints
+            .iter()
+            .find(|endpoint| endpoint.id == self.default_endpoint)
+            .or_else(|| self.endpoints.first())
+    }
+
+    /// The model record for an id, searched in the default endpoint first and then
+    /// in every other.
+    ///
+    /// Everywhere rather than only the default endpoint, because a chat keeps the
+    /// model it was created with: switching the default endpoint must not turn an
+    /// existing chat's price into "unknown" and its window into a guess. An id
+    /// nothing lists gets the unlisted placeholder, which is priced unknown and
+    /// cannot see, rather than an error.
+    pub fn model_info(&self, id: &str) -> Model {
+        self.endpoint()
+            .and_then(|endpoint| endpoint.model(id))
+            .or_else(|| {
+                self.endpoints
+                    .iter()
+                    .find_map(|endpoint| endpoint.model(id))
+            })
+            .cloned()
+            .unwrap_or_else(|| Model::unlisted(id))
+    }
+
+    /// The window a model has here, for the fold decision.
+    pub fn context_for(&self, id: &str) -> u32 {
+        self.model_info(id).context
+    }
+
+    /// The model a new chat of this kind starts on.
+    ///
+    /// Falls back to the endpoint's first model when the stored preference is not
+    /// one it serves. Switching the default endpoint is the ordinary way to end up
+    /// here, and a chat created for a model the endpoint does not have fails on its
+    /// first turn with a message about a model rather than about a setting.
+    pub fn model_for(&self, kind: &str) -> String {
+        let preferred = if kind == "coding" {
+            &self.coding_model
+        } else {
+            &self.chat_model
+        };
+        let Some(endpoint) = self.endpoint() else {
+            return preferred.clone();
+        };
+        if endpoint.model(preferred).is_some() {
+            return preferred.clone();
+        }
+        endpoint
+            .first_model()
+            .map(|model| model.id.clone())
+            .unwrap_or_else(|| preferred.clone())
+    }
+
+    /// The model the app's own cheap calls use: the summariser and the reviewer.
+    ///
+    /// Picked rather than named. The constant this replaced was DeepSeek's id, and
+    /// a second endpoint as the default would have failed every summary and every
+    /// review call with a 400. The cheapest *priced* model wins, then the first
+    /// model the endpoint lists — and with no endpoints at all, the configured chat
+    /// model, which is at least a real id and a request that will fail for the
+    /// honest reason instead of this one.
+    pub fn summary_model(&self) -> String {
+        let Some(endpoint) = self.endpoint() else {
+            return self.chat_model.clone();
+        };
+        let out_of = |model: &Model| model.price.map(|price| price.out).unwrap_or(f64::INFINITY);
+        endpoint
+            .models
+            .iter()
+            .filter(|model| model.price.is_some())
+            .min_by(|a, b| out_of(a).total_cmp(&out_of(b)))
+            .or_else(|| endpoint.first_model())
+            .map(|model| model.id.clone())
+            .unwrap_or_else(|| self.chat_model.clone())
+    }
+
+    /// Folds the single base URL this app had before it knew about endpoints into
+    /// endpoint one, once.
+    ///
+    /// Idempotent by construction: the legacy field is blanked here and always
+    /// written blank afterwards, so a second load has nothing to fold. The order
+    /// matters — the seed is built first so there is an endpoint to fold *into*,
+    /// and only then is the legacy URL applied to it.
+    fn migrate(&mut self) {
+        let legacy = self.base_url.trim().to_string();
+        let fresh = self.endpoints.is_empty();
+        if fresh {
+            self.endpoints = provider::seed();
+        }
+        if fresh && !legacy.is_empty() {
+            if let Some(first) = self.endpoints.first_mut() {
+                first.base_url = legacy.clone();
+            }
+        }
+        if !legacy.is_empty() {
+            // Blanked in memory as well as on the next save, so nothing later in
+            // this process can read it as a second answer to the same question.
+            self.base_url.clear();
+        }
+        let named = self
+            .endpoints
+            .iter()
+            .any(|endpoint| endpoint.id == self.default_endpoint);
+        if !named {
+            self.default_endpoint = self
+                .endpoints
+                .first()
+                .map(|endpoint| endpoint.id.clone())
+                .unwrap_or_default();
+        }
+    }
 }
 
 pub fn save(path: &Path, settings: &Settings) -> std::io::Result<()> {
@@ -279,7 +419,9 @@ mod tests {
     #[test]
     fn missing_file_yields_defaults() {
         let s = load(Path::new("/definitely/not/here/settings.json"));
-        assert_eq!(s.base_url, DEFAULT_BASE_URL);
+        assert_eq!(s.endpoints.len(), 1);
+        assert_eq!(s.endpoint().unwrap().id, provider::SEED_ENDPOINT_ID);
+        assert_eq!(s.endpoint().unwrap().base_url, "https://api.deepseek.com");
         assert_eq!(s.chat_model, "deepseek-flash");
         // A file written before reminders existed must still load, with the
         // switches off and a window that is never consulted.
@@ -292,6 +434,125 @@ mod tests {
         // an upgrading install would lose the chord it never had to set.
         assert_eq!(s.quick_chord, crate::quick::DEFAULT_CHORD);
         assert_eq!(s.quick_target, "last");
+    }
+
+    #[test]
+    fn a_file_written_before_endpoints_fold_its_url_into_endpoint_one() {
+        let dir = std::env::temp_dir().join(format!("deskseek-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        // The shape 0.4.0 wrote: one base URL, and no notion of an endpoint at
+        // all. Written by serialising the real struct rather than by hand, so the
+        // fixture cannot drift away from what an old install actually holds.
+        let mut old = Settings::default();
+        old.endpoints.clear();
+        old.default_endpoint.clear();
+        old.base_url = "https://gateway.internal/v1".to_string();
+        save(&path, &old).unwrap();
+        let s = load(&path);
+        assert_eq!(s.endpoints.len(), 1);
+        assert_eq!(s.endpoint().unwrap().base_url, "https://gateway.internal/v1");
+        assert_eq!(s.default_endpoint, provider::SEED_ENDPOINT_ID);
+        // Blanked, so the migration cannot run twice and the field cannot come
+        // back to life as a second source of truth.
+        assert!(s.base_url.is_empty());
+
+        // Saving that and loading it again finds nothing left to fold.
+        save(&path, &s).unwrap();
+        let back = load(&path);
+        assert!(back.base_url.is_empty());
+        assert_eq!(back.endpoint().unwrap().base_url, "https://gateway.internal/v1");
+        assert_eq!(back.endpoints.len(), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_endpoint_id_that_names_nothing_falls_back_to_the_first() {
+        let mut s = Settings::default();
+        s.default_endpoint = "deleted-this-morning".to_string();
+        s.migrate();
+        assert_eq!(s.default_endpoint, provider::SEED_ENDPOINT_ID);
+        assert_eq!(s.endpoint().unwrap().id, provider::SEED_ENDPOINT_ID);
+
+        // And an empty list is seeded rather than left bare: a hand-edited file
+        // must not be able to leave the app with nothing to send to.
+        s.endpoints.clear();
+        s.migrate();
+        assert_eq!(s.endpoints.len(), 1);
+        assert!(s.endpoint().is_some());
+    }
+
+    #[test]
+    fn the_models_the_app_itself_picks_come_from_the_default_endpoint() {
+        let s = Settings::default();
+        // The cheapest priced model, not the first one, because these are the
+        // calls the user did not ask for.
+        assert_eq!(s.summary_model(), "deepseek-flash");
+        assert_eq!(s.model_for("chat"), "deepseek-flash");
+        assert_eq!(s.model_for("coding"), "deepseek-v4-pro");
+        assert_eq!(s.context_for("deepseek-flash"), 1_000_000);
+        // An id nothing lists is priced unknown and cannot see, rather than an
+        // error or a zero price.
+        let unknown = s.model_info("gpt-9");
+        assert!(unknown.price.is_none());
+        assert!(!unknown.vision);
+        assert_eq!(s.context_for("gpt-9"), crate::api::models::LARGEST_CONTEXT);
+    }
+
+    #[test]
+    fn a_stale_model_preference_falls_back_to_one_the_endpoint_serves() {
+        let mut s = Settings::default();
+        s.chat_model = "a-model-from-another-vendor".to_string();
+        s.coding_model = "another-one".to_string();
+        // New chats would otherwise fail on their first turn with a message about
+        // a model rather than about a setting.
+        assert_eq!(s.model_for("chat"), "deepseek-flash");
+        assert_eq!(s.model_for("coding"), "deepseek-flash");
+    }
+
+    #[test]
+    fn a_second_endpoint_supplies_its_own_cheap_model() {
+        let mut s = Settings::default();
+        s.endpoints.push(provider::Endpoint {
+            id: "local".to_string(),
+            label: "Ollama".to_string(),
+            dialect: provider::Dialect::OpenAi,
+            base_url: "http://localhost:11434".to_string(),
+            key_ref: String::new(),
+            models: vec![
+                provider::Model {
+                    id: "tiny".to_string(),
+                    label: "tiny".to_string(),
+                    context: 8_192,
+                    max_output: 2_048,
+                    vision: false,
+                    price: None,
+                },
+                provider::Model {
+                    id: "small".to_string(),
+                    label: "small".to_string(),
+                    context: 32_768,
+                    max_output: 4_096,
+                    vision: true,
+                    price: Some(provider::Price {
+                        hit: 0.0,
+                        miss: 0.1,
+                        out: 0.2,
+                        peak_multiplier: 1.0,
+                    }),
+                },
+            ],
+            notes: String::new(),
+        });
+        s.default_endpoint = "local".to_string();
+        // The unpriced local model is not chosen for the app's own calls: a rate
+        // nobody published is not a rate of zero, so "cheapest" must not read it
+        // as free.
+        assert_eq!(s.summary_model(), "small");
+        // And the preference guard follows the new endpoint.
+        assert_eq!(s.model_for("chat"), "tiny");
+        assert_eq!(s.context_for("small"), 32_768);
+        assert!(s.model_info("small").vision);
     }
 
     #[test]

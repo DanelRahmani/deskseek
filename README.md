@@ -1,7 +1,8 @@
 # DeskSeek
 
-A lightweight desktop client for the DeepSeek API — built with **Tauri v2** (Rust core) and
-**React + TypeScript**.
+A lightweight desktop client for the model endpoints you choose — DeepSeek out of the box, and any
+OpenAI-compatible or Anthropic-compatible base URL beside it — built with **Tauri v2** (Rust core)
+and **React + TypeScript**.
 
 Two sections share one core:
 
@@ -11,7 +12,7 @@ Two sections share one core:
 - **Coding** — an agent that works inside a folder you trust.
 
 Bring your own API key: it is stored in the **OS keychain** (Credential Manager / Keychain /
-Secret Service), never in a config file and never in a log.
+Secret Service), one account per endpoint, never in a config file and never in a log.
 
 ## Status
 
@@ -501,6 +502,28 @@ working. `Ctrl+Alt+Esc` is the kill switch: it stops every run and pauses
 computer control, and it is fixed rather than configurable, because a hotkey you
 cannot find is not a means of stopping something.
 
+**Model endpoints** (Settings → Access)
+
+The app is not wired to one vendor. An endpoint is a base URL, a dialect, a key and the models it
+serves, and there are exactly two dialects in the code:
+
+- **`openai-compatible` and `anthropic-compatible`.** DeepSeek is the first endpoint and speaks the
+  first of them; OpenRouter, Groq, Together, xAI, Google's OpenAI-compatible endpoint and local
+  runtimes (Ollama, LM Studio, vLLM) are rows in your settings rather than programs in the app.
+  The dialog offers the ones worth one click — they fill in the dialect and the base URL — and an
+  empty row takes anything else.
+- **One key per endpoint**, in the OS keychain under its own account. A blank key reference means
+  the endpoint needs no key, which is the honest setting for a model on this machine.
+- **The base URL is the endpoint's root**, without the dialect's own path: no `/chat/completions`,
+  no `/v1/messages`. The dialect appends what it needs.
+- **A model is chosen per chat**, from the list the endpoint declares — so a picker cannot offer
+  something the endpoint does not serve.
+- **A price nobody published is not zero.** An endpoint with no rate — anything on localhost, most
+  gateways — has its tokens counted and its money shown as *unknown*, on the same `turn_usage` rows
+  the spend view sums.
+- **A model that cannot see is told so rather than sent a picture**: whether a model takes images
+  is a property of its record here, not a guess.
+
 **Internet access** (both sections)
 
 - `fetch_url` reads a page as text, `browser_read` renders it in a real browser first (so
@@ -943,7 +966,8 @@ A fuller map — the layers, where the events flow, and which file owns each rul
 ```
 src/                     React UI (App, Sidebar, ChatView, SettingsDialog, Markdown)
 src-tauri/src/
-  api/                   DeepSeek client, SSE parsing, delta accumulation, model pricing
+  api/                   endpoints and the two wire dialects, the HTTP/SSE engine they
+                         share, and the price table (per endpoint and model)
   conversation/          message-array assembly (owns the reasoning-content rule), agent loop
   store/                 SQLite schema, settings JSON, OS keychain, paths
   tools/                 built-in tools, path sandbox, process runner, permission guard

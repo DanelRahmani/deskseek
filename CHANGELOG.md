@@ -40,6 +40,7 @@ one.
 - A scheduled task can wait for something to change instead of a clock: point one at a folder (optionally only files matching `*.csv`) or at a git repository and a ref, and it starts a run when what it sees differs from the last look — never every time it looks, at most six runs an hour, and the panel says in words why it did not fire
 - A task can also watch a **page**: give it a URL and it starts a run when the page comes to say a word you name, or — with no word given — when the page changes at all
 - A task can be woken by an **MCP server** instead of by anything DeskSeek checks: pick a server and optionally the notification it should react to, and the server waking it starts a run — the third kind of trigger, and the only one that does not look at anything on its own
+- The app is no longer wired to one vendor: an **endpoint** is a base URL, a dialect, a key and the models it serves, so OpenRouter, Groq, Together, xAI, Google and local runtimes (Ollama, LM Studio, vLLM) are configuration in **Settings → Access** rather than code — with one keychain account per endpoint, no key at all for a model on this machine, and a rate nobody published reported as *unknown* instead of guessed at
 
 ## 0.4.0 — 2026-10-12
 

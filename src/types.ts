@@ -229,11 +229,38 @@ export interface MessageRow {
   discarded?: boolean;
 }
 
+/** USD per 1M tokens. `peakMultiplier` is 1 for every endpoint not priced by the clock. */
+export interface ModelPrice {
+  hit: number;
+  miss: number;
+  out: number;
+  peakMultiplier: number;
+}
+
 export interface ModelInfo {
   id: string;
   label: string;
   context: number;
-  max_output: number;
+  maxOutput: number;
+  /** Whether this model can be sent an image. Off for a model that cannot see. */
+  vision: boolean;
+  /** `null` when the endpoint publishes no rate: the tokens are counted, the money is unknown. */
+  price: ModelPrice | null;
+}
+
+/** Which wire shape an endpoint speaks. Two, not one per vendor. */
+export type Dialect = "openai-compatible" | "anthropic-compatible";
+
+export interface Endpoint {
+  id: string;
+  label: string;
+  dialect: Dialect;
+  /** Without the dialect's path — `https://api.deepseek.com`, not `…/chat/completions`. */
+  baseUrl: string;
+  /** The keychain account this endpoint's key lives under. Blank means it needs no key. */
+  keyRef: string;
+  models: ModelInfo[];
+  notes: string;
 }
 
 export interface Instruction {
@@ -246,7 +273,10 @@ export interface Instruction {
 }
 
 export interface Settings {
-  baseUrl: string;
+  /** Every endpoint the user can switch between. */
+  endpoints: Endpoint[];
+  /** Which endpoint a new turn uses. An id that names nothing falls back to the first. */
+  defaultEndpoint: string;
   chatModel: string;
   codingModel: string;
   systemPrompt: string;
