@@ -1730,6 +1730,19 @@ pub async fn run(
         // The user's turn is already in the stored history.
         let messages = build_messages(&system, &turns, None, tools_present);
 
+        // The two thinking fields go together, and only when the model takes an
+        // effort setting at all. On one wire they are a switch and a level, on the
+        // other the level *is* the switch — so sending half of the pair would be a
+        // promise the model cannot keep, which is the thing the effort control is
+        // supposed to stop doing.
+        let (thinking, effort) = if model_info.effort {
+            (
+                Some(Thinking::enabled(chat.thinking)),
+                chat.thinking.then(|| chat.effort.clone()),
+            )
+        } else {
+            (None, None)
+        };
         let request = ChatRequest {
             model: model.clone(),
             messages,
@@ -1737,12 +1750,8 @@ pub async fn run(
             stream_options: Some(StreamOptions {
                 include_usage: true,
             }),
-            thinking: Some(Thinking::enabled(chat.thinking)),
-            reasoning_effort: if chat.thinking {
-                Some(chat.effort.clone())
-            } else {
-                None
-            },
+            thinking,
+            reasoning_effort: effort,
             max_tokens: None,
             tools: if tools_present {
                 Some(tool_list.clone())

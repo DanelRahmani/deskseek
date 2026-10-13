@@ -244,6 +244,12 @@ export function ChatView({
     saveDraft(chat?.id, text);
   };
   const [cmdIndex, setCmdIndex] = useState(0);
+  // Whether this chat's model takes an effort setting at all.
+  //
+  // A model the endpoint does not list counts as taking one: the control is
+  // hidden on a fact, never on a guess, and a model missing from the list is
+  // exactly the case where the app does not know.
+  const takesEffort = models.find((m) => m.id === chat?.model)?.effort ?? true;
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.
   const tasks = useMemo(() => tasksFrom(tools), [tools]);
@@ -589,30 +595,45 @@ export function ChatView({
                   </option>
                 ))}
               </select>
-              <button
-                onClick={() => onModelChange(chat.model, !chat.thinking, chat.effort)}
-                className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
-                  chat.thinking
-                    ? "bg-sky-500/15 text-sky-300"
-                    : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
-                }`}
-                title="Toggle thinking mode"
-              >
-                Thinking
-              </button>
-              {chat.thinking && (
-                <select
-                  value={chat.effort}
-                  onChange={(e) => onModelChange(chat.model, chat.thinking, e.target.value)}
-                  aria-label="Thinking effort"
-                  className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
+              {takesEffort ? (
+                <>
+                  <button
+                    onClick={() => onModelChange(chat.model, !chat.thinking, chat.effort)}
+                    className={`rounded-md px-2 py-1 text-xs transition duration-150 ${
+                      chat.thinking
+                        ? "bg-sky-500/15 text-sky-300"
+                        : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-300"
+                    }`}
+                    title="Toggle thinking mode"
+                  >
+                    Thinking
+                  </button>
+                  {chat.thinking && (
+                    <select
+                      value={chat.effort}
+                      onChange={(e) => onModelChange(chat.model, chat.thinking, e.target.value)}
+                      aria-label="Thinking effort"
+                      className="rounded-md border border-neutral-800 bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-hidden focus:border-neutral-700"
+                    >
+                      {EFFORTS.map((e) => (
+                        <option key={e} value={e}>
+                          {e}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              ) : (
+                // Said out loud rather than shown dead: on the Anthropic wire the
+                // effort level *is* the thinking switch, so a model with no effort
+                // setting has no thinking to offer, and a control that did nothing
+                // would be the app promising something it does not send.
+                <span
+                  className="px-2 py-1 text-[11px] text-neutral-500"
+                  title="This model has no effort setting, so the request carries neither the level nor the thinking switch"
                 >
-                  {EFFORTS.map((e) => (
-                    <option key={e} value={e}>
-                      {e}
-                    </option>
-                  ))}
-                </select>
+                  no thinking setting
+                </span>
               )}
             </>
           )}

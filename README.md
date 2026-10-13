@@ -148,8 +148,7 @@ Both sections are functional:
   task's title. *Run now* fires it without moving when it next runs on its own; *Pause* leaves it
   in the list and stops the clock. A task can also name the **model it runs on**, or leave it to
   the chat's own — a nightly triage does not need the frontier model, and the run's own spend row
-  names whichever model it really ran on
-  - Three things are deliberate rather than missing. A run starts in **auto** — nobody is watching
+  names whichever model it really ran on  - Three things are deliberate rather than missing. A run starts in **auto** — nobody is watching
     at 09:00 — so it never waits for an ordinary approval; the catastrophic guard still applies,
     and a few tools are never auto-approved at all. One of *those*, or a question the model asks,
     stops the run and puts it in the panel's **Needs you** list, showing the same prompt the chat
@@ -526,6 +525,10 @@ serves, and there are exactly two dialects in the code:
   the spend view sums.
 - **A model that cannot see is told so rather than sent a picture**: whether a model takes images
   is a property of its record here, not a guess.
+- **A model with no thinking to budget can say so**, and then the chat shows no thinking controls
+  and the request carries neither the level nor the switch. The two go together on purpose: on the
+  Anthropic wire the effort level *is* the thinking switch, so sending half of the pair would be a
+  request the model never agreed to.
 
 **Internet access** (both sections)
 

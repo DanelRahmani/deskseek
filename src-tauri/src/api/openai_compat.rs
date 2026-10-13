@@ -360,6 +360,5 @@ mod tests {
             Dialect::OpenAi.imp().chat_url("https://x"),
             OPENAI.chat_url("https://x")
         );
-        assert!(Dialect::OpenAi.supports_effort());
     }
 }

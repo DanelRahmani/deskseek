@@ -92,6 +92,7 @@ function blankModel(): ModelInfo {
     context: 128_000,
     maxOutput: 8_192,
     vision: false,
+    effort: true,
     price: null,
   };
 }
@@ -336,21 +337,35 @@ export function EndpointsSection({
                       />
                       Can see images
                     </label>
-                    <label className="flex items-center gap-1 text-[11px] text-neutral-300">
+                    <label
+                      className="flex items-center gap-1 text-[11px] text-neutral-300"
+                      title="Off means the chat shows no thinking controls and the request carries neither the level nor the switch"
+                    >
                       <input
                         type="checkbox"
-                        checked={model.price !== null}
-                        onChange={(e) =>
-                          editModel(index, at, {
-                            price: e.target.checked
-                              ? { hit: 0, miss: 0, out: 0, peakMultiplier: 1 }
-                              : null,
-                          })
-                        }
+                        checked={model.effort}
+                        onChange={(e) => editModel(index, at, { effort: e.target.checked })}
                       />
-                      Published rate
+                      Takes an effort setting
                     </label>
                   </div>
+                  <label
+                    className="mt-2 flex items-center gap-1 text-[11px] text-neutral-300"
+                    title="Off counts the tokens and reports the money as unknown rather than guessing"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={model.price !== null}
+                      onChange={(e) =>
+                        editModel(index, at, {
+                          price: e.target.checked
+                            ? { hit: 0, miss: 0, out: 0, peakMultiplier: 1 }
+                            : null,
+                        })
+                      }
+                    />
+                    Published rate
+                  </label>
                   {model.price === null ? (
                     <p className="mt-1 text-[10px] text-neutral-600">
                       No rate published, so its tokens are counted and its cost reads as

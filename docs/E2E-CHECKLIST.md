@@ -599,3 +599,16 @@ the parts only a person can see.
 - [ ] Pausing and resuming a pinned task keeps the pin
 - [ ] A task pinned to a model the endpoint does not list still runs, and its spend entry reads
       *unknown* rather than a price
+
+## Thinking effort
+
+- [ ] A chat on a model with *Takes an effort setting* on shows the Thinking button, and the level
+      picker appears only while thinking is on
+- [ ] The same chat switched to a model with it off shows *no thinking setting* instead, and no
+      Thinking button — a sentence rather than a switch that does nothing
+- [ ] Switching back to the effort-taking model brings the controls back with the chat's own stored
+      level and toggle, which were never changed underneath it
+- [ ] On the Anthropic-compatible endpoint, `low` and `max` produce visibly different amounts of
+      thinking, and the reply still arrives (the budget must leave room to answer)
+- [ ] A model the endpoint does not list keeps its thinking controls, on the principle that a
+      control is hidden on a fact and not on a guess

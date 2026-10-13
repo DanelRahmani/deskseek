@@ -57,15 +57,7 @@ impl Dialect {
         [Dialect::OpenAi, Dialect::Anthropic]
     }
 
-    /// Whether this dialect has a way to ask for more thought. Both do, and
-    /// differently — `reasoning_effort` on one wire, a thinking budget on the
-    /// other — so this is a property of the dialect rather than of either module.
-    /// A dialect added later that has neither says `false` here, and the UI's rule
-    /// is that an effort control either works or explains itself.
-    pub fn supports_effort(self) -> bool {
-        true
-    }
-
+    /// The base URL a fresh endpoint of this dialect starts at.
     pub fn default_base_url(self) -> &'static str {
         match self {
             Dialect::OpenAi => "https://api.deepseek.com",
@@ -103,6 +95,10 @@ fn one() -> f64 {
     1.0
 }
 
+fn default_true() -> bool {
+    true
+}
+
 /// One model an endpoint offers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,6 +115,17 @@ pub struct Model {
     /// will reject or, worse, silently ignore.
     #[serde(default)]
     pub vision: bool,
+    /// Whether this model takes an effort setting at all.
+    ///
+    /// On by default, which is the interesting half: a settings file written
+    /// before this field existed keeps the thinking controls it already had, and
+    /// adding a model is a form filled in once rather than one that demands a
+    /// decision nobody has an opinion about. Turn it off for a model with no
+    /// thinking to budget, and the app sends neither the level nor the switch —
+    /// on one wire the level *is* the switch, so half a promise is a promise the
+    /// model cannot keep.
+    #[serde(default = "default_true")]
+    pub effort: bool,
     /// `None` when the endpoint publishes no rate — a local model, or a gateway
     /// that prices per request. The tokens are still recorded; the money reads as
     /// unknown.
@@ -140,6 +147,9 @@ impl Model {
             context: models::LARGEST_CONTEXT,
             max_output: DEFAULT_MAX_OUTPUT,
             vision: false,
+            // Not off: an id nobody lists is still sent, and hiding a control on
+            // a guess is worse than showing one the endpoint may ignore.
+            effort: true,
             price: None,
         }
     }
@@ -401,6 +411,7 @@ pub fn seed() -> Vec<Endpoint> {
                 context: 1_000_000,
                 max_output: 393_216,
                 vision: false,
+                effort: true,
                 price: Some(Price {
                     hit: 0.003,
                     miss: 0.15,
@@ -414,6 +425,7 @@ pub fn seed() -> Vec<Endpoint> {
                 context: 1_000_000,
                 max_output: 393_216,
                 vision: false,
+                effort: true,
                 price: Some(Price {
                     hit: 0.022,
                     miss: 0.66,
@@ -437,6 +449,7 @@ mod tests {
             context: 1_000,
             max_output: 100,
             vision,
+            effort: true,
             price,
         }
     }
@@ -537,6 +550,27 @@ mod tests {
         assert!(unlisted.price.is_none());
         assert!(!unlisted.vision);
         assert_eq!(unlisted.context, models::LARGEST_CONTEXT);
+        assert!(unlisted.effort, "an id nobody lists keeps the thinking controls");
+    }
+
+    #[test]
+    fn a_model_record_written_before_effort_existed_still_takes_it() {
+        // The JSON analogue of a guarded ALTER: a settings file written before
+        // this field must keep the thinking controls it already had rather than
+        // losing them to a missing key.
+        let old: Model = serde_json::from_str(
+            r#"{"id":"m","label":"M","context":1000,"maxOutput":10}"#,
+        )
+        .expect("a record without the field must still load");
+        assert!(old.effort);
+        assert!(!old.vision);
+        assert!(old.price.is_none());
+
+        let off: Model = serde_json::from_str(
+            r#"{"id":"m","label":"M","context":1000,"maxOutput":10,"effort":false}"#,
+        )
+        .unwrap();
+        assert!(!off.effort, "an explicit false must survive");
     }
 
     #[test]

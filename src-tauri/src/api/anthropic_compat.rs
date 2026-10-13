@@ -348,17 +348,20 @@ fn tool_schema(tool: &Tool) -> Value {
 /// The other dialect has an enum to send; this one has a number of tokens the
 /// model may think for. The mapping is the app's own opinion and so is written
 /// down once, here, where the field it feeds lives.
-fn effort_budget(effort: Option<&str>) -> u32 {
-    match effort.unwrap_or("high").trim().to_ascii_lowercase().as_str() {
+fn effort_budget(effort: &str) -> u32 {
+    match effort.trim().to_ascii_lowercase().as_str() {
         "low" => 2_048,
         "max" => 24_000,
         _ => 8_000,
     }
 }
 
-/// The thinking budget, or nothing when the turn has thinking off or the budget
-/// would not fit under `max_tokens` — a budget larger than the output ceiling is
-/// a request the API refuses rather than a preference it ignores.
+/// The thinking budget, or nothing at all.
+///
+/// Nothing when the turn has thinking off — and nothing when there is no effort
+/// level either, because on this wire the budget *is* the effort: a model with no
+/// effort setting has no thinking to ask for, and inventing a default here would
+/// send a request the model never agreed to.
 ///
 /// Never more than half the output budget: the tokens spent thinking are not
 /// tokens spent answering, and a model that thought with the whole allowance has
@@ -371,7 +374,8 @@ fn thinking_budget(req: &ChatRequest, max_tokens: u32) -> Option<u32> {
     if !enabled {
         return None;
     }
-    let budget = effort_budget(req.reasoning_effort.as_deref()).min(max_tokens / 2);
+    let effort = req.reasoning_effort.as_deref()?;
+    let budget = effort_budget(effort).min(max_tokens / 2);
     (budget >= 1_024).then_some(budget)
 }
 
@@ -550,6 +554,15 @@ mod tests {
         // Thinking off means no budget at all, not a zero one.
         let off = request(Vec::new());
         assert!(ANTHROPIC.body(&model(), &off, &[]).get("thinking").is_none());
+
+        // Thinking on but no effort level at all: a model with no effort setting
+        // gets no budget either, because on this wire the budget *is* the effort.
+        // Inventing a default here would send a request the model never agreed to.
+        let no_level = ChatRequest {
+            thinking: Some(Thinking::enabled(true)),
+            ..request(Vec::new())
+        };
+        assert!(ANTHROPIC.body(&model(), &no_level, &[]).get("thinking").is_none());
 
         // And a budget that could not fit at all is dropped rather than sent as
         // a request the API refuses.
@@ -809,11 +822,10 @@ mod tests {
     }
 
     #[test]
-    fn the_registry_points_here_and_effort_is_claimed() {
+    fn the_registry_points_here() {
         assert_eq!(
             Dialect::Anthropic.imp().chat_url("https://x"),
             ANTHROPIC.chat_url("https://x")
         );
-        assert!(Dialect::Anthropic.supports_effort());
     }
 }

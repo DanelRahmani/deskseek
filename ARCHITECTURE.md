@@ -95,6 +95,7 @@ Changing behaviour in this app is usually changing one of these.
 | The HTTP engine every dialect shares: the retry ladder, the SSE reader, and transport-versus-refusal | `api/client.rs` |
 | Which endpoint a turn runs against, and which keychain account its key is in | `store/settings.rs`, `store/keychain.rs` |
 | Which model a run is actually on — the chat's own, or the pin on the task that started it — resolved once so the request, the price and the usage row cannot disagree | `conversation/agent.rs`, `store/db.rs` |
+| Whether a model takes an effort setting at all, and what each dialect sends for a level — `reasoning_effort` on one wire, a thinking budget on the other | `api/provider.rs`, `api/openai_compat.rs`, `api/anthropic_compat.rs` |
 | Who spent a row in `turn_usage` (a turn, a summary, a revision) and whether its price is known — and the one writer for a call nobody typed | `store/db.rs`, `conversation/mod.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |

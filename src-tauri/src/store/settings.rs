@@ -526,6 +526,7 @@ mod tests {
                     context: 8_192,
                     max_output: 2_048,
                     vision: false,
+                    effort: true,
                     price: None,
                 },
                 provider::Model {
@@ -534,6 +535,7 @@ mod tests {
                     context: 32_768,
                     max_output: 4_096,
                     vision: true,
+                    effort: true,
                     price: Some(provider::Price {
                         hit: 0.0,
                         miss: 0.1,

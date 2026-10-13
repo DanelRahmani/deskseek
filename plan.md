@@ -2067,17 +2067,34 @@ than a module.
   request, so the six lines for it are on `docs/E2E-CHECKLIST.md`.
 - **Stop**: a scheduled task can be pinned to a cheaper model and its spend rows say which ran.
 
-### 2.3 [S] Reasoning-effort control
+### 2.3 [S] Reasoning-effort control ✅
 - **Why**: a slider over how much thought a model puts in — the cheapest way to buy quality only
   where it is needed.
-- **Files**: `api/provider.rs` (`Dialect::supports_effort`, and the two mappings), the two dialect
-  modules (OpenAI's `reasoning_effort`, Anthropic's `thinking.budget_tokens`), `ChatView.tsx` (an
-  effort control that says so when the endpoint has no such parameter rather than showing a switch
-  that does nothing).
-- **Shape**: effort is per dialect and honest about it. A dialect with no notion of effort says so
-  in the UI and omits the field rather than sending something the endpoint will ignore.
-- **Test**: each dialect maps its effort levels to the field it actually sends, and a dialect
-  without effort produces no field at all.
+- **Files**: `api/provider.rs` (`Model::effort`, the flag that answers the question, and its
+  serde default), `api/openai_compat.rs` (the level as `reasoning_effort`, unchanged and already
+  asserted on the wire), `api/anthropic_compat.rs` (`effort_budget`, and a `thinking_budget` that
+  now *requires* a level), `conversation/agent.rs` (the pair of thinking fields sent only when the
+  model takes them), `ChatView.tsx` (the controls, or the sentence that replaces them),
+  `EndpointsSection.tsx` and `types.ts`.
+- **Shape**: the effort control and the chat's model picker already existed, so what this item
+  really settles is **where the question lives**. The archive said per *provider*; both shipped
+  dialects map a level — one to `reasoning_effort`, the other to a thinking budget — so a
+  dialect-level `supports_effort` could only ever have answered `true`, and it was **deleted**
+  rather than kept as a second answer to a question the model record already answers. What actually
+  varies is the model: a small local one has no thinking to budget. `Model::effort` is on by
+  default — the interesting half, because a settings file written before the field existed keeps
+  the controls it already had — and off means the chat shows a sentence instead of a dead switch,
+  and the request carries **neither** field. That last part is the load-bearing rule: on the
+  Anthropic wire the level *is* the switch, so sending `thinking` without a level would be a
+  request the model never agreed to.
+- **Test**: `cargo test` — `thinking_budget` for each level and for the two ways it is absent
+  (thinking off; thinking on with no level, which is the new case), the OpenAI body still carrying
+  `reasoning_effort`, and a model record written before `effort` existed loading with it *on* —
+  the JSON analogue of a guarded `ALTER`. Falsified: letting `thinking_budget` fall back to a
+  default level (`as_deref()?` → `as_deref().unwrap_or("high")`) fails
+  `effort_becomes_a_thinking_budget_that_fits_under_the_ceiling` on
+  `assertion failed: ANTHROPIC.body(&model(), &no_level, &[]).get("thinking").is_none()` after
+  checking the mutation reached the disk, and restoring passes. `cargo test` 431 → 432.
 - **Stop**: the effort control either works or says it cannot, and never silently does nothing.
 
 ### 13.2 [S] Cheap-model routing with a recommendation

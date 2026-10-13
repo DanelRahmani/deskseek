@@ -250,6 +250,11 @@ export interface ModelInfo {
   maxOutput: number;
   /** Whether this model can be sent an image. Off for a model that cannot see. */
   vision: boolean;
+  /**
+   * Whether this model takes an effort setting. On by default; off means the chat
+   * shows no thinking controls and the request carries neither field.
+   */
+  effort: boolean;
   /** `null` when the endpoint publishes no rate: the tokens are counted, the money is unknown. */
   price: ModelPrice | null;
 }
