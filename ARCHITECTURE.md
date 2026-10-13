@@ -107,6 +107,7 @@ Changing behaviour in this app is usually changing one of these.
 | What a backup carries, and what it deliberately leaves out | `backup.rs` |
 | What the decision-and-spend export carries: the panels' own reads, digests and never arguments | `store/db.rs` |
 | The quick-entry chord: how the string in Settings becomes a shortcut the OS registers, and the one spelling that says which shortcut fired | `quick.rs` |
+| Capturing a window as a PNG: which window is remembered and when, and the alpha byte GDI leaves at zero | `tools/desktop.rs` |
 
 The frontend has the same shape: a small pure module per rule, each with a
 `*.check.ts` beside it that `npm run check` runs (the README lists what each one

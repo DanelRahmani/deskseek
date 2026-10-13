@@ -506,3 +506,9 @@ the parts only a person can see.
       stops the old one working
 - [ ] Setting the chord to one another application already owns reports that by name and leaves the
       previous chord working, with nothing else on that screen saved
+- [ ] 📷 in the quick window photographs the window you were just in — not the quick window itself —
+      and shows its title and size beside a thumbnail
+- [ ] Sending with an Appshot files both `appshot.png` and `appshot.txt` into the chat's folder, and
+      the assistant can talk about what was on the screen
+- [ ] 📷 with the remembered window closed, or minimised, is refused with a sentence rather than a
+      blank picture

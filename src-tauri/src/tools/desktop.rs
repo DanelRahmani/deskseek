@@ -292,6 +292,244 @@ pub async fn type_text(
     run_blocking(move || com::type_text(&query, &text, clear, submit)).await
 }
 
+// ------------------------------------------------------------- the Appshot
+
+/// A captured window, ready to be filed into a conversation.
+pub struct Shot {
+    /// The PNG's bytes, exactly as they are written.
+    pub png: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+    /// The window's title, which is how the user recognises what was captured.
+    pub title: String,
+    /// What the window reads as text, best effort — the same accessibility tree
+    /// `ui_snapshot` walks, for the same window.
+    pub text: String,
+}
+
+/// Encode an RGBA buffer as a PNG.
+///
+/// Its own function because it is the half that can be checked without a screen
+/// attached: the capture needs a real window and a real compositor, and this
+/// needs four bytes.
+pub fn encode_png(rgba: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    if width == 0 || height == 0 {
+        return Err("there is nothing to encode".to_string());
+    }
+    let needed = width as usize * height as usize * 4;
+    if rgba.len() < needed {
+        return Err(format!(
+            "the pixel buffer is {} bytes and {width}×{height} needs {needed}",
+            rgba.len()
+        ));
+    }
+    let mut out = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut out, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+        writer
+            .write_image_data(&rgba[..needed])
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+/// Remember the window that is in front *now*.
+///
+/// Called as the quick-entry window is raised, before it takes the focus: by the
+/// time a button in our own window is clickable, we *are* the foreground window,
+/// and the whole point of an Appshot is the window that was in front a moment
+/// before. Deliberately cheap — the picture is taken later, so a chord that is
+/// only ever used to ask a question pays for no pixels.
+pub fn remember_foreground() {
+    #[cfg(windows)]
+    shot::remember();
+}
+
+/// Capture the window `remember_foreground` recorded, with the words that were
+/// in it.
+#[cfg(windows)]
+pub fn capture_focused() -> Result<Shot, String> {
+    let (png, width, height, title) = shot::grab()?;
+    // Both halves, because the picture of an error is not searchable and the
+    // text of a canvas is not readable. The tree is the same one `ui_snapshot`
+    // walks, addressed by the title we just remembered.
+    let text = match com::read_tree(Some(&title), MAX_ROWS) {
+        Ok(rows) => render_rows(&rows),
+        Err(err) => format!("(the window's text could not be read: {err})"),
+    };
+    Ok(Shot {
+        png,
+        width,
+        height,
+        title,
+        text,
+    })
+}
+
+#[cfg(not(windows))]
+pub fn capture_focused() -> Result<Shot, String> {
+    Err("an Appshot captures a Windows window, and this is not Windows".to_string())
+}
+
+#[cfg(windows)]
+mod shot {
+    use std::ffi::c_void;
+    use std::sync::Mutex;
+
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{
+        BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateCompatibleBitmap, CreateCompatibleDC,
+        DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HDC, ReleaseDC, SelectObject,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
+    };
+
+    use super::encode_png;
+
+    /// `PW_RENDERFULLCONTENT`: ask the window to draw itself even when it renders
+    /// through a composition surface, which is every browser, every Electron app
+    /// and anything else without a plain GDI surface. Without it those come back
+    /// blank.
+    const RENDER_FULL_CONTENT: u32 = 2;
+
+    // Declared rather than imported: `windows-sys` does not expose
+    // `PrintWindow`, and this is one function with a three-argument signature
+    // against a library the build already links.
+    //
+    // SAFETY contract: the signature is user32's, unchanged.
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn PrintWindow(hwnd: HWND, hdc: HDC, flags: u32) -> i32;
+    }
+
+    /// The window that was in front when the chord was pressed: its handle as an
+    /// integer (a raw pointer cannot live in a `static`) and its title.
+    static FRONT: Mutex<Option<(isize, String)>> = Mutex::new(None);
+
+    pub fn remember() {
+        // SAFETY: `GetForegroundWindow` takes no arguments and returns a handle
+        // this thread neither owns nor frees.
+        let handle = unsafe { GetForegroundWindow() };
+        if handle.is_null() {
+            return;
+        }
+        *FRONT.lock().unwrap() = Some((handle as isize, title_of(handle)));
+    }
+
+    /// The captured window: PNG bytes, its size, and its title.
+    pub fn grab() -> Result<(Vec<u8>, u32, u32, String), String> {
+        let (raw, title) = FRONT
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("no window was in front when the quick window was raised")?;
+        let hwnd = raw as HWND;
+
+        // SAFETY: the documented GDI dance for capturing one window. Every
+        // handle made here is released on the way out, including on both error
+        // paths, because a device context leaked per press is a resource leak
+        // with no ceiling.
+        unsafe {
+            let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) == 0 {
+                return Err(format!("\"{title}\" has closed since the chord was pressed."));
+            }
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0 || height <= 0 {
+                return Err(format!("\"{title}\" has nothing to capture — it is minimised."));
+            }
+
+            let screen = GetDC(std::ptr::null_mut());
+            if screen.is_null() {
+                return Err("could not reach the screen to draw on".to_string());
+            }
+            let memory = CreateCompatibleDC(screen);
+            let bitmap = CreateCompatibleBitmap(screen, width, height);
+            let previous = SelectObject(memory, bitmap);
+
+            if PrintWindow(hwnd, memory, RENDER_FULL_CONTENT) == 0 {
+                SelectObject(memory, previous);
+                DeleteObject(bitmap);
+                DeleteDC(memory);
+                ReleaseDC(std::ptr::null_mut(), screen);
+                return Err(format!(
+                    "\"{title}\" would not draw itself — it may be a protected window."
+                ));
+            }
+
+            let mut info: BITMAPINFO = std::mem::zeroed();
+            info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+            info.bmiHeader.biWidth = width;
+            // A negative height asks for top-down rows, which is the order a PNG
+            // reads in; positive would give us the picture upside down.
+            info.bmiHeader.biHeight = -height;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            info.bmiHeader.biCompression = BI_RGB;
+
+            let mut pixels = vec![0u8; width as usize * height as usize * 4];
+            let rows = GetDIBits(
+                memory,
+                bitmap,
+                0,
+                height as u32,
+                pixels.as_mut_ptr() as *mut c_void,
+                &mut info,
+                DIB_RGB_COLORS,
+            );
+
+            SelectObject(memory, previous);
+            DeleteObject(bitmap);
+            DeleteDC(memory);
+            ReleaseDC(std::ptr::null_mut(), screen);
+
+            if rows == 0 {
+                return Err(format!("\"{title}\" came back as no pixels."));
+            }
+
+            // GDI hands back BGRA, and the fourth byte is zero for a window that
+            // has no alpha of its own — written straight out, that is a fully
+            // transparent picture.
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+                pixel[3] = 255;
+            }
+
+            Ok((
+                encode_png(&pixels, width as u32, height as u32)?,
+                width as u32,
+                height as u32,
+                title,
+            ))
+        }
+    }
+
+    /// The window's title, which is how a person recognises what they captured.
+    fn title_of(hwnd: HWND) -> String {
+        // SAFETY: the length is asked for first and the buffer is sized from the
+        // answer, which is the documented two-call pattern.
+        unsafe {
+            let len = GetWindowTextLengthW(hwnd);
+            if len <= 0 {
+                // Chrome and friends report no caption text; the class name is
+                // not worth the extra call, so the caller sees an unnamed window.
+                return String::new();
+            }
+            let mut buffer = vec![0u16; len as usize + 1];
+            let written = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+            if written <= 0 {
+                return String::new();
+            }
+            String::from_utf16_lossy(&buffer[..written as usize])
+        }
+    }
+}
+
 #[cfg(windows)]
 mod com {
     use super::{
@@ -637,6 +875,44 @@ mod tests {
             id: String::new(),
             enabled: true,
         }
+    }
+
+    #[test]
+    fn a_png_round_trips_through_our_own_encoder() {
+        // Four pixels with distinct colours and a distinct alpha, so a channel
+        // swap or a forced alpha cannot pass.
+        let rgba = vec![
+            255, 0, 0, 255, // red
+            0, 255, 0, 255, // green
+            0, 0, 255, 200, // blue, partly transparent on purpose
+            10, 20, 30, 255,
+        ];
+        let bytes = encode_png(&rgba, 2, 2).unwrap();
+        // The signature is how a decoder knows it is a PNG at all.
+        assert_eq!(
+            &bytes[..8],
+            &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a],
+            "the bytes are not a PNG"
+        );
+
+        // A cursor rather than the slice: a PNG decoder has to be able to seek,
+        // and that is the one thing a bare slice cannot do.
+        let decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
+        let mut reader = decoder.read_info().unwrap();
+        let mut out = vec![0u8; 2 * 2 * 4];
+        let info = reader.next_frame(&mut out).unwrap();
+        assert_eq!((info.width, info.height), (2, 2));
+        assert_eq!(info.color_type, png::ColorType::Rgba);
+        assert_eq!(&out[..16], &rgba[..], "a pixel did not survive the round trip");
+    }
+
+    #[test]
+    fn nothing_to_encode_is_refused_rather_than_written() {
+        // A zero-sized capture is a bug upstream, not a picture.
+        assert!(encode_png(&[], 0, 0).is_err());
+        // A buffer too small for the size it claims is the same thing: refusing
+        // here is what stops a half-drawn image being filed as a screenshot.
+        assert!(encode_png(&[0, 0, 0, 255], 2, 2).is_err());
     }
 
     #[test]

@@ -3,7 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit } from "@tauri-apps/api/event";
 
 import { api } from "../api";
-import type { QuickTarget } from "../types";
+import type { Appshot, Attachment, QuickTarget } from "../types";
 
 /**
  * The quick-entry window: ask something without leaving the application you are
@@ -20,6 +20,7 @@ export function QuickEntry() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<QuickTarget>("last");
+  const [shot, setShot] = useState<Appshot | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
 
   // The window is a transparent frame around the card below, but the app's own
@@ -60,12 +61,31 @@ export function QuickEntry() {
 
   const close = useCallback(() => {
     setError(null);
+    setShot(null);
     void getCurrentWindow().hide();
+  }, []);
+
+  /**
+   * Photograph the window that was in front when this window was raised.
+   *
+   * Both halves come back — the picture and the words that were on it — because
+   * a screenshot is unreadable to a model that cannot see, and an error message
+   * typed from a picture is a transcription nobody wanted to do.
+   */
+  const capture = useCallback(async () => {
+    setError(null);
+    try {
+      setShot(await api.captureFocusedWindow());
+    } catch (e) {
+      setError(String(e));
+    }
   }, []);
 
   const send = useCallback(async () => {
     const question = text.trim();
-    if (!question || busy) return;
+    // A picture with no words is a real question ("what is wrong here?"), so the
+    // only thing that is nothing to send is nothing at all.
+    if ((!question && !shot) || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -76,14 +96,22 @@ export function QuickEntry() {
         throw new Error("No API key yet — add one in Settings → Access.");
       }
       const chatId = await resolve(target);
+      const attachments: Attachment[] = [];
+      if (shot) {
+        // Filed exactly as a dropped file is, so the model gets what it always
+        // gets: the picture as an image part and the words as text.
+        attachments.push(await api.attachPath(chatId, shot.path));
+        attachments.push(await api.attachPath(chatId, shot.textPath));
+      }
       // Deliberately **not** awaited: `send_message` resolves when the whole turn
       // has finished, and a quick window that stayed up for the length of an
       // answer would be a worse version of the main window. The reply streams
       // into the chat, and the chat is what the main window is told to open.
-      void api.sendMessage(chatId, question, []).catch((e) => {
+      void api.sendMessage(chatId, question, attachments).catch((e) => {
         void emit("quick-sent", { chatId, text: question, error: String(e) });
       });
       setText("");
+      setShot(null);
       await emit("quick-sent", { chatId, text: question });
       void getCurrentWindow().hide();
     } catch (e) {
@@ -91,7 +119,7 @@ export function QuickEntry() {
     } finally {
       setBusy(false);
     }
-  }, [text, busy, target]);
+  }, [text, busy, target, shot]);
 
   return (
     <div
@@ -121,13 +149,41 @@ export function QuickEntry() {
           />
           <button
             type="button"
+            onClick={() => void capture()}
+            aria-label="Capture the window you were just in"
+            title="Capture the window you were just in"
+            className="mt-1 rounded-md border border-neutral-700 px-2 py-1.5 text-xs text-neutral-300 hover:border-neutral-600"
+          >
+            📷
+          </button>
+          <button
+            type="button"
             onClick={() => void send()}
-            disabled={busy || text.trim().length === 0}
+            disabled={busy || (text.trim().length === 0 && !shot)}
             className="mt-1 rounded-md bg-sky-500 px-3 py-1.5 text-xs font-medium text-black hover:bg-sky-400 disabled:opacity-40"
           >
             {busy ? "Asking…" : "Ask"}
           </button>
         </div>
+        {shot && (
+          <div className="flex items-center gap-2 border-t border-neutral-800 px-3 py-1.5">
+            <img
+              src={shot.dataUrl}
+              alt=""
+              className="h-8 w-auto rounded-sm border border-neutral-700"
+            />
+            <span className="min-w-0 flex-1 truncate text-[11px] text-neutral-500">
+              {shot.title || "the window you were in"} · {shot.width}×{shot.height}, and its text
+            </span>
+            <button
+              type="button"
+              onClick={() => setShot(null)}
+              className="text-[11px] text-neutral-500 hover:text-neutral-300"
+            >
+              Remove
+            </button>
+          </div>
+        )}
         {error && (
           <p className="border-t border-neutral-800 px-3 py-1.5 text-[11px] text-red-300">
             {error}

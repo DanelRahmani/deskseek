@@ -292,6 +292,19 @@ export type SandboxMode = "auto" | "host" | "docker" | "wsl";
  * gives each one a conversation of its own. */
 export type QuickTarget = "new" | "last";
 
+/** A captured window: where its picture and its words are staged, and enough to
+ * show a thumbnail without a second round trip to the disk. */
+export interface Appshot {
+  /** The staged PNG, which only joins a conversation when the message is sent. */
+  path: string;
+  /** The window's readable text, staged beside it. */
+  textPath: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  title: string;
+}
+
 /** Sent by the quick window once it has handed a question to a conversation, so
  * the main window can show the chat it landed in. `error` is set when the turn
  * never started at all — the quick window is gone by then, so the failure has to

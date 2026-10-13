@@ -189,6 +189,12 @@ Both sections are functional:
   turn underneath, so the answer streams into the main window and the chat it landed in is
   brought to the front. Honest limit: a chord another application already owns cannot be
   registered, and that is reported where you set it rather than swallowed
+- **Appshot** — the 📷 button in that window photographs the window you were in a moment ago,
+  *before* the quick window took the focus, and attaches both the picture and the window's
+  readable text to the question. It is the same two halves a dropped file gives: the image as an
+  image, the words as text, filed into the chat's own folder. Windows only, matching `ui_snapshot`,
+  and it refuses a window that is minimised or that will not draw itself rather than filing a
+  blank picture
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
   both sections, so a chat can be found by what was said in it rather than by its name. The

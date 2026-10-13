@@ -76,6 +76,10 @@ quick-xml = { version = "0.41", default-features = false, features = ["encoding"
 # A PDF is not a ZIP of XML we can walk, so this one is a real new dependency.
 # MIT, no build script, no network, no C.
 pdf-extract = "0.12"
+# PNG encoding, for the Appshot (tools/desktop.rs). Already resolved in the build
+# graph through `tauri-codegen`'s icon handling, so declaring it adds no crate to
+# the lock file — only the ability to write one.
+png = "0.18"
 
 # Secret storage in the OS keychain, one native store per platform.
 [target.'cfg(target_os = "windows")'.dependencies]
@@ -87,9 +91,11 @@ keyring = { version = "3", features = ["windows-native"] }
 # range would resolve to a second copy of it.
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Security",
     "Win32_System_JobObjects",
     "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 # Reading the desktop's accessibility tree. `input` is a hard requirement of the
 # crate's `control` feature, but nothing in this build *calls* it: the tools

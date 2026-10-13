@@ -4,6 +4,7 @@ import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
 import type {
   ApprovalEvent,
   ApprovalRecord,
+  Appshot,
   Artifact,
   ArtifactDetail,
   ArtifactEvent,
@@ -70,6 +71,8 @@ export const api = {
   restoreProfile: (path: string) => invoke<void>("restore_profile", { path }),
   /** Raise the quick-entry window — the tray's and the palette's way in. */
   showQuickEntry: () => invoke<void>("show_quick_entry"),
+  /** Photograph the window that was in front when the quick window was raised. */
+  captureFocusedWindow: () => invoke<Appshot>("capture_focused_window"),
   /** Sweeps the tables that grow for ever; returns what went and the size now. */
   maintainDb: () => invoke<Maintenance>("maintain_db"),
 

@@ -79,6 +79,10 @@ pub fn open(app: &AppHandle) -> Result<(), String> {
         .get_webview_window(WINDOW)
         .ok_or("the quick-entry window is not open")?;
 
+    // Remember the window that is in front *before* we take the focus, so an
+    // Appshot can still capture it once our own window is the one in front.
+    crate::tools::desktop::remember_foreground();
+
     place_on_cursor_monitor(app, &window);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;

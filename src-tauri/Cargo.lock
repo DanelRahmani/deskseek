@@ -933,6 +933,7 @@ dependencies = [
  "keyring",
  "notify",
  "pdf-extract",
+ "png 0.18.1",
  "ppt-rs",
  "quick-xml 0.41.0",
  "reqwest",

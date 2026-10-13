@@ -1697,26 +1697,43 @@ line here.
   name rather than half-applied — the shortcut you had keeps working, and the rest of that screen
   stays unsaved, which is what refusing means.
 
-### 10.2 [S] An Appshot from the focused window
+### 10.2 [S] An Appshot from the focused window ✅
 - **Why**: ChatGPT's Appshots bring a screenshot and the text of the frontmost window into a
   conversation. DeskSeek has the text half (`ui_snapshot`); a picture of the window, filed into the
   chat like any other attachment, is the missing half — and it is what makes "this error, here" a
   question you can ask without typing the error.
-- **Files**: `src-tauri/src/tools/desktop.rs` (the capture: `remember_foreground`, `capture_focused`
-  and the pure `encode_png`), `Cargo.toml` (`png`, whose version is already resolved in the build
-  graph through `tauri-codegen`; `windows-sys` gains its GDI features), `lib.rs` (the chord
-  remembers the foreground window *before* the quick window takes focus), `commands.rs`
-  (`capture_focused_window`), `QuickEntry.tsx` (the 📷 button and the pending thumbnail),
-  `src/api.ts`, `src/types.ts`.
-- **Shape**: the identity of the window that was in front is remembered when the quick window is
-  *shown*, and the button captures *that* handle — by the time a button is clickable, our own window
-  has the focus. Windows-only, matching `ui_snapshot`'s existing honesty. The picture is written to
-  the app's own staging folder and only reaches the chat when the message is sent, through the same
-  `attach_path` a dropped file uses.
-- **Test**: `encode_png` is proved on a known buffer: a 2×2 RGBA image encodes to bytes that the
-  `png` decoder reads back at the same size with the same pixels, and a zero-sized buffer is refused
-  rather than written. The capture itself is Windows-only and needs a real window, so it is E2E.
+- **Files**: `src-tauri/src/tools/desktop.rs` (`Shot`, `encode_png`, `remember_foreground`,
+  `capture_focused`, and a `shot` module holding the handle remembered at chord time and the GDI
+  capture); `Cargo.toml` (`png`, which the lockfile already resolved through `tauri-codegen` — the
+  diff is one line in `deskseek`'s own dependency list and no new crate; `windows-sys` gains
+  `Win32_Graphics_Gdi` and `Win32_UI_WindowsAndMessaging`); `quick.rs` (`open` remembers the window
+  before it takes the focus); `store/paths.rs` (`shots_dir`, one fixed name overwritten each time);
+  `commands.rs` (`capture_focused_window`) and `lib.rs` (its registration); `src/components/QuickEntry.tsx`
+  (the 📷 button, the thumbnail row, and the two attachments on send); `src/api.ts`, `src/types.ts`.
+- **Shape**: the *identity* of the window that was in front is remembered when the quick window is
+  **raised**, and the button captures *that* handle by `PrintWindow` — because by the time a button
+  is clickable our own window has the focus, which is precisely the window nobody wants a picture
+  of. Both halves come back: the PNG and the window's readable text, read from the same
+  accessibility tree `ui_snapshot` walks. They are staged under `shots/` and only reach the chat
+  when the message is sent, through the same `attach_path` a dropped file uses.
+- **Test**: `desktop::tests::a_png_round_trips_through_our_own_encoder` — four pixels with distinct
+  colours *and* a distinct alpha encode to bytes that carry the PNG signature, decode back at the
+  same size and colour type, and come out byte-identical, so neither a channel swap nor a forced
+  alpha can pass. `nothing_to_encode_is_refused_rather_than_written` covers the guard: a zero-sized
+  capture and a buffer too small for the size it claims are both refused rather than half-written.
+  Falsified: making the encoder write `Grayscale` instead of `Rgba` fails the round trip on the
+  `write_image_data` panic inside it, and restoring passes. `cargo test` 363 passed. The capture
+  itself needs a real window and a real compositor, so it is E2E. Three things said out loud:
+  `PrintWindow` is **not** in `windows-sys`, so it is declared in a four-line `unsafe extern`
+  block against the user32 the build already links rather than pulling in the far larger `windows`
+  crate; a window that will not draw itself is **refused with a sentence** rather than falling back
+  to a screen grab, because a screen grab of a window we are covering would photograph *us*; and
+  the alpha byte GDI leaves at zero is forced to 255, which is the difference between a picture and
+  a fully transparent rectangle.
 - **Stop**: a picture of the window you were just looking at lands in a conversation with one press.
+  One limit named: it is Windows-only, matching `ui_snapshot`, and the text half is whatever the
+  accessibility tree holds — a canvas or a game gives the picture and says the text could not be
+  read.
 
 ### 10.4 [S] A tray entry
 - **Why**: all three competitors ship one, and it is the natural home for the things you want when

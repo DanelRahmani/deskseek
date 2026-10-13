@@ -79,6 +79,49 @@ pub fn show_quick_entry(app: AppHandle) -> Result<(), String> {
     crate::quick::open(&app)
 }
 
+/// What the Appshot produced: the picture and the words, both staged on disk and
+/// returned with a thumbnail so the window that asked can show what it got.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Appshot {
+    /// The staged PNG. It only reaches the chat when the message is sent, through
+    /// the same `attach_path` a dropped file uses.
+    pub path: String,
+    /// The window's readable text, as its own file, for the same reason.
+    pub text_path: String,
+    /// A thumbnail for the quick window, which has a path and no way to render
+    /// one.
+    pub data_url: String,
+    pub width: u32,
+    pub height: u32,
+    pub title: String,
+}
+
+/// Capture the window that was in front when the quick window was raised.
+///
+/// The *remembered* window, not the focused one: pressing this button means our
+/// own window has the focus, which is exactly the window nobody wants a picture
+/// of.
+#[tauri::command]
+pub fn capture_focused_window(state: State<'_, AppState>) -> Result<Appshot, String> {
+    let shot = desktop::capture_focused()?;
+    let dir = state.paths.shots_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let path = dir.join("appshot.png");
+    let text_path = dir.join("appshot.txt");
+    std::fs::write(&path, &shot.png).map_err(|e| e.to_string())?;
+    std::fs::write(&text_path, &shot.text).map_err(|e| e.to_string())?;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&shot.png);
+    Ok(Appshot {
+        path: path.display().to_string(),
+        text_path: text_path.display().to_string(),
+        data_url: format!("data:image/png;base64,{encoded}"),
+        width: shot.width,
+        height: shot.height,
+        title: shot.title,
+    })
+}
+
 // ---------------------------------------------------------------- backup
 
 /// What a backup is worth: `src/backup.rs` owns the list and the archive. The

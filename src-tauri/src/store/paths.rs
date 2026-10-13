@@ -92,6 +92,16 @@ impl AppPaths {
         self.root.join("documents")
     }
 
+    /// Where an Appshot is written before it belongs to a conversation.
+    ///
+    /// One fixed name, overwritten each time, rather than one file per capture:
+    /// a picture that is never sent should leave nothing behind, and a folder
+    /// that grows every time somebody presses the button is a folder somebody
+    /// has to clean.
+    pub fn shots_dir(&self) -> PathBuf {
+        self.root.join("shots")
+    }
+
     pub fn ensure(&self) -> io::Result<()> {
         std::fs::create_dir_all(&self.root)?;
         std::fs::create_dir_all(self.chatlog_dir())?;

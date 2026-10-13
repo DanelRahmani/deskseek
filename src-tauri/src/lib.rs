@@ -424,6 +424,7 @@ pub fn run() {
             commands::computer_state,
             commands::set_computer_paused,
             commands::show_quick_entry,
+            commands::capture_focused_window,
             commands::list_tree,
             commands::find_in_tree,
             commands::read_preview,
