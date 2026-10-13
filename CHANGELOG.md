@@ -16,6 +16,7 @@ one.
 
 - Skills move in and out: import a folder of `SKILL.md` directories written for Claude or Gemini, or export the whole library in that same open shape
 - Another assistant's memory file or prompt folder imports into editable categories and saved prompts — additive, with nothing already written overwritten
+- A chat can be set to not feed memory: nothing said in it is remembered, and no memory is shown to it
 
 ## 0.4.0 — 2026-10-12
 

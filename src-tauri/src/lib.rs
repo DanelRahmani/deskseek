@@ -241,6 +241,7 @@ pub fn run() {
             commands::delete_chat,
             commands::duplicate_chat,
             commands::set_chat_archived,
+            commands::set_chat_incognito,
             commands::set_chat_model,
             commands::set_chat_permission_mode,
             commands::set_chat_mode,

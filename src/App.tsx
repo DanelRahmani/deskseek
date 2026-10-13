@@ -961,6 +961,28 @@ export default function App() {
     [refreshChats],
   );
 
+  // Whether this chat feeds memory. Privacy, so the row is patched only after
+  // the write succeeds — the switch must never *look* on while it is off.
+  const changeIncognito = useCallback(
+    async (chatId: string, incognito: boolean) => {
+      try {
+        await api.setChatIncognito(chatId, incognito);
+        setChatsById((prev) =>
+          prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], incognito } } : prev,
+        );
+        await refreshChats(kindRef.current);
+        setNotice(
+          incognito
+            ? "This chat is now off the record — nothing said here is remembered, and no memory is shown."
+            : "This chat feeds memory again.",
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [refreshChats],
+  );
+
   const stop = useCallback(async (chatId: string) => {
     try {
       await api.stopChat(chatId);
@@ -1745,6 +1767,7 @@ export default function App() {
                     }
                     onModeChange={(mode) => id && changeMode(id, mode)}
                     onAgentMode={(mode) => id && changeAgentMode(id, mode)}
+                    onIncognito={(on) => id && changeIncognito(id, on)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
                     onRevealFolder={() => id && void revealChatFolder(id)}
                     onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}

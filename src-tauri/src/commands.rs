@@ -396,6 +396,21 @@ pub fn set_chat_archived(
     db::set_chat_archived(&conn, &chat_id, archived).map_err(|e| e.to_string())
 }
 
+/// Switches a chat's "does not feed memory" on or off.
+///
+/// With it on, nothing said in the chat is written to memory and its prompt
+/// carries none — the whole guarantee is `memory::enabled`, asked from both the
+/// prompt assembly and `save_memory`.
+#[tauri::command]
+pub fn set_chat_incognito(
+    state: State<'_, AppState>,
+    chat_id: String,
+    incognito: bool,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_chat_incognito(&conn, &chat_id, incognito).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn set_chat_model(
     state: State<'_, AppState>,
@@ -2800,6 +2815,7 @@ mod tests {
             cost_usd: 0.0,
             agent_mode: "standard".to_string(),
             archived: false,
+            incognito: false,
             project_id: None,
             created_at: 0,
             updated_at: 0,

@@ -69,6 +69,11 @@ interface Props {
   /** Ask, Standard, Plan or Agent — see AGENT_MODES. */
   onAgentMode: (mode: string) => void;
   onModeChange: (mode: PermissionMode) => void;
+  /**
+   * Turns this chat's "does not feed memory" switch on or off. With it on, no
+   * memory is shown here and nothing said here is remembered.
+   */
+  onIncognito: (incognito: boolean) => void;
   onPickWorkspace: () => void;
   /** Show where this chat keeps its own files. */
   onRevealFolder: () => void;
@@ -194,6 +199,7 @@ export function ChatView({
   onModelChange,
   onAgentMode,
   onModeChange,
+  onIncognito,
   onPickWorkspace,
   onRevealFolder,
   onAttach,
@@ -808,9 +814,32 @@ export function ChatView({
                 </div>
               )}
 
+              <button
+                onClick={() => onIncognito(!chat.incognito)}
+                title={
+                  chat.incognito
+                    ? "This chat does not feed memory. Click to let it remember again."
+                    : "Off the record: nothing said here is remembered, and no memory is shown"
+                }
+                className={`rounded-lg px-2 py-1 text-[12px] transition duration-150 ${
+                  chat.incognito
+                    ? "bg-amber-500/15 font-medium text-amber-300"
+                    : "text-neutral-500 hover:bg-neutral-900 hover:text-neutral-300"
+                }`}
+              >
+                Incognito
+              </button>
+
               <span className="ml-auto hidden text-[11px] text-neutral-600 sm:block">
                 Shift+Tab to change mode
               </span>
+
+              {chat.incognito && (
+                <span className="w-full text-[11px] text-amber-300/80">
+                  This chat does not feed memory — nothing here is remembered, and no memory is
+                  shown to it.
+                </span>
+              )}
             </div>
           )}
 

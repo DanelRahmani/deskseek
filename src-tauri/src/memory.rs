@@ -6,6 +6,20 @@ use std::path::Path;
 
 use chrono::Local;
 
+/// Whether a chat reads *and* writes memory at all.
+///
+/// One rule, one place, because two callers have to agree: `agent.rs` must leave
+/// memory out of an incognito chat's prompt, and `save_memory` must refuse to
+/// write from one. A second copy of "is this chat private" is how the two come
+/// apart — the model would stop being *shown* memory while still quietly feeding
+/// it, which is the exact opposite of what the switch promises.
+///
+/// Takes the flag rather than a `ChatRow` so this stays a plain rule with no
+/// dependency on the database.
+pub fn enabled(chat_incognito: bool) -> bool {
+    !chat_incognito
+}
+
 pub fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
@@ -72,6 +86,15 @@ private credentials. Return valid JSON only.";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_incognito_chat_neither_reads_nor_writes_memory() {
+        // The one rule both the prompt assembly and `save_memory` ask. It is the
+        // only thing that has to hold for the switch to mean anything, so it is
+        // the thing pinned here.
+        assert!(enabled(false), "an ordinary chat uses memory");
+        assert!(!enabled(true), "an incognito chat does not");
+    }
 
     #[test]
     fn the_summary_prompt_names_every_category() {

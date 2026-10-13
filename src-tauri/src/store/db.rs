@@ -37,6 +37,9 @@ pub struct ChatRow {
     /// Out of the way in the sidebar, and nothing else: the messages, the spend
     /// and the folder are exactly where they were.
     pub archived: bool,
+    /// This chat does not feed memory, and its prompt carries none. Handled by
+    /// `memory::enabled` so the read and the write agree.
+    pub incognito: bool,
     /// The project this chat belongs to, or `None`. Membership only — the chat's
     /// own folder and memory do not depend on it.
     pub project_id: Option<String>,
@@ -85,6 +88,11 @@ CREATE TABLE IF NOT EXISTS chats (
     agent_mode   TEXT NOT NULL DEFAULT 'standard',
     -- Kept out of the sidebar's way without deleting anything.
     archived     INTEGER NOT NULL DEFAULT 0,
+    -- This chat does not feed memory: `save_memory` writes nothing from it and
+    -- its prompt carries no memory at all — one rule, in `memory::enabled`.
+    -- Added by ALTER for databases written before the switch existed. Not
+    -- activity, so flipping it does not bump `updated_at`.
+    incognito    INTEGER NOT NULL DEFAULT 0,
     -- The project this chat belongs to, or NULL. Membership only: the chat's own
     -- folder and memory do not depend on it. Also added by ALTER for databases
     -- written before projects existed.
@@ -419,6 +427,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // yet"; the first file operation decides it, so an existing chat keeps
     // reading the shared documents folder until it next touches a file.
     let _ = conn.execute("ALTER TABLE chats ADD COLUMN folder TEXT", []);
+    // A chat that does not feed memory arrived with 8.3. An older database gets 0
+    // for every chat, which is exactly "nothing was private before".
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     // A project's own instruction blocks arrived with 2.7. An older database
     // gets an empty array, which is exactly "no project rules yet".
     let _ = conn.execute(
@@ -484,7 +498,7 @@ pub fn swap_file(conn: &mut Connection, live: &Path, restored: &Path) -> Result<
 /// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -504,6 +518,7 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             agent_mode: r.get(12)?,
             project_id: r.get(13)?,
             folder: r.get(14)?,
+            incognito: r.get::<_, i64>(15)? != 0,
         })
     })?;
     rows.collect()
@@ -538,6 +553,7 @@ pub fn create_chat(
         cost_usd: 0.0,
         agent_mode: "standard".to_string(),
         archived: false,
+        incognito: false,
         project_id: None,
         created_at: ts,
         updated_at: ts,
@@ -575,9 +591,11 @@ pub fn duplicate_chat(conn: &Connection, id: &str) -> rusqlite::Result<Option<Ch
         &source.permission_mode,
     )?;
     rename_chat(conn, &copy.id, &format!("{} (copy)", source.title))?;
+    // `incognito` comes with it: the copy is the same conversation, so it must
+    // not quietly start feeding memory when the original does not.
     conn.execute(
-        "UPDATE chats SET agent_mode = ?2, project_id = ?3 WHERE id = ?1",
-        params![copy.id, source.agent_mode, source.project_id],
+        "UPDATE chats SET agent_mode = ?2, project_id = ?3, incognito = ?4 WHERE id = ?1",
+        params![copy.id, source.agent_mode, source.project_id, source.incognito as i64],
     )?;
     let skills = get_chat_skills(conn, id)?;
     if !skills.is_empty() {
@@ -600,7 +618,7 @@ pub fn duplicate_chat(conn: &Connection, id: &str) -> rusqlite::Result<Option<Ch
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -620,6 +638,7 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 agent_mode: r.get(12)?,
                 project_id: r.get(13)?,
                 folder: r.get(14)?,
+                incognito: r.get::<_, i64>(15)? != 0,
             })
         },
     )
@@ -632,6 +651,16 @@ pub fn set_chat_archived(conn: &Connection, id: &str, archived: bool) -> rusqlit
     conn.execute(
         "UPDATE chats SET archived = ?2 WHERE id = ?1",
         params![id, archived as i64],
+    )?;
+    Ok(())
+}
+
+/// Turns "this chat does not feed memory" on or off. Like archiving, the switch
+/// is not activity, so `updated_at` is left alone and the sidebar keeps its order.
+pub fn set_chat_incognito(conn: &Connection, id: &str, incognito: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET incognito = ?2 WHERE id = ?1",
+        params![id, incognito as i64],
     )?;
     Ok(())
 }
@@ -2557,6 +2586,10 @@ mod tests {
         assert_eq!(kept.title, "A chat from before");
         assert!(kept.project_id.is_none());
         assert!(kept.folder.is_none());
+        // The `incognito` ALTER ran too: an old chat is not private, which is
+        // exactly what a default of 0 means. (`get_chat` selects every column, so
+        // this is a real read of a column only the ALTER could have added.)
+        assert!(!kept.incognito, "an upgraded chat must not be incognito");
 
         // The `instructions` ALTER ran on the upgraded file: the old project kept
         // its name and gained an empty rule list rather than a malformed one.

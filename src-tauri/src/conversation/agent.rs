@@ -581,15 +581,19 @@ publishing, `rm -rf /`) are still refused — a refusal is final, so do not retr
 
     // Spell out how memory works so the model never guesses at a file name or
     // asks to read something it has already been given.
+    // An incognito chat is told nothing about memory at all — being *shown* what
+    // is remembered is the same leak as being reminded of it later, and the guide
+    // would promise a memory the chat must not use.
     // The category list is generated from the same table the tool validates
     // against, so the guide cannot describe a category the app would refuse.
-    let categories = crate::memory_files::CATEGORIES
-        .iter()
-        .map(|c| format!("    - {} — {}", c.id, c.about))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let memory_guide = format!(
-        "\n\n# Memory\n\n\
+    if crate::memory::enabled(chat.incognito) {
+        let categories = crate::memory_files::CATEGORIES
+            .iter()
+            .map(|c| format!("    - {} — {}", c.id, c.about))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let memory_guide = format!(
+            "\n\n# Memory\n\n\
 Your memory has two parts.\n\n\
 1. The always-present profile: MEMORY.md at\n\n    {}\n\n\
 Its contents are included below under \"Memory\" — they have already been read for you, so \
@@ -608,11 +612,12 @@ whichever line above fits best; use `profile` only for who the user is or how th
 worked with, and `other` when nothing fits. Inside a project folder the memory is filed with \
 the project instead, so it does not turn up in other conversations. Do not ask for permission \
 first — the app handles it.",
-        state.paths.memory_file().display(),
-        categories
-    );
-    parts.push(part("Memory guide", "memory", memory_guide.chars().count()));
-    base.push_str(&memory_guide);
+            state.paths.memory_file().display(),
+            categories
+        );
+        parts.push(part("Memory guide", "memory", memory_guide.chars().count()));
+        base.push_str(&memory_guide);
+    }
 
     let enabled = {
         let conn = state.db.lock().unwrap();
@@ -704,7 +709,13 @@ start one from a project folder that already has a look.\n\nInstalled:\n\n",
         base.push_str(&block);
     }
 
-    let memory = crate::memory::read(&state.paths.memory_file());
+    // An incognito chat carries no memory at all: not the profile, which is
+    // normally injected, and not the recalled notes below.
+    let memory = if crate::memory::enabled(chat.incognito) {
+        crate::memory::read(&state.paths.memory_file())
+    } else {
+        None
+    };
     // Measured from the same block the shared helper injects, rather than from a
     // second format string that could drift away from it.
     if let Some(block) = memory_block(memory.as_deref()) {
@@ -716,7 +727,7 @@ start one from a project folder that already has a look.\n\nInstalled:\n\n",
     // just asked, so a store that grows forever costs nothing on a turn where none
     // of it is relevant. Reading a handful of small files is cheap; a failure here
     // is not worth losing the turn over, it just means no recall.
-    if let Some(ask) = ask {
+    if let Some(ask) = ask.filter(|_| crate::memory::enabled(chat.incognito)) {
         let dir = state.paths.memory_dir();
         let recalled = crate::memory_files::select(
             &crate::memory_files::candidates(&dir, workspace),
@@ -1100,6 +1111,21 @@ async fn run_tool(
     }
 
     if name == "save_memory" {
+        // This chat's own privacy switch, checked before anything is parsed or
+        // written: an incognito chat must leave no trace in memory. Asking
+        // `memory::enabled` rather than reading `incognito` here keeps the write
+        // path and the prompt assembly on the one rule.
+        let chat = db::get_chat(&state.db.lock().unwrap(), chat_id).ok();
+        if let Some(chat) = &chat {
+            if !crate::memory::enabled(chat.incognito) {
+                return Err(
+                    "This chat does not keep memory, so nothing was saved — do not retry or ask \
+                     the user to turn it off. If the fact matters, say so and let them decide."
+                        .to_string(),
+                );
+            }
+        }
+
         let draft = tools::parse_memory(args)?;
 
         // The routing is the whole point of the split: the profile file is
@@ -1107,8 +1133,7 @@ async fn run_tool(
         // may reach it. Everything else goes to a category file, and inside a
         // project it goes to that project's file, so a note about one client does
         // not surface in another's chat.
-        let workspace = db::get_chat(&state.db.lock().unwrap(), chat_id)
-            .ok()
+        let workspace = chat
             .and_then(|chat| chat.workspace)
             .map(std::path::PathBuf::from);
         let destination = crate::memory_files::destination(&draft.target, workspace.as_deref());

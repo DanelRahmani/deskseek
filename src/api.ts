@@ -106,6 +106,12 @@ export const api = {
   /** Moves a chat to the sidebar's archive, or back out of it. */
   setChatArchived: (chatId: string, archived: boolean) =>
     invoke<void>("set_chat_archived", { chatId, archived }),
+  /**
+   * Turns a chat's "does not feed memory" switch on or off. With it on, nothing
+   * said here is written to memory and the prompt carries none.
+   */
+  setChatIncognito: (chatId: string, incognito: boolean) =>
+    invoke<void>("set_chat_incognito", { chatId, incognito }),
   setChatModel: (chatId: string, model: string, thinking: boolean, effort: string) =>
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
   setChatPermissionMode: (chatId: string, mode: PermissionMode) =>

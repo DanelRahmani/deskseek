@@ -31,6 +31,11 @@ export interface ChatRow {
   agent_mode: string;
   /** Out of the sidebar's way. Nothing else about the chat changes. */
   archived: boolean;
+  /**
+   * This chat does not feed memory: `save_memory` writes nothing from it and its
+   * prompt carries no memory at all.
+   */
+  incognito: boolean;
   /** The project this chat belongs to, or null. Membership only. */
   project_id: string | null;
   created_at: number;

@@ -1204,16 +1204,21 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
 - **Stop**: an exported memory file from another assistant becomes editable categories here, and
   nothing already written is overwritten.
 
-### 8.3 [S] A chat that memory does not learn from
+### 8.3 [S] A chat that memory does not learn from ✅
 - **Why**: one switch that is the difference between using the assistant for something private and
   not using it at all. Claude calls it incognito, ChatGPT calls it temporary; the honest description
   of the behaviour is "this chat does not feed memory".
-- **Files**: `store/db.rs` (`chats.incognito`, in the `CREATE TABLE` **and** as a guarded `ALTER`),
-  `memory.rs` (refuse the write), `conversation/agent.rs` (leave the memory part out of the assembled
-  prompt), `commands.rs`, `ChatView.tsx`, `src/types.ts`.
-- **Test**: a `save_memory` call from such a chat writes no row and no file, and the assembled prompt
-  for that chat carries no memory section; plus the upgrade path on a **real temp file**, a pre-8.3
-  `chats` table gaining the column, because a fresh `mem()` schema proves nothing about an `ALTER`.
+- **Files**: `store/db.rs` (`chats.incognito`, in the `CREATE TABLE` **and** as a guarded `ALTER`,
+  plus `set_chat_incognito` and the copy `duplicate_chat` makes); `memory.rs` (`enabled` — the one
+  rule, asked by both the read and the write so they cannot disagree); `conversation/agent.rs` (it
+  gates the memory guide, the injected profile *and* recall, and refuses `save_memory` before it even
+  parses the arguments); `commands.rs` (`set_chat_incognito`); `src/api.ts` and `src/types.ts`
+  (`ChatRow.incognito`); `ChatView.tsx` (the toggle and a line that says what it means).
+- **Test**: `memory::tests::an_incognito_chat_neither_reads_nor_writes_memory` pins the single rule
+  the prompt assembly and `save_memory` both ask; `db::tests::an_older_database_upgrades_instead_of_refusing_to_open`
+  now also asserts a pre-8.3 `chats` table gains the column on a **real temp file**. No test can
+  build an `AppState`, so the prompt omission itself is proved by construction — one predicate, both
+  call sites — rather than by a `system_prompt` test. `cargo test` 333 passed.
 - **Stop**: nothing said in a chat that memory does not learn from can be quoted back in another one.
 
 ### 8.4 [S] A project's memory is editable where it is shown
