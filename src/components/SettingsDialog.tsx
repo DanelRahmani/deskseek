@@ -1211,6 +1211,60 @@ export function SettingsDialog({
                   gets a dot in the sidebar, whether or not a popup is allowed.
                 </p>
               </section>
+
+              <section>
+                <label className="flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.reminders}
+                    onChange={(e) => saveTool({ reminders: e.target.checked })}
+                  />
+                  Remind me to take a break
+                </label>
+                <label className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
+                  Every
+                  <input
+                    type="number"
+                    min={5}
+                    max={240}
+                    value={form.reminderMinutes}
+                    disabled={!form.reminders}
+                    onChange={(e) => saveTool({ reminderMinutes: Number(e.target.value) || 50 })}
+                    className="w-16 rounded border border-neutral-800 bg-neutral-950 px-2 py-0.5 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700 disabled:opacity-40"
+                  />
+                  minutes
+                </label>
+                <label className="mt-3 flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={form.quietHours}
+                    onChange={(e) => saveTool({ quietHours: e.target.checked })}
+                  />
+                  Quiet hours
+                </label>
+                <div className="mt-2 flex items-center gap-2 text-xs text-neutral-300">
+                  <input
+                    type="time"
+                    value={form.quietFrom}
+                    disabled={!form.quietHours}
+                    onChange={(e) => saveTool({ quietFrom: e.target.value || "18:00" })}
+                    className="rounded border border-neutral-800 bg-neutral-950 px-2 py-0.5 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700 disabled:opacity-40"
+                  />
+                  to
+                  <input
+                    type="time"
+                    value={form.quietTo}
+                    disabled={!form.quietHours}
+                    onChange={(e) => saveTool({ quietTo: e.target.value || "09:00" })}
+                    className="rounded border border-neutral-800 bg-neutral-950 px-2 py-0.5 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700 disabled:opacity-40"
+                  />
+                </div>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Inside these hours no popup appears — for a reminder, a finished run or anything
+                  else — but the in-app notice still does, so silence never hides that something
+                  happened. A window that runs past midnight is fine: 18:00 to 09:00 is the usual one.
+                </p>
+              </section>
             </>
           )}
 

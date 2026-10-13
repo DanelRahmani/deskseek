@@ -1319,15 +1319,26 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
 - **Stop**: a sentence in an artifact can be changed without a chat turn and without retyping the
   document.
 
-### 8.9 [S] Break reminders and quiet hours
+### 8.9 [S] Break reminders and quiet hours ✅
 - **Why**: the least glamorous item in Claude's settings and the most used. It is also the direct
   answer to "reminders", which the assistant currently cannot do at all.
-- **Files**: `store/settings.rs` (the interval, the window, both switches), `notify.rs` (the one
-  place that decides whether a finish becomes a toast, so the window is honoured in exactly one
-  file), `SettingsDialog.tsx`, and a ticker beside the scheduler's in `lib.rs`.
-- **Test**: a toast inside quiet hours is suppressed while the in-app dot still appears, which is the
-  rule already stated for the notification switch and must survive this change; and a settings round
-  trip.
+- **Files**: `store/settings.rs` (`reminders`, `reminder_minutes`, `quiet_hours`, `quiet_from`,
+  `quiet_to` — each with a serde default, so a `settings.json` written before them still loads *and*
+  the switches arrive off); `notify.rs` (`wants_toast`, the one pure rule that now combines the
+  master switch, quiet hours and the focus check, so three settings cannot be combined wrongly in
+  three places; `in_quiet_hours`; and `reminder`, which goes through `ping` so a nudge obeys the same
+  rules as a finished run — `ping` emits the in-app notice *before* it asks, so quiet hours can never
+  hide that something happened); `lib.rs` (a reminder ticker beside the scheduler's, counting minutes
+  in the loop rather than in the database, because forgetting the count on a restart is right);
+  `src/types.ts`; `SettingsDialog.tsx` (the controls, in Tools beside the notification switches).
+- **Test**: `notify::tests::a_quiet_window_holds_the_popup_back` — the overnight window on both sides
+  of midnight, a daytime window, the end being exclusive, `9:00` reading as `09:00`, and a degenerate
+  or unparseable window read as *no* window rather than a silent day.
+  `the_three_switches_decide_whether_a_popup_is_wanted` — each switch alone and combined.
+  `settings::tests::missing_file_yields_defaults` gained the new defaults and
+  `round_trips_through_disk` carries all five through the file. The in-app notice surviving quiet
+  hours is structural (the emit is the first thing `ping` does), and no test can build an `AppHandle`
+  to observe an OS toast. `cargo test` 344 passed.
 - **Stop**: reminders fire, and quiet hours silence the toast without hiding that something happened.
 
 ### 8.10 [S] A recap of the week or month

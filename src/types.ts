@@ -245,6 +245,14 @@ export interface Settings {
   notifications: boolean;
   /** Raise a toast only when the window is not in front of the user. */
   notifyOnlyWhenUnfocused: boolean;
+  /** A nudge to get up and move, every `reminderMinutes`. Off by default. */
+  reminders: boolean;
+  reminderMinutes: number;
+  /** Hold popups back inside `quietFrom`..`quietTo`; the in-app notice still shows. */
+  quietHours: boolean;
+  /** Local "HH:MM". The window may wrap midnight. */
+  quietFrom: string;
+  quietTo: string;
   /** Set once the first-run setup screen has been finished or dismissed. */
   setupDone: boolean;
 }

@@ -22,6 +22,7 @@ one.
 - A scheduled task lists its recent runs with what each cost and the chat it ran in, read from the same rows the spend view sums
 - Ask in chat for something to happen on a schedule and the assistant sets it up, after an approval, with no form
 - A passage of an artifact can be rewritten in place: select it in the editor, say how it should change, and it lands as a new version
+- Break reminders on an interval you choose, and quiet hours that hold popups back without hiding the in-app notice
 
 ## 0.4.0 — 2026-10-12
 

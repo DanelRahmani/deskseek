@@ -143,6 +143,23 @@ pub struct Settings {
     /// is, the answer is already on screen and a popup over it is noise.
     #[serde(default = "default_true")]
     pub notify_only_when_unfocused: bool,
+    /// A nudge to get up and move, every `reminder_minutes`. Off by default: it
+    /// is the one switch here that interrupts on a timer rather than in response
+    /// to something that happened.
+    #[serde(default)]
+    pub reminders: bool,
+    /// How often that nudge comes, in minutes.
+    #[serde(default = "default_reminder_minutes")]
+    pub reminder_minutes: u32,
+    /// Hold popups back inside `quiet_from`..`quiet_to`. The in-app notice still
+    /// appears — silence is not the same as pretending nothing happened.
+    #[serde(default)]
+    pub quiet_hours: bool,
+    /// Local "HH:MM". The window may wrap midnight; 18:00 → 09:00 is the usual one.
+    #[serde(default = "default_quiet_from")]
+    pub quiet_from: String,
+    #[serde(default = "default_quiet_to")]
+    pub quiet_to: String,
     /// Set once the first-run setup screen has been finished or dismissed.
     #[serde(default)]
     pub setup_done: bool,
@@ -166,6 +183,18 @@ fn default_theme() -> String {
 
 fn default_theme_mode() -> String {
     "system".to_string()
+}
+
+fn default_reminder_minutes() -> u32 {
+    50
+}
+
+fn default_quiet_from() -> String {
+    "18:00".to_string()
+}
+
+fn default_quiet_to() -> String {
+    "09:00".to_string()
 }
 
 fn default_true() -> bool {
@@ -200,6 +229,11 @@ impl Default for Settings {
             computer_use: false,
             notifications: true,
             notify_only_when_unfocused: true,
+            reminders: false,
+            reminder_minutes: default_reminder_minutes(),
+            quiet_hours: false,
+            quiet_from: default_quiet_from(),
+            quiet_to: default_quiet_to(),
             setup_done: false,
         }
     }
@@ -228,6 +262,12 @@ mod tests {
         let s = load(Path::new("/definitely/not/here/settings.json"));
         assert_eq!(s.base_url, DEFAULT_BASE_URL);
         assert_eq!(s.chat_model, "deepseek-flash");
+        // A file written before reminders existed must still load, with the
+        // switches off and a window that is never consulted.
+        assert!(!s.reminders && !s.quiet_hours);
+        assert_eq!(s.reminder_minutes, 50);
+        assert_eq!(s.quiet_from, "18:00");
+        assert_eq!(s.quiet_to, "09:00");
     }
 
     #[test]
@@ -238,10 +278,23 @@ mod tests {
         let mut s = Settings::default();
         s.chat_model = "deepseek-v4-pro".to_string();
         s.thinking = false;
+        s.reminders = true;
+        s.reminder_minutes = 25;
+        s.quiet_hours = true;
+        s.quiet_from = "20:30".to_string();
+        s.quiet_to = "07:15".to_string();
         save(&path, &s).unwrap();
         let back = load(&path);
         assert_eq!(back.chat_model, "deepseek-v4-pro");
         assert!(!back.thinking);
+        // The reminder switches and the window survive the file in both
+        // directions: a colon in "20:30" is exactly the sort of thing a hand-
+        // written serialiser loses.
+        assert!(back.reminders);
+        assert_eq!(back.reminder_minutes, 25);
+        assert!(back.quiet_hours);
+        assert_eq!(back.quiet_from, "20:30");
+        assert_eq!(back.quiet_to, "07:15");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

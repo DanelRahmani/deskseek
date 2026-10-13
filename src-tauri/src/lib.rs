@@ -217,6 +217,34 @@ pub fn run() {
                     scheduled_tick(&ticker).await;
                 }
             });
+
+            // Break reminders. A minute a tick against a setting measured in
+            // minutes, so changing the interval takes effect without a restart;
+            // the count of minutes waited is the only state, and it lives here
+            // rather than in the database because forgetting it on a restart is
+            // exactly right — nobody wants a reminder the moment the app opens.
+            let reminder_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut beat = tokio::time::interval(std::time::Duration::from_secs(60));
+                let mut waited: u32 = 0;
+                loop {
+                    beat.tick().await;
+                    let state = reminder_handle.state::<AppState>();
+                    let (on, every) = {
+                        let settings = state.settings.lock().unwrap();
+                        (settings.reminders, settings.reminder_minutes.max(1))
+                    };
+                    if !on {
+                        waited = 0;
+                        continue;
+                    }
+                    waited += 1;
+                    if waited >= every {
+                        waited = 0;
+                        notify::reminder(&reminder_handle, &state);
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
