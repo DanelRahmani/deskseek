@@ -201,6 +201,11 @@ nothing, or throws.
 - [ ] *Export the decision log and the spend* in the palette writes one JSON file to the documents
       folder, the notice names it, and opening it shows the decisions **Settings → Commands** lists
       and the figures the panel is showing — with no command or file contents in it, only digests
+- [ ] Run `/compact` (or let a long chat fold itself) and reopen *Spend*: *By what spent it* has a
+      *Summaries and folds* row with one call and a cost, and its rows plus *Turns* add up to the
+      figure at the top
+- [ ] Revise a passage of an artifact, then reload *Spend*: an *In-place revisions* row appears with
+      that call's cost, and the conversation it was made in shows a higher total than before
 
 ## Scheduling and notifications
 

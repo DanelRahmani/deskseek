@@ -1098,12 +1098,13 @@ pub fn save_artifact_version(
 #[tauri::command]
 pub async fn revise_selection(
     state: State<'_, AppState>,
+    chat_id: String,
     before: String,
     selection: String,
     after: String,
     instruction: String,
 ) -> Result<String, String> {
-    agent::revise_selection(&state, &before, &selection, &after, &instruction).await
+    agent::revise_selection(&state, &chat_id, &before, &selection, &after, &instruction).await
 }
 
 #[tauri::command]

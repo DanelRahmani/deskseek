@@ -351,8 +351,12 @@ export type ScheduledDraft = {
  * One in-place revision: the selected text, a little of what surrounds it, and
  * what should happen to it. An alias rather than an interface for the same
  * reason as `ScheduledDraft` — `invoke` takes an indexable argument.
+ *
+ * `chatId` rides along so the call can be priced onto the conversation that
+ * asked for it: it is one model call the user did not type and does pay for.
  */
 export type ReviseRequest = {
+  chatId: string;
   before: string;
   selection: string;
   after: string;

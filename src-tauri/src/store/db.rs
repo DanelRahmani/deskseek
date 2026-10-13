@@ -289,6 +289,17 @@ CREATE TABLE IF NOT EXISTS turn_usage (
     chat_id           TEXT NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
     run_id            TEXT NOT NULL UNIQUE,
     model             TEXT NOT NULL,
+    -- Who spent it: 'turn' for a turn the user typed (or a task ran), 'summary'
+    -- for the summariser, 'revision' for an in-place rewrite. A call the user did
+    -- not type is still a call the user paid for, so it is a row in here rather
+    -- than a number nobody sees. Added by ALTER for databases written before the
+    -- overhead calls were priced.
+    kind              TEXT NOT NULL DEFAULT 'turn',
+    -- Whether the money on this row is known. An endpoint with no published rate
+    -- records its tokens with this 0: the tokens happened, the price did not, and
+    -- a bill that quietly drops them would be the second, quieter story this
+    -- table exists to prevent.
+    priced            INTEGER NOT NULL DEFAULT 1,
     -- API round-trips inside this turn: 3 means two tool loops and a final answer.
     rounds            INTEGER NOT NULL DEFAULT 1,
     prompt_tokens     INTEGER NOT NULL DEFAULT 0,
@@ -480,6 +491,17 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // Tagging a turn with the scheduled task that started it arrived with 8.6.
     // NULL for every existing row, which is right: they were all typed by hand.
     let _ = conn.execute("ALTER TABLE turn_usage ADD COLUMN task_id TEXT", []);
+    // Saying who spent a row, and whether its price is known, arrived with 9.5.
+    // Every existing row is a turn the user typed with a price we do publish,
+    // which is exactly what the two defaults say.
+    let _ = conn.execute(
+        "ALTER TABLE turn_usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'turn'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE turn_usage ADD COLUMN priced INTEGER NOT NULL DEFAULT 1",
+        [],
+    );
     // A project's own instruction blocks arrived with 2.7. An older database
     // gets an empty array, which is exactly "no project rules yet".
     let _ = conn.execute(
@@ -2416,12 +2438,25 @@ pub fn size_bytes(conn: &Connection) -> u64 {
 
 // ------------------------------------------------------------ usage history
 
+/// Who spent a row in `turn_usage`. Bare strings, like the decision log's three
+/// words: they are the schema, and they only ever cross to the UI.
+pub const TURN: &str = "turn";
+pub const SUMMARY: &str = "summary";
+pub const REVISION: &str = "revision";
+
 /// One API round's usage, as the agent loop hands it over.
 ///
 /// `rounds` is 1 for a normal call: the caller adds one round at a time and the
 /// store accumulates, so it never has to hold the whole turn in memory.
+///
+/// `kind` says who spent it — `turn`, `summary`, `revision` — and `priced` says
+/// whether the money is known. An endpoint with no published rate still records
+/// its tokens, with `priced: false`, because a bill that silently drops them is
+/// the second, quieter story this table exists to prevent.
 pub struct TurnUsage<'a> {
     pub model: &'a str,
+    pub kind: &'a str,
+    pub priced: bool,
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub cache_hit_tokens: u32,
@@ -2448,9 +2483,9 @@ pub fn record_turn_usage(
 ) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO turn_usage
-             (id, chat_id, run_id, model, rounds, prompt_tokens, completion_tokens,
+             (id, chat_id, run_id, model, kind, priced, rounds, prompt_tokens, completion_tokens,
               cache_hit_tokens, cache_miss_tokens, cost_usd, task_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(run_id) DO UPDATE SET
              rounds            = rounds + 1,
              prompt_tokens     = prompt_tokens + excluded.prompt_tokens,
@@ -2459,12 +2494,15 @@ pub fn record_turn_usage(
              cache_miss_tokens = cache_miss_tokens + excluded.cache_miss_tokens,
              cost_usd          = cost_usd + excluded.cost_usd,
              model             = excluded.model,
+             priced            = MIN(priced, excluded.priced),
              task_id           = COALESCE(excluded.task_id, task_id)",
         params![
             uuid::Uuid::new_v4().to_string(),
             chat_id,
             run_id,
             round.model,
+            round.kind,
+            round.priced as i64,
             round.prompt_tokens,
             round.completion_tokens,
             round.cache_hit_tokens,
@@ -2547,7 +2585,25 @@ pub struct DaySpend {
 pub struct ModelSpend {
     pub model: String,
     pub cost_usd: f64,
+    /// How many rows — a turn, a summary, a revision.
     pub turns: i64,
+    /// False when any row of this model was never priced, so the panel can say
+    /// the money is unknown rather than presenting a part-sum as the whole bill.
+    pub priced: bool,
+}
+
+/// Who spent it: the turns the user typed, the summaries, the in-place
+/// revisions. Together these *are* the total, which is what makes the note "every
+/// spender is on the bill" checkable rather than a promise.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KindSpend {
+    /// `turn` | `summary` | `revision`
+    pub kind: String,
+    pub cost_usd: f64,
+    pub calls: i64,
+    /// False when a call of this kind could not be priced.
+    pub priced: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2590,6 +2646,10 @@ pub struct SpendReport {
     /// By section, and together they *are* the totals above — which is the whole
     /// reason the panel can draw them as slices.
     pub sections: Vec<SectionTokens>,
+    /// By who spent it, and together these are `total_usd` — the turns the user
+    /// typed, the summaries and the revisions, so a call the user did not type is
+    /// visible rather than folded into a figure nobody can explain.
+    pub kinds: Vec<KindSpend>,
 }
 
 /// One hour of the local day, and how many turns began in it.
@@ -2695,7 +2755,7 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
 
     let models = {
         let mut stmt = conn.prepare(
-            "SELECT model, SUM(cost_usd), COUNT(*) FROM turn_usage WHERE created_at >= ?1
+            "SELECT model, SUM(cost_usd), COUNT(*), MIN(priced) FROM turn_usage WHERE created_at >= ?1
              GROUP BY model ORDER BY SUM(cost_usd) DESC",
         )?;
         let rows = stmt.query_map([since], |r| {
@@ -2703,6 +2763,23 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
                 model: r.get(0)?,
                 cost_usd: r.get(1)?,
                 turns: r.get(2)?,
+                priced: r.get::<_, i64>(3)? != 0,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    let kinds = {
+        let mut stmt = conn.prepare(
+            "SELECT kind, SUM(cost_usd), COUNT(*), MIN(priced) FROM turn_usage WHERE created_at >= ?1
+             GROUP BY kind ORDER BY SUM(cost_usd) DESC, kind",
+        )?;
+        let rows = stmt.query_map([since], |r| {
+            Ok(KindSpend {
+                kind: r.get(0)?,
+                cost_usd: r.get(1)?,
+                calls: r.get(2)?,
+                priced: r.get::<_, i64>(3)? != 0,
             })
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -2760,6 +2837,7 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
         models,
         chats,
         sections,
+        kinds,
     })
 }
 
@@ -3943,6 +4021,8 @@ mod tests {
                 &uuid::Uuid::new_v4().to_string(),
                 &TurnUsage {
                     model: "m",
+                    kind: TURN,
+                    priced: true,
                     prompt_tokens: 10,
                     completion_tokens: 5,
                     cache_hit_tokens: 0,
@@ -4106,6 +4186,8 @@ mod tests {
     fn round(model: &str, prompt: u32, completion: u32, cost: f64) -> TurnUsage<'_> {
         TurnUsage {
             model,
+            kind: TURN,
+            priced: true,
             prompt_tokens: prompt,
             completion_tokens: completion,
             cache_hit_tokens: 0,
@@ -4385,6 +4467,7 @@ mod tests {
                 model: "flash".into(),
                 cost_usd: 1.25,
                 turns: 3,
+                priced: true,
             }],
             chats: vec![ChatSpend {
                 chat_id: "chat-1".into(),
@@ -4398,6 +4481,12 @@ mod tests {
                 prompt_tokens: 900,
                 completion_tokens: 60,
             }],
+            kinds: vec![KindSpend {
+                kind: TURN.into(),
+                cost_usd: 1.25,
+                calls: 3,
+                priced: true,
+            }],
         };
 
         let value = serde_json::to_value(&report).unwrap();
@@ -4407,6 +4496,8 @@ mod tests {
         assert_eq!(value["days"][0]["costUsd"], serde_json::json!(1.25));
         assert_eq!(value["chats"][0]["chatId"], serde_json::json!("chat-1"));
         assert_eq!(value["sections"][0]["promptTokens"], serde_json::json!(900));
+        assert_eq!(value["kinds"][0]["costUsd"], serde_json::json!(1.25));
+        assert_eq!(value["models"][0]["priced"], serde_json::json!(true));
         assert_camel_case_keys(&value, "report");
 
         // The recap is the same family under the same rule, and its `hours` array
@@ -4449,6 +4540,8 @@ mod tests {
                 &uuid::Uuid::new_v4().to_string(),
                 &TurnUsage {
                     model: "m",
+                    kind: TURN,
+                    priced: true,
                     prompt_tokens: prompt,
                     completion_tokens: completion,
                     cache_hit_tokens: 0,
@@ -4489,6 +4582,65 @@ mod tests {
             report.completion_tokens,
         );
         assert_eq!(report.sections.iter().map(|s| s.turns).sum::<i64>(), report.turns);
+    }
+
+    #[test]
+    fn an_overhead_call_is_on_the_same_bill_as_the_turn_that_caused_it() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        // One turn, and the summary the automatic fold made of it: two rows, one
+        // bill. Round numbers, so the expectations below are sums of literals.
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 100, 20, 0.5), None).unwrap();
+        let overhead = |model: &'static str, kind: &'static str, priced: bool, prompt: u32| TurnUsage {
+            model,
+            kind,
+            priced,
+            prompt_tokens: prompt,
+            completion_tokens: 10,
+            cache_hit_tokens: 0,
+            cache_miss_tokens: prompt,
+            cost_usd: if priced { 0.2 } else { 0.0 },
+        };
+        record_turn_usage(&conn, &chat.id, "summary:abc", &overhead("m", SUMMARY, true, 40), None)
+            .unwrap();
+
+        let report = spend_report(&conn, 0, 10).unwrap();
+        // The call nobody typed is in the total and named in the split, which is
+        // the whole point of the row.
+        assert_eq!(report.total_usd, 0.7);
+        let turn_row = report.kinds.iter().find(|k| k.kind == TURN).expect("the turn");
+        let summary_row = report.kinds.iter().find(|k| k.kind == SUMMARY).expect("the summary");
+        assert_eq!((turn_row.cost_usd, turn_row.calls), (0.5, 1));
+        assert_eq!((summary_row.cost_usd, summary_row.calls), (0.2, 1));
+        // And together they *are* the total, which is what makes the split
+        // checkable rather than decorative.
+        let summed: f64 = report.kinds.iter().map(|k| k.cost_usd).sum();
+        assert!((summed - report.total_usd).abs() < 1e-9, "the kinds are the bill");
+
+        // An unpriced call is on the bill too: its tokens counted, its money
+        // unknown rather than zero, and no figure invented for it.
+        record_turn_usage(
+            &conn,
+            &chat.id,
+            "summary:def",
+            &overhead("a-model-with-no-price", SUMMARY, false, 1_000),
+            None,
+        )
+        .unwrap();
+        let report = spend_report(&conn, 0, 10).unwrap();
+        let unpriced = report
+            .models
+            .iter()
+            .find(|m| m.model == "a-model-with-no-price")
+            .expect("an unpriced model is still on the bill");
+        assert!(!unpriced.priced, "and it says the money is unknown");
+        assert_eq!(unpriced.turns, 1);
+        assert_eq!(report.prompt_tokens, 100 + 40 + 1_000);
+        assert_eq!(report.total_usd, 0.7, "an unknown price must not be counted as free money");
+        assert!(
+            !report.kinds.iter().find(|k| k.kind == SUMMARY).unwrap().priced,
+            "one unpriced summary makes the group unpriced, not averaged away"
+        );
     }
 
     #[test]
@@ -4533,6 +4685,14 @@ mod tests {
         let report = spend_report(&conn, 0, 10).unwrap();
         assert_eq!(report.turns, 1);
         assert_eq!(report.total_usd, 0.25);
+        // The `kind` and `priced` ALTERs ran on this file too: a row written
+        // through the upgraded table is a priced turn, which is what the two
+        // defaults say, and reading them back through `spend_report` is the guard
+        // that the columns really are selectable here.
+        assert_eq!(report.kinds.len(), 1);
+        assert_eq!(report.kinds[0].kind, TURN);
+        assert!(report.kinds[0].priced);
+        assert!(report.models[0].priced);
         // The chat's own title comes from the join, which also proves `chats`
         // survived the batch on this file.
         assert_eq!(report.chats[0].title, "From before usage existed");

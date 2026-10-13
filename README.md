@@ -233,11 +233,16 @@ Both sections are functional:
   real usage as every turn ends
 - **Spend** (*Spend* in the sidebar, or `/spend`) — the same figures over a window: the total,
   then a pie of **where the tokens went** per section, then a bar per day, then the same money by
-  model and by conversation. One row is written per **turn**, added to as the run goes, so a turn
-  you stopped half-way still appears for what it really spent — which is also what makes this
+  model and by conversation. One row is written per **call** — a turn, a summary, a fold, an
+  in-place rewrite — added to as the run goes, so a turn you stopped half-way still appears for
+  what it really spent, and a call nobody typed appears too rather than hiding inside a total —
+  which is also what makes this
   agree with the per-chat totals rather than telling a second, quieter story. The split is the
   half of the page that is not a bill: a coding chat that reads a lot of files burns **input** and
-  a conversation burns **output**, same total, different problem. Honest limit: prompt and
+  a conversation burns **output**, same total, different problem, and *By what spent it* names the
+  calls nobody typed — a summary, a fold, an in-place rewrite — each priced onto the same rows a
+  turn is on. A model with no published price has its tokens counted and its money marked
+  unknown, never zero: the figure is then a floor, and the panel says so. Honest limit: prompt and
   completion are billed at different rates and cached input at a fraction of fresh, so the pies
   are a picture of where the tokens went rather than what each part cost. The prices are the
   published rates for the model and the hour, so treat the money as an estimate of your bill

@@ -694,7 +694,24 @@ export interface DaySpend {
 export interface ModelSpend {
   model: string;
   costUsd: number;
+  /** How many rows: a turn, a summary, a revision. */
   turns: number;
+  /** False when a row of this model was never priced, so the money is unknown. */
+  priced: boolean;
+}
+
+/**
+ * Who spent it: the turns the user typed, the summaries and the revisions.
+ * Together these *are* the report's total, which is what makes "every spender is
+ * on the bill" checkable rather than a promise.
+ */
+export interface KindSpend {
+  /** `turn` | `summary` | `revision` */
+  kind: string;
+  costUsd: number;
+  calls: number;
+  /** False when a call of this kind could not be priced. */
+  priced: boolean;
 }
 
 export interface ChatSpend {
@@ -738,6 +755,8 @@ export interface SpendReport {
   models: ModelSpend[];
   chats: ChatSpend[];
   sections: SectionTokens[];
+  /** Together these are `totalUsd`, overhead calls included. */
+  kinds: KindSpend[];
 }
 
 /**

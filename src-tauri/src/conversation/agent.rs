@@ -1724,28 +1724,37 @@ pub async fn run(
         };
 
         let peak = models::is_peak(chrono::Utc::now());
-        if let Some(cost) = models::cost_usd(&chat.model, &outcome.usage, peak) {
+        let price = models::cost_usd(&chat.model, &outcome.usage, peak);
+        if let Some(cost) = price {
             cost_total += cost;
-            // Fold this turn's spend into the chat as it happens, so a stop or
-            // an error later in the run does not lose what was already paid for.
+        }
+        // Fold this turn's spend into the chat as it happens, so a stop or an
+        // error later in the run does not lose what was already paid for — and
+        // into the history, in the same breath, because the spend view and the
+        // chat's total are two readings of one number. The row is keyed by the
+        // run, so the rounds of this turn add up in one place.
+        //
+        // The row is written whether or not the model has a published price. An
+        // unpriced endpoint's tokens still happened; what is unknown is the money,
+        // and `priced` says so rather than letting a zero pass for free.
+        {
             let conn = state.db.lock().unwrap();
-            let _ = db::add_chat_cost(&conn, chat_id, cost);
-            // And into the history, in the same breath and under the same
-            // condition: the spend view and the chat's total are two readings of
-            // one number, and a round priced at nothing would be a silent
-            // disagreement between them. The row is keyed by the run, so the
-            // rounds of this turn add up in one place.
+            if let Some(cost) = price {
+                let _ = db::add_chat_cost(&conn, chat_id, cost);
+            }
             let _ = db::record_turn_usage(
                 &conn,
                 chat_id,
                 &run_id,
                 &db::TurnUsage {
                     model: &chat.model,
+                    kind: db::TURN,
+                    priced: price.is_some(),
                     prompt_tokens: outcome.usage.prompt_tokens,
                     completion_tokens: outcome.usage.completion_tokens,
                     cache_hit_tokens: outcome.usage.prompt_cache_hit_tokens,
                     cache_miss_tokens: outcome.usage.prompt_cache_miss_tokens,
-                    cost_usd: cost,
+                    cost_usd: price.unwrap_or(0.0),
                 },
                 task_id,
             );
@@ -2073,6 +2082,7 @@ language as the passage unless asked otherwise.";
 /// document — so it cannot rewrite the parts nobody pointed at.
 pub async fn revise_selection(
     state: &AppState,
+    chat_id: &str,
     before: &str,
     selection: &str,
     after: &str,
@@ -2100,10 +2110,13 @@ pub async fn revise_selection(
         instruction = instruction.trim()
     );
 
-    let raw = client
+    let (raw, usage) = client
         .complete(&settings.chat_model, REVISE_SYSTEM_PROMPT, &request, false)
         .await
         .map_err(|e| e.to_string())?;
+    // One call, one row: the revision is priced and written down like a turn, so
+    // a document edit cannot be the thing that spends money unseen.
+    super::record_overhead(state, chat_id, db::REVISION, &settings.chat_model, &usage);
     let text = unwrap_fence(&raw);
     if text.trim().is_empty() {
         return Err("The model returned nothing, so the document was left alone.".to_string());

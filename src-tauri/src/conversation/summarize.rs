@@ -13,6 +13,11 @@ use crate::AppState;
 /// Trim the transcript so a very long chat still summarises cheaply.
 const MAX_TRANSCRIPT_CHARS: usize = 48_000;
 
+/// The model the app summarises with — its own cheapest, because neither
+/// summarising nor folding needs reasoning. Named here so the price on the row it
+/// writes is the price of the model that was actually called.
+pub const SUMMARY_MODEL: &str = "deepseek-flash";
+
 /// The fraction of the model's window at which a run folds its own chat.
 ///
 /// Deliberately higher than the meter's warning at 0.8: the warning is free and a
@@ -235,15 +240,18 @@ pub async fn summarize_chat(
     }
 
     let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
-    let raw = client
+    let (raw, usage) = client
         .complete(
-            "deepseek-flash",
+            SUMMARY_MODEL,
             SUMMARY_SYSTEM_PROMPT,
             &transcript(&rows),
             true,
         )
         .await
         .map_err(|e| e.to_string())?;
+    // Paid for by the user, typed by nobody: onto the same bill the turns are on,
+    // so "what did this cost" has one answer rather than one per feature.
+    super::record_overhead(state, chat_id, db::SUMMARY, SUMMARY_MODEL, &usage);
 
     let mut parsed = parse_summary(&raw)?;
     let drafts: Vec<db::ProposalDraft> = std::mem::take(&mut parsed.memory)

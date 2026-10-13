@@ -15,6 +15,17 @@ interface Props {
 const RANGES = [7, 30, 90];
 
 /**
+ * Who spent a row, in words. A kind the app does not know yet is shown as its
+ * own id rather than dropped: a spender that cannot be named must still be
+ * visible, or the list stops adding up to the figure above it.
+ */
+const KIND_LABELS: Record<string, string> = {
+  turn: "Turns",
+  summary: "Summaries and folds",
+  revision: "In-place revisions",
+};
+
+/**
  * The window the panel opens on, and so the one anything outside it should
  * cover when it says "the same window the spend shows".
  */
@@ -226,7 +237,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                 {money(report.totalUsd)}
               </p>
               <p className="mt-0.5 text-[11px] text-neutral-500">
-                {report.turns} turn{report.turns === 1 ? "" : "s"} ·{" "}
+                {report.turns} call{report.turns === 1 ? "" : "s"} ·{" "}
                 {tokens(report.promptTokens)} in · {tokens(report.completionTokens)} out
               </p>
             </div>
@@ -305,11 +316,35 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                 <Row
                   key={model.model}
                   label={model.model}
-                  detail={`${model.turns} turn${model.turns === 1 ? "" : "s"}`}
-                  value={money(model.costUsd)}
+                  detail={`${model.turns} call${model.turns === 1 ? "" : "s"}`}
+                  value={model.priced ? money(model.costUsd) : "unknown"}
                 />
               ))}
             </div>
+
+            <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
+              By what spent it
+            </h3>
+            <div className="mt-1">
+              {report.kinds.map((kind) => (
+                <Row
+                  key={kind.kind}
+                  label={KIND_LABELS[kind.kind] ?? kind.kind}
+                  detail={`${kind.calls} call${kind.calls === 1 ? "" : "s"}`}
+                  value={money(kind.costUsd)}
+                />
+              ))}
+            </div>
+            {/* Said plainly rather than hidden: a call the user did not type is
+                still a call they paid for, and one with no published price is
+                counted in tokens and unknown in money — not free. */}
+            {report.kinds.some((kind) => !kind.priced) && (
+              <p className="mt-2 px-2 text-[11px] leading-relaxed text-amber-300/80">
+                Some of these calls have no published price for their model. Their tokens are
+                counted above; their money is unknown rather than guessed, so the total is a
+                floor rather than the whole bill.
+              </p>
+            )}
 
             <h3 className="mt-4 px-2 text-[11px] font-medium uppercase tracking-wide text-neutral-600">
               By conversation
@@ -319,7 +354,7 @@ export function SpendPanel({ onClose, onOpenChat }: Props) {
                 <Row
                   key={chat.chatId}
                   label={chat.title}
-                  detail={`${chat.turns} turn${chat.turns === 1 ? "" : "s"}`}
+                  detail={`${chat.turns} call${chat.turns === 1 ? "" : "s"}`}
                   value={money(chat.costUsd)}
                   onClick={() => onOpenChat(chat.chatId)}
                 />

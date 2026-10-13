@@ -110,7 +110,11 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
     setError(null);
     try {
       const window = windowAround(draft, selection.start, selection.end);
-      const replacement = await api.reviseSelection({ ...window, instruction });
+      const replacement = await api.reviseSelection({
+        chatId: artifact.chat_id,
+        ...window,
+        instruction,
+      });
       const next = patchRange(draft, selection.start, selection.end, replacement);
       setDraft(next);
       setSelection(null);

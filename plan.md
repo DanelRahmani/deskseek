@@ -1555,16 +1555,44 @@ restart is something the user can see and revoke.
   narrow thing to have said. What a mode may never do is decide it on the user's behalf.
 - **Stop**: no approval mode deletes a file without being asked.
 
-### 9.5 [S] Every spender is on the bill
+### 9.5 [S] Every spender is on the bill ✅
 - **Why**: a sub-agent, a safety review, dictation and semantic lookup all spend money, and this
   repo's own rule is that the sidebar total and the spend view are two readings of one number. A new
-  subsystem that spends invisibly breaks that rule the day it ships.
-- **Files**: `store/db.rs` (`turn_usage` gains a kind, or a parent id — the same `ALTER` habit 8.6
-  used for `task_id`); `api/models.rs` (the price of the model the sub-system calls); `commands.rs`
-  (the summariser's own spend, which is already invisible today); `SpendPanel.tsx` (the split).
-- **Test**: the sections sum to the total for a turn that includes an overhead call, and an
-  unpriced model reports unknown rather than guessing a number.
-- **Stop**: nothing can spend money without appearing on the spend view.
+  subsystem that spends invisibly breaks that rule the day it ships — and two subsystems already
+  did: the summariser and the in-place rewrite both make a real call and neither leaves a row.
+- **Files**: `store/db.rs` (`turn_usage.kind` and `turn_usage.priced`, each in the `CREATE TABLE`
+  **and** as a guarded `ALTER`; `TURN`/`SUMMARY`/`REVISION`; `TurnUsage` carrying both; `KindSpend`
+  and `SpendReport.kinds`; `ModelSpend.priced` from `MIN(priced)`); `api/client.rs` (`complete`
+  returns `(text, Usage)` — a call cannot be priced from its text); `conversation/mod.rs`
+  (`record_overhead`, the one writer for a call nobody typed, in the parent of the two modules that
+  make such calls); `conversation/summarize.rs` (`SUMMARY_MODEL`, named so the price on the row is
+  the price of the model that was called, and the row itself); `conversation/agent.rs` (the turn row
+  carries `TURN` and a price-known flag, and `revise_selection` takes a `chat_id` so its call has
+  somewhere to be billed); `commands.rs` (that `chat_id`, and the frontend's `ReviseRequest`
+  carrying it); `src/types.ts`, `SpendPanel.tsx` (*By what spent it*, and the note that an unpriced
+  call's money is unknown rather than free).
+- **Test**: `db::tests::an_overhead_call_is_on_the_same_bill_as_the_turn_that_caused_it` — a turn
+  and the summary the fold made of it are two rows in one total, `TURN` and `SUMMARY` each carry
+  their own cost and call count, and the kinds *sum* to the total, which is what makes the split
+  checkable rather than decorative. Then an unpriced model: it is still on the bill with
+  `priced: false`, its tokens are counted, its money is not added, and one unpriced row makes its
+  whole kind-group unpriced rather than averaged away. `the_spend_payload_is_camel_case_on_the_wire`
+  grew `kinds` and `priced`, because `costUsd` arriving as `cost_usd` is what took the window down
+  once before. The upgrade test on a **real temp file** now asserts a row written through the
+  upgraded table reads back as a priced turn, which is the guard that both ALTERs ran. Falsified:
+  making the kinds query drop the overhead rows (`AND kind = 'turn'`) fails it on
+  `expect("the summary")`, and restoring passes. `cargo test` 355 passed. Three deliberate deviations, all said out loud: `record_overhead` lives in
+  `conversation/mod.rs` rather than in `summarize.rs` or `agent.rs`, because both call it and
+  Rust modules cannot have two owners of one rule; the revision **had to gain a chat id** (it had
+  none, so there was no conversation to bill — the frontend already knew it from the artifact); and
+  the plan's "a split by kind" is per *call kind*, not per model kind — the model split already
+  exists beside it.
+- **Stop**: nothing can spend money without appearing on the spend view. Two honest limits named:
+  the summariser's spend is written *after* the call returns, so a process killed mid-call records
+  nothing for it (the same shape as a turn's, which is written per round for exactly this reason —
+  a non-streaming call has no rounds to write); and an unpriced model makes the window's total a
+  floor rather than the whole bill, which the panel says in words rather than leaving a zero to be
+  read as free.
 
 ### 9.6 [M] A safety pass before Auto acts
 - **Why**: Auto mode reviews nothing but a string table, and `guard.rs` says so out loud. A small

@@ -262,15 +262,20 @@ impl Client {
         })
     }
 
-    /// One non-streaming turn, used by the chat summariser. Thinking is off:
-    /// summarising does not need reasoning, and it keeps the call cheap.
+    /// One non-streaming turn, used by the chat summariser and the in-place
+    /// revision. Thinking is off: neither needs reasoning, and it keeps the call
+    /// cheap.
+    ///
+    /// The usage comes back with the text because these are calls the user did
+    /// not type and still pays for: the caller writes them onto the same bill the
+    /// turns are on, and it cannot do that from the text alone.
     pub async fn complete(
         &self,
         model: &str,
         system: &str,
         user: &str,
         json_mode: bool,
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<(String, crate::api::types::Usage)> {
         let body = serde_json::json!({
             "model": model,
             "messages": [
@@ -299,8 +304,8 @@ impl Client {
         }
 
         let parsed: CompletionResponse = resp.json().await.context("unreadable response")?;
-        parsed
-            .choices
+        let CompletionResponse { choices, usage } = parsed;
+        let text = choices
             .into_iter()
             .next()
             .and_then(|c| c.message.content)
@@ -308,7 +313,8 @@ impl Client {
                 crate::api::types::Content::Text(text) => Some(text),
                 crate::api::types::Content::Parts(_) => None,
             })
-            .ok_or_else(|| anyhow!("the model returned an empty response"))
+            .ok_or_else(|| anyhow!("the model returned an empty response"))?;
+        Ok((text, usage.unwrap_or_default()))
     }
 }
 
@@ -316,6 +322,10 @@ impl Client {
 struct CompletionResponse {
     #[serde(default)]
     choices: Vec<CompletionChoice>,
+    /// Absent only if the endpoint declines to report it; a non-streaming reply
+    /// carries it in practice.
+    #[serde(default)]
+    usage: Option<crate::api::types::Usage>,
 }
 
 #[derive(serde::Deserialize)]

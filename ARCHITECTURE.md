@@ -86,6 +86,7 @@ Changing behaviour in this app is usually changing one of these.
 | The agent loop, and the system prompt: the profile, the looked-up memory, the skills and design-system catalogue, the instructions, the project's rules | `conversation/agent.rs` |
 | When a run folds its own chat, and what a folded transcript is — the one note both `/compact` and the automatic fold go through | `conversation/summarize.rs` |
 | Model prices, which hours are off-peak, and each model's context window | `api/models.rs` |
+| Who spent a row in `turn_usage` (a turn, a summary, a revision) and whether its price is known — and the one writer for a call nobody typed | `store/db.rs`, `conversation/mod.rs` |
 | A tool's risk class, and the tool list each agent mode gets | `tools/mod.rs` |
 | What may run without asking (ask / auto / skip, and the catastrophic tier) | `tools/guard.rs` |
 | What a chat may send out — the three rungs, and which calls each one refuses | `tools/guard.rs` |
