@@ -18,11 +18,15 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
+use crate::store::db;
 use crate::store::settings::Settings;
 use crate::AppState;
 
 /// A notice for the UI. `chatId` is null for an app-level ping.
 pub const EVENT_NOTIFY: &str = "chat-notify";
+
+/// Tells the UI which conversation to open, after a toast was clicked.
+pub const EVENT_NOTIFY_OPEN: &str = "notify-open";
 
 /// Whether the main window is in front of the user.
 fn is_focused(app: &AppHandle) -> bool {
@@ -98,6 +102,47 @@ pub fn ping(app: &AppHandle, state: &AppState, chat_id: Option<&str>, title: &st
         // not break the run that wanted to say something.
         eprintln!("could not show a notification: {err}");
     }
+    // What a focus should open, if it arrives hot on this toast's heels. Set to
+    // None for an app-level ping — a reminder has nowhere to go, and must not
+    // leave an older toast's route lying about to be triggered instead.
+    *state.pending_open.lock().unwrap() = chat_id.map(|id| (id.to_string(), db::now_ts()));
+}
+
+/// How long a raised toast can still route a focus.
+///
+/// The notification plugin reports no click, so the route is reconstructed: on
+/// Windows, clicking a toast brings the window to the front, and a focus that
+/// arrives soon after a toast is read as that click. This is the ceiling on
+/// "soon" — a focus arriving later opens nothing, so alt-tabbing back an hour
+/// later cannot drag the user into an old conversation.
+///
+/// ponytail: a click action on the plugin itself is the upgrade path, and would
+/// replace the guess rather than tune it.
+pub const OPEN_GRACE_SECS: i64 = 120;
+
+/// The chat a focus should open, given what was last notified and the time now.
+///
+/// Pure, so the boundary is a test rather than a reading of control flow. Nothing
+/// pending, no chat, an empty id, a stamp from the future (a clock change) and a
+/// stamp older than the grace all mean "open nothing".
+pub fn route_to_open(pending: Option<(&str, i64)>, now: i64) -> Option<String> {
+    let (chat_id, at) = pending?;
+    if chat_id.is_empty() || at > now || now - at > OPEN_GRACE_SECS {
+        return None;
+    }
+    Some(chat_id.to_string())
+}
+
+/// Consumes the pending route, if any, for a focus that has just happened.
+///
+/// Taken rather than read: one focus answers one toast, and a route left in place
+/// would open the same conversation again on the next focus.
+pub fn take_open_target(state: &AppState) -> Option<String> {
+    let pending = state.pending_open.lock().unwrap().take();
+    route_to_open(
+        pending.as_ref().map(|(id, at)| (id.as_str(), *at)),
+        db::now_ts(),
+    )
 }
 
 /// A nudge to get up, from the reminder ticker.
@@ -190,5 +235,26 @@ mod tests {
         // touching the times that are stored.
         s.quiet_hours = false;
         assert!(wants_toast(&s, false, at(22, 0)));
+    }
+
+    #[test]
+    fn only_a_fresh_toast_routes_a_focus() {
+        let now = 1_000_000;
+        // A toast a moment ago: the focus is read as its click.
+        assert_eq!(route_to_open(Some(("chat-1", now)), now), Some("chat-1".to_string()));
+        assert_eq!(
+            route_to_open(Some(("chat-1", now - OPEN_GRACE_SECS)), now),
+            Some("chat-1".to_string()),
+            "the last second of the grace still counts"
+        );
+
+        // One second past it, an old conversation must not open.
+        assert_eq!(route_to_open(Some(("chat-1", now - OPEN_GRACE_SECS - 1)), now), None);
+        // Nothing pending is the ordinary case: every focus, most of the time.
+        assert_eq!(route_to_open(None, now), None);
+        // An app-level ping records no chat, and a clock that moved backwards
+        // must not be read as a click either.
+        assert_eq!(route_to_open(Some(("", now)), now), None);
+        assert_eq!(route_to_open(Some(("chat-1", now + 1)), now), None);
     }
 }

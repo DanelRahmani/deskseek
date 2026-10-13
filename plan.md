@@ -1362,13 +1362,21 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   empty, which is what stops a row of zero-height bars being drawn. `cargo test` 345 passed.
 - **Stop**: a week's shape is readable, and its numbers agree with the spend view.
 
-### 8.11 [S] A notification that takes you to the thing
+### 8.11 [S] ✅ A notification that takes you to the thing
 - **Why**: a toast that says a task finished and cannot open it is half a feature. The hard half is
   already done, because the park queue can be answered from the Scheduled panel.
-- **Files**: `notify.rs` (carry a target), `lib.rs` (focus the window), `App.tsx` (open the chat, or
-  the park item).
-- **Test**: mostly `docs/E2E-CHECKLIST.md`, because this needs a real toast and a real focus change;
-  leave a unit test for the route argument, which is the part that can be wrong silently.
+- **Files**: `notify.rs` (`ping` records a target when it raises a toast — `EVENT_NOTIFY_OPEN`,
+  `OPEN_GRACE_SECS`, `route_to_open`, `take_open_target`); `lib.rs` (`AppState.pending_open`, and a
+  window-event handler that reads a focus arriving after a toast as a click on it); `src/types.ts`
+  (`NotifyOpenEvent`); `src/api.ts` (`onNotifyOpen`); `App.tsx` (its own effect, registered after
+  `selectChat`, that opens the chat the toast was about).
+- **Test**: `notify::tests::only_a_fresh_toast_routes_a_focus` — the target survives, a focus after
+  the grace expires is an ordinary alt-tab and routes nothing, and taking it twice yields nothing
+  the second time. The click itself is on the E2E checklist, with the quiet-hour reminder, because a
+  real toast and a real focus change cannot be built in a unit test. `cargo test` 346 passed.
+  The route is reconstructed from a focus rather than a click: `tauri-plugin-notification` 2.6
+  reports no activation callback (checked in its source), so a plugin-level click action is the
+  upgrade path, and the ceiling is named in a `ponytail:` note on `route_to_open`.
 - **Stop**: clicking a finish opens the conversation that finished.
 
 ### 8.12 [S] `@` and `$` in the composer

@@ -120,6 +120,17 @@ export interface NotifyEvent {
   body: string;
 }
 
+/**
+ * The window came to the front right after a toast, so this is what it was about.
+ *
+ * The notification plugin reports no click, so this is the app's reading of one:
+ * clicking a toast focuses the window, and a focus close enough behind a toast is
+ * taken as that click.
+ */
+export interface NotifyOpenEvent {
+  chatId: string;
+}
+
 /** A scheduled task fired, so the sidebar and tabs need reloading. */
 export interface ScheduledFiredEvent {
   taskId: string;

@@ -12,6 +12,7 @@ import {
   onGuard,
   onMcpReady,
   onNotify,
+  onNotifyOpen,
   onQuestion,
   onScheduledFired,
   onShot,
@@ -621,6 +622,24 @@ export default function App() {
     },
     [showChat, loadMessages],
   );
+
+  /**
+   * A toast that was clicked: the plugin reports no click of its own, so the
+   * window's focus handler reads a focus arriving hot on a toast's heels as one
+   * and tells us which conversation the toast was about.
+   *
+   * Its own effect rather than part of the listeners above, because it is
+   * registered after `selectChat` exists — the same reason `kindRef` is a ref.
+   */
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void onNotifyOpen((e) => {
+      void selectChat(e.chatId);
+    }).then((fn) => {
+      stop = fn;
+    });
+    return () => stop?.();
+  }, [selectChat]);
 
   const newChat = useCallback(async () => {
     const chat = await api.createChat(kindRef.current);

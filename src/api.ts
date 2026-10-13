@@ -33,6 +33,7 @@ import type {
   MessageRow,
   ModelInfo,
   NotifyEvent,
+  NotifyOpenEvent,
   ParkedRequest,
   PermissionMode,
   ProjectRow,
@@ -402,6 +403,11 @@ export function onQuestion(handler: (e: QuestionEvent) => void): Promise<Unliste
 /** Something done — a `notify_user` call, or a run finishing while away. */
 export function onNotify(handler: (e: NotifyEvent) => void): Promise<UnlistenFn> {
   return listen<NotifyEvent>("chat-notify", (event) => handler(event.payload));
+}
+
+/** A toast was clicked, as far as the app can tell: open this conversation. */
+export function onNotifyOpen(handler: (e: NotifyOpenEvent) => void): Promise<UnlistenFn> {
+  return listen<NotifyOpenEvent>("notify-open", (event) => handler(event.payload));
 }
 
 /** A scheduled task fired, in a chat the sidebar may not know about yet. */

@@ -219,6 +219,11 @@ nothing, or throws.
 - [ ] A scheduled run that has to ask something — an approval it can never get automatically, or
       an `ask_user` question — raises a notification and marks the chat, rather than waiting
       invisibly in a chat nobody has opened
+- [ ] A toast raised while the window was in the background opens that conversation when the toast
+      is clicked: Windows brings the window to the front, and the app reads a focus arriving within
+      two minutes of a toast as the click. Alt-tabbing back later must open nothing
+- [ ] A break reminder arrives after the interval set in *Settings → Tools*, and inside quiet hours
+      the toast is held back while the in-app notice still appears
 
 ## Two panes
 

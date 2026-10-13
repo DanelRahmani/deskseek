@@ -48,6 +48,10 @@ pub struct AppState {
     pub computer: tools::desktop::Gate,
     /// Long-running, so it waits on an async lock rather than blocking the UI.
     pub mcp: Arc<tokio::sync::RwLock<mcp::McpManager>>,
+    /// The conversation the last toast was about, and when it was raised. Written
+    /// by `notify.rs` and consumed by the window's focus handler, which is how a
+    /// clicked toast opens what it was about — see `notify::take_open_target`.
+    pub pending_open: Mutex<Option<(String, i64)>>,
 }
 
 /// One tick of the scheduler: fire whatever is due.
@@ -174,6 +178,7 @@ pub fn run() {
                 browser: tools::browser::Browser::default(),
                 computer: tools::desktop::Gate::default(),
                 mcp: mcp_manager.clone(),
+                pending_open: Mutex::new(None),
             });
 
             // Ctrl+Alt+Esc stops everything that touches the desktop, including a
@@ -246,6 +251,22 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // A clicked toast brings the window to the front, and that focus is the
+            // only signal the notification plugin gives us — it reports no click of
+            // its own. So a focus arriving within the grace of a toast is read as
+            // that click and opens what the toast was about; anything else is an
+            // ordinary alt-tab and does nothing.
+            if !matches!(event, tauri::WindowEvent::Focused(true)) {
+                return;
+            }
+            let Some(state) = window.app_handle().try_state::<AppState>() else {
+                return;
+            };
+            if let Some(chat_id) = notify::take_open_target(&state) {
+                let _ = window.emit(notify::EVENT_NOTIFY_OPEN, serde_json::json!({ "chatId": chat_id }));
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,

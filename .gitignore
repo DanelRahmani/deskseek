@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Scratch commit message, written by the item loop — never part of a commit.
+.gitcommitmsg
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

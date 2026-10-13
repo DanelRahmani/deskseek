@@ -24,6 +24,7 @@ one.
 - A passage of an artifact can be rewritten in place: select it in the editor, say how it should change, and it lands as a new version
 - Break reminders on an interval you choose, and quiet hours that hold popups back without hiding the in-app notice
 - The spend panel gained *The shape of it*: turns per day drawn as a chart, the busiest day and the peak hour, from the same rows as the bill
+- Clicking a notification opens the conversation it was about
 
 ## 0.4.0 — 2026-10-12
 
