@@ -236,6 +236,29 @@ nothing, or throws.
 - [ ] A break reminder arrives after the interval set in *Settings → Tools*, and inside quiet hours
       the toast is held back while the in-app notice still appears
 
+### Triggers
+
+- [ ] A new task set to *When a file changes* on a folder says *armed — waiting for a change* on
+      its first look, without starting a run
+- [ ] Dropping a file matching the filter into that folder starts a run within one interval; a file
+      that does not match the filter does not
+- [ ] Adding fifty files inside one interval starts **one** run, not fifty
+- [ ] Touching a file that did not change (same name, same second) does not start another run
+- [ ] A *git* task pointed at a repository fires when that ref moves, and not on an unrelated commit
+- [ ] A *page* task with a word to look for fires when the page comes to say it, and not on a poll
+      where it already said it; one with no word fires on any change to the text
+- [ ] A task pointed at a folder that does not exist shows *could not check: …* on its row instead
+      of sitting silently at "nothing to report"
+- [ ] A trigger that flaps — changed on every look — starts at most six runs in an hour, and the row
+      says the cap is what is holding it back
+- [ ] Closing the app, changing the watched folder, and reopening starts at most **one** run rather
+      than replaying every interval it spent closed
+- [ ] Editing a trigger's target re-arms it: the row goes back to *armed* and the next look does not
+      fire on the difference between the old folder and the new one
+- [ ] Pausing a trigger stops it being woken by a server event as well as being polled
+- [ ] An *MCP event* task shows *Waiting on <server>* rather than a next-check time, and never a date
+      far in the future
+
 ## Two panes
 
 - [ ] *Split* shows two conversations; the divider drags and resizes
@@ -505,6 +528,8 @@ the parts only a person can see.
 - [ ] A server returning an image gives a result saying it was returned and is not shown; the
       reply does not describe a picture the user cannot see
 - [ ] Stopping the app leaves no orphaned child process — and so does killing it from Task Manager
+- [ ] A task set to *When a server sends something* wakes and starts a run when that server pushes
+      a notification it was subscribed to, and does not when it was not subscribed to that method
 
 ## Quick entry
 

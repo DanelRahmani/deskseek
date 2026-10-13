@@ -11,11 +11,14 @@ below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, an
 which of it is worth having here) is
 [`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is done and
 committed too, still local and unreleased with Phase 8's, and so is **Phase 10 (10.1, 10.2,
-10.4 and 9.2)** — three phases and twenty-five commits sitting on top of `origin/main`, and
-nothing in any of them has been in a real window yet. Phase 10's other archive item, **9.4**,
-is deliberately not here: it is "V1 once 6.3 exists", and 6.3 — `recorder.rs`, reached through
-6.2's plugin bundles — does not. The next release is **0.5.0**, and `CHANGELOG.md`'s top section
-is what its tag will print.
+10.4 and 9.2)** and **Phase 11 (7.2, 7.3 and 3.3)** — four phases and twenty-nine commits sitting on
+top of `origin/main`, and nothing in any of them has been in a real window yet. Phase 10's other
+archive item, **9.4**, is deliberately not here: it is "V1 once 6.3 exists", and 6.3 — `recorder.rs`,
+reached through 6.2's plugin bundles — does not. One commit in Phase 11 covers two items, **7.3 and
+3.3 together**, because they are the same enum, the same form and the same panel row: splitting them
+would have meant hand-reverting a file twice, and a commit that does not build is a worse break of the
+one-item rule than a commit that names two items. The next release is **0.5.0**, and `CHANGELOG.md`'s
+top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -28,7 +31,10 @@ cannot be reached. Only a window can confirm them; none is reachable from
 `cargo test`. Phase 10 added twenty-three more, and they are the least reachable of
 the lot: a global chord pressed from inside another application, a window that is
 photographed, a tray whose left click brings the window back, and a browser whose
-console and network log only exist while a real page is running.
+console and network log only exist while a real page is running. Phase 11 added
+thirteen, and they are the least reachable yet: a folder that has to be written to
+while the app watches it, a page that has to change, and a server that has to push
+something it almost certainly never pushes.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
