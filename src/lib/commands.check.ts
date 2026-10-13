@@ -6,7 +6,7 @@
  * A palette that hides a command the user typed — or ranks a worse match first —
  * fails silently: the list simply looks wrong, and nothing says why.
  */
-import { buildPalette, matchPalette } from "./commands.ts";
+import { buildPalette, composerOffer, matchMentions, matchPalette } from "./commands.ts";
 
 function assert(ok: boolean, message: string): void {
   if (!ok) throw new Error(`FAIL: ${message}`);
@@ -94,5 +94,62 @@ assert(mixed[0].id === "label", "a label match outranks a hint match");
 
 // No match is an empty list, not everything.
 assert(matchPalette(items, "zzzznope").length === 0, "no match means nothing");
+
+// The composer's own menus. A `/` command owns the whole box; `@` and `$` are
+// mentions inside a sentence, so only the word being typed has to be one.
+const offer = (draft: string) => {
+  const found = composerOffer(draft);
+  if (!found) throw new Error(`FAIL: ${JSON.stringify(draft)} should offer a menu`);
+  return found;
+};
+assert(offer("/").scope === "command", "a lone slash opens the commands");
+assert(offer("/p:stand").query === "/p:stand", "and is filtered on what follows it");
+assert(composerOffer("/export now") === null, "a command with a space in it is text");
+assert(offer("read @App.tsx").scope === "file", "a mention works mid-sentence");
+assert(offer("read @App.tsx").query === "App.tsx", "and is filtered on the name");
+assert(offer("@").scope === "file", "a bare marker lists its whole scope");
+assert(offer("@").query === "", "which filters on nothing, so everything is in it");
+assert(offer("$deploy").scope === "skill", "a dollar is a skill");
+// The marker nearest the cursor is the one being typed.
+assert(offer("@a $b").scope === "skill", "the last marker wins");
+assert(offer("@a $b").query === "b", "and it is filtered on itself");
+// A marker that is not one of ours is ordinary text, in the composer as in the
+// palette: a menu that opens on a guess is worse than no menu.
+assert(composerOffer("!files") === null, "an unknown marker opens nothing");
+assert(composerOffer("read #note") === null, "nor does one mid-sentence");
+assert(composerOffer("what is 2 + 2") === null, "and plain text is plain text");
+
+// The two mention menus are the palette's ranking over a list the caller built.
+const fileItems = [
+  { id: "src/App.tsx", label: "src/App.tsx", hint: "File" },
+  { id: "src/lib/app.test.ts", label: "src/lib/app.test.ts", hint: "File" },
+  { id: "src/lib", label: "src/lib", hint: "Folder" },
+];
+assert(matchMentions(fileItems, "").length === 3, "a bare @ lists the whole scope");
+assert(matchMentions(fileItems, "app")[0].id === "src/App.tsx", "a file is found by name");
+assert(matchMentions(fileItems, "lib").some((i) => i.id === "src/lib"), "a folder too");
+assert(matchMentions(fileItems, "zzz").length === 0, "a name that is not there is not offered");
+// The path is what is searched, so a file is reachable from a word in its folder.
+assert(matchMentions(fileItems, "src/app")[0].id === "src/App.tsx", "part of a path finds it");
+// A path that begins with the query outranks one that merely contains it.
+const rankedFiles = matchMentions(
+  [
+    { id: "docs/readme-old.md", label: "docs/readme-old.md", hint: "File" },
+    { id: "README.md", label: "README.md", hint: "File" },
+  ],
+  "readme",
+);
+assert(rankedFiles[0].id === "README.md", "the path that starts with the query comes first");
+// A skill is searched by its id and by the name it goes by.
+const skillItems = [{ id: "deploy-notes", label: "deploy-notes", hint: "Deploy notes — the release checklist" }];
+assert(matchMentions(skillItems, "deploy-no")[0].id === "deploy-notes", "a skill is found by its id");
+assert(matchMentions(skillItems, "checklist")[0].id === "deploy-notes", "and by what it is for");
+
+// A mention fills the box rather than sending it. The caller can tell the two
+// apart because the scope is not `command` — the rule the prompt library set for
+// `/p:`, which fills the box for the same reason.
+const fileOffer = offer("@App");
+assert(fileOffer.scope !== "command", "a mention is not a command, so nothing is sent");
+assert(matchMentions(fileItems, fileOffer.query)[0].id === "src/App.tsx", "and resolves to a path");
 
 console.log("commands.check.ts: all checks passed");

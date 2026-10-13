@@ -12,7 +12,11 @@ import type {
   PromptView,
   QuestionEvent,
   ToolRun,
+  TreeEntry,
 } from "../types";
+import { api } from "../api";
+import { composerOffer, matchMentions } from "../lib/commands";
+import type { PaletteItem } from "../lib/commands";
 import { loadDraft, saveDraft } from "../lib/draft";
 import { tasksFrom } from "../lib/tasks";
 import { buildTranscript, windowTranscript, TRANSCRIPT_WINDOW } from "../lib/transcript";
@@ -272,27 +276,102 @@ export function ChatView({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const commandQuery = draft.startsWith("/") && !draft.includes(" ") ? draft : null;
+  const offer = composerOffer(draft);
+  const scope = offer?.scope ?? null;
+  const query = offer?.query ?? "";
+  // The `@` and `$` lists are read when their menu opens, not on every render:
+  // one is a walk of the folder, the other a round trip to the backend. `scope`
+  // in the state is what keeps the file list from flashing in the skill menu
+  // while the other one is still loading.
+  const [mentions, setMentions] = useState<{ scope: string; items: PaletteItem[] } | null>(null);
+  useEffect(() => {
+    if (!chat || scope === null || scope === "command") return;
+    let alive = true;
+    const timer = window.setTimeout(
+      () => {
+        const file = (entry: TreeEntry): PaletteItem => ({
+          id: entry.path,
+          label: entry.path,
+          hint: entry.isDir ? "Folder" : "File",
+        });
+        // A file is searched by name over the whole folder, so one three levels
+        // down is reachable without walking to it; a one-letter query is not
+        // worth a walk of the tree, so it lists the top of it instead.
+        const read: Promise<PaletteItem[]> =
+          scope === "skill"
+            ? api.listSkills(chat.id).then((list) =>
+                list.map((skill) => ({
+                  id: skill.id,
+                  label: skill.id,
+                  hint: `${skill.name} — ${skill.description}`,
+                })),
+              )
+            : (query.trim().length >= 2
+                ? api.findInTree(chat.id, query.trim())
+                : api.listTree(chat.id, null).then((listing) => listing.entries)
+              ).then((entries) => entries.map(file));
+        read
+          .then((items) => {
+            if (alive) setMentions({ scope, items });
+          })
+          // An unreadable folder is an empty menu rather than a banner over the
+          // composer: a mention is a convenience, and the box still works.
+          .catch(() => {
+            if (alive) setMentions({ scope, items: [] });
+          });
+      },
+      // Long enough that typing a path does not search the disk on every letter.
+      scope === "skill" ? 0 : 150,
+    );
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [chat, scope, query]);
+
   // Saved prompts join the built-in commands in the one menu, and are told apart
   // by the `/p:` prefix. `COMMANDS` itself is the built-in list — Settings shows
   // it, so a user's own prompts must not end up in it.
-  const choices = [
-    ...COMMANDS,
-    ...prompts.map((prompt) => ({ name: `/p:${prompt.id}`, description: prompt.name })),
-  ];
-  const filtered = commandQuery
-    ? choices.filter((command) => command.name.startsWith(commandQuery.toLowerCase()))
-    : [];
+  //
+  // All three menus are the same rows — a mono name and a description — so the
+  // only difference between them is what `runCommand` does with the name.
+  const filtered = useMemo(() => {
+    const mark = scope === "file" ? "@" : "$";
+    if (scope === "file" || scope === "skill") {
+      const list = mentions?.scope === scope ? mentions.items : [];
+      return matchMentions(list, query).map((item) => ({
+        name: `${mark}${item.id}`,
+        description: item.hint,
+      }));
+    }
+    if (scope === "command") {
+      const choices = [
+        ...COMMANDS,
+        ...prompts.map((prompt) => ({ name: `/p:${prompt.id}`, description: prompt.name })),
+      ];
+      return choices.filter((command) => command.name.startsWith(query));
+    }
+    return [];
+  }, [scope, query, prompts, mentions]);
   const menuOpen = filtered.length > 0 && dismissedFor !== draft;
 
   /**
-   * A chosen menu entry. A built-in command acts and is sent; a saved prompt only
-   * fills the box, because it is text the user is about to edit — sending it
-   * unread would make `/p:` a worse version of typing.
+   * A chosen menu entry. A built-in command acts and is sent; a saved prompt and
+   * a mention only fill the box, because both are text the user is about to edit
+   * — sending `read @App.tsx` unread would make the mention a worse version of
+   * typing the path, the same way it would a prompt.
    */
   const runCommand = (name: string) => {
     setDismissedFor(null);
     setCmdIndex(0);
+    if (scope === "file" || scope === "skill") {
+      // The trailing space ends the mention, which closes this menu and lets the
+      // next one start. ponytail: a path with a space in it inserts unquoted, so
+      // the menu closes a word early; the path still reads as a path.
+      setDraft(`${draft.slice(0, draft.lastIndexOf(" ") + 1)}${name} `);
+      textareaRef.current?.focus();
+      return;
+    }
     const prompt = name.startsWith("/p:") ? prompts.find((p) => `/p:${p.id}` === name) : undefined;
     if (prompt) {
       setDraft(prompt.body);

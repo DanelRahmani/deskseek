@@ -82,6 +82,20 @@ function inScope(marker: string, item: PaletteItem): boolean {
  * that only came from the hint. Ties keep the input order, which is why the sort
  * has to be stable.
  */
+function rank(items: readonly PaletteItem[], terms: readonly string[]): PaletteItem[] {
+  const scored: { item: PaletteItem; score: number }[] = [];
+  for (const item of items) {
+    const label = item.label.toLowerCase();
+    const haystack = `${label} ${item.hint.toLowerCase()}`;
+    if (!terms.every((term) => haystack.includes(term))) continue;
+    const first = terms[0];
+    const score = label.startsWith(first) ? 0 : label.includes(first) ? 1 : 2;
+    scored.push({ item, score });
+  }
+  scored.sort((a, b) => a.score - b.score);
+  return scored.map((entry) => entry.item);
+}
+
 export function matchPalette(items: readonly PaletteItem[], query: string): PaletteItem[] {
   const trimmed = query.trim();
   const marker = trimmed.slice(0, 1);
@@ -92,17 +106,45 @@ export function matchPalette(items: readonly PaletteItem[], query: string): Pale
   if (terms.length === 0) {
     return scoped ? items.filter((item) => inScope(marker, item)) : items.slice();
   }
+  return rank(
+    scoped ? items.filter((item) => inScope(marker, item)) : items,
+    terms,
+  );
+}
 
-  const scored: { item: PaletteItem; score: number }[] = [];
-  for (const item of items) {
-    if (scoped && !inScope(marker, item)) continue;
-    const label = item.label.toLowerCase();
-    const haystack = `${label} ${item.hint.toLowerCase()}`;
-    if (!terms.every((term) => haystack.includes(term))) continue;
-    const first = terms[0];
-    const score = label.startsWith(first) ? 0 : label.includes(first) ? 1 : 2;
-    scored.push({ item, score });
+/** What the composer is offering: which menu, filtered on what. */
+export type ComposerOffer = { scope: "command" | "file" | "skill"; query: string };
+
+/**
+ * The menu the composer should show, or null for none.
+ *
+ * A `/` is a command and owns the whole box: it starts the text and no space has
+ * been typed yet, which is the rule the prompt library already set. `@` and `$`
+ * are mentions *inside* a sentence, so only the word being typed has to be one —
+ * that is what keeps the list up while `read @App.tsx and …` is written.
+ *
+ * A marker nobody knows (`!`, `#`) is ordinary text and opens nothing, the same
+ * rule `matchPalette` keeps for a marker that is not `>` or `@`: a menu that
+ * appears on a guess is worse than no menu.
+ */
+export function composerOffer(draft: string): ComposerOffer | null {
+  if (draft.startsWith("/") && !draft.includes(" ")) {
+    return { scope: "command", query: draft.toLowerCase() };
   }
-  scored.sort((a, b) => a.score - b.score);
-  return scored.map((entry) => entry.item);
+  const word = draft.slice(draft.lastIndexOf(" ") + 1);
+  if (word.startsWith("@")) return { scope: "file", query: word.slice(1) };
+  if (word.startsWith("$")) return { scope: "skill", query: word.slice(1) };
+  return null;
+}
+
+/**
+ * The `@` and `$` menus, over the list the caller built for that scope: a file's
+ * label is its path, so any part of it finds the file, and a skill's label is its
+ * id, so the name it goes by finds it too. The id is what gets inserted, as it is
+ * for a chat entry in the palette. A bare marker lists the whole scope, which is
+ * how a user finds out what is in there.
+ */
+export function matchMentions(items: readonly PaletteItem[], query: string): PaletteItem[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return terms.length === 0 ? items.slice() : rank(items, terms);
 }

@@ -1379,15 +1379,24 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   upgrade path, and the ceiling is named in a `ponytail:` note on `route_to_open`.
 - **Stop**: clicking a finish opens the conversation that finished.
 
-### 8.12 [S] `@` and `$` in the composer
+### 8.12 [S] ✅ `@` and `$` in the composer
 - **Why**: the composer already parses `/` commands and `/p:<id>` prompts, so the parser exists.
   ChatGPT's quick controls use `@` for context and `$` for a skill, and this is the same small
   feature reached from the same keystroke.
-- **Files**: `src/lib/commands.ts` (the parser), `src/lib/commands.check.ts` (extend it; do not grow
-  a second parser), `ChatView.tsx`.
-- **Test**: the existing check plus the new cases: a bare marker lists its whole scope, an unknown
-  marker stays text, and a mention **inserts** rather than sending, which is the rule the prompt
-  library already set.
+- **Files**: `src/lib/commands.ts` — `composerOffer` (which menu, filtered on what: `/` owns the
+  whole box as before, `@` and `$` are word-scoped mentions, an unknown marker is text),
+  `matchMentions`, and the ranking `matchPalette` already had, lifted into one `rank` both use
+  rather than copied. `src/lib/commands.check.ts` (extended, not replaced). `ChatView.tsx` (one
+  row shape for all three menus, the `@` list read from `find_in_tree`/`list_tree` and the `$` list
+  from `list_skills` when that menu opens, and the fill-don't-send branch in `runCommand`).
+- **Test**: `commands.check.ts` — an unknown marker (`!files`, `#note`) opens nothing, the marker
+  nearest the cursor wins, a bare `@`/`$` lists its whole scope, a file is found by a word in its
+  folder as well as by name, a path that begins with the query outranks one that merely contains
+  it, and a skill is found by its id and by what it is for. The check was falsified: breaking the
+  `@` branch fails it (`read @App.tsx should offer a menu`) and restoring passes. The insertion
+  itself — a mention fills the box, and the trailing space ends it — is pinned structurally: the
+  offer's scope is not `command`, which is the branch that sends. `npm run check` 15/15,
+  `cargo test` 346 passed.
 - **Stop**: a file or a skill can be referenced from the composer without leaving the keyboard.
 
 ### 8.13 [S] The log and the spend leave the app

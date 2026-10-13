@@ -175,6 +175,10 @@ Both sections are functional:
   chat shows the assembled result part by part
 - `/compact` and friends — `/help` lists the built-in commands, including `/summarise`, `/mcp`,
   `/projects`, `/artifacts`, `/scheduled` and `/export`
+- **`@` a file and `$` a skill from the composer** — `@` lists the workspace, searched by name
+  wherever the file is, and `$` lists the installed skills; either one **fills the box** rather
+  than sending, so the mention is text you are mid-sentence in. A marker that means nothing to the
+  app stays ordinary text
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
@@ -794,7 +798,8 @@ artifact and document readers; the chart contract in `src/lib/chart.ts`, so a ba
 silently stop matching its value, a pie's slice cannot stop matching its share, and a label cannot
 become markup; and the shortcut map in `src/lib/shortcuts.ts`, so a chord cannot
 silently fire for the wrong key or stop firing for the right one. Two more rules
-are the checks' own: the palette's scopes and ranking in `src/lib/commands.ts`,
+are the checks' own: the palette's scopes and ranking — and, in the same file, which menu the
+composer puts up for `/`, `@` and `$` — in `src/lib/commands.ts`,
 and the animation inventory in `src/lib/motion.check.ts` — nothing may move
 without naming the state it explains, and the reduced-motion rules have to keep
 neutralising the movement while holding the streaming caret visible.

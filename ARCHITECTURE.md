@@ -108,7 +108,7 @@ pins).
 | The transcript's window over a long chat | `src/lib/transcript.ts` |
 | Where an attachment is filed | `src/lib/filing.ts` |
 | Keyboard chords, and what they may fire while a field has focus | `src/lib/shortcuts.ts` |
-| The palette's scopes and its ranking | `src/lib/commands.ts` |
+| The palette's scopes and its ranking, and the composer's menus | `src/lib/commands.ts` |
 | Colour tokens, and the contrast the themes must keep | `src/lib/theme.ts` |
 | The file tree's rows, and what each arrow key moves | `src/lib/tree.ts` |
 | Reading one version out of the changelog | `src/lib/changelog.ts` |
