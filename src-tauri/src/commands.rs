@@ -47,10 +47,36 @@ pub fn get_settings(state: State<'_, AppState>) -> Settings {
 }
 
 #[tauri::command]
-pub fn save_settings(state: State<'_, AppState>, settings: Settings) -> Result<Settings, String> {
-    crate::store::settings::save(&state.paths.settings_file(), &settings).map_err(|e| e.to_string())?;
+pub fn save_settings(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    settings: Settings,
+) -> Result<Settings, String> {
+    // The quick-entry chord is the one setting that is a *registration* rather
+    // than a value, so changing it has to succeed before anything is written —
+    // otherwise the file would claim a chord the OS never accepted. A chord
+    // another application owns is refused by name and the old one still works.
+    let previous = state.settings.lock().unwrap().quick_chord.clone();
+    if settings.quick_chord != previous {
+        crate::quick::rebind(&app, &previous, &settings.quick_chord)?;
+    }
+    if let Err(err) = crate::store::settings::save(&state.paths.settings_file(), &settings) {
+        // Put the registration back the way it was: the file is unchanged, so
+        // the running app should match it.
+        if settings.quick_chord != previous {
+            let _ = crate::quick::rebind(&app, &settings.quick_chord, &previous);
+        }
+        return Err(err.to_string());
+    }
     *state.settings.lock().unwrap() = settings.clone();
     Ok(settings)
+}
+
+/// Raise the quick-entry window. The chord does this from inside the app; the
+/// tray and the command palette need a way in that is not a keyboard shortcut.
+#[tauri::command]
+pub fn show_quick_entry(app: AppHandle) -> Result<(), String> {
+    crate::quick::open(&app)
 }
 
 // ---------------------------------------------------------------- backup

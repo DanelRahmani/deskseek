@@ -14,10 +14,12 @@ import {
   onNotify,
   onNotifyOpen,
   onQuestion,
+  onQuickSent,
   onScheduledFired,
   onShot,
   onTool,
 } from "./api";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { pathToAttachment, toAttachment } from "./lib/attachments";
 import type {
   ApprovalEvent,
@@ -641,6 +643,39 @@ export default function App() {
     });
     return () => stop?.();
   }, [selectChat]);
+
+  /**
+   * A question asked in the quick-entry window.
+   *
+   * That window is a separate webview, so the conversation it chose may be one
+   * this window has never listed — and even when it is on screen, the answer
+   * streams into a chat nobody is looking at. Refresh the sidebar first so the
+   * row exists, open it, then come to the front: the point of asking from
+   * another application is that you get taken back to the answer.
+   */
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void onQuickSent((e) => {
+      void (async () => {
+        try {
+          await refreshChats(kindRef.current);
+          await selectChat(e.chatId);
+          if (e.error) {
+            // The turn never started, and the window that would have said so is
+            // already hidden — this is the only place left to say it.
+            setError(e.error);
+            return;
+          }
+          await getCurrentWindow().setFocus();
+        } catch (err) {
+          setError(String(err));
+        }
+      })();
+    }).then((fn) => {
+      stop = fn;
+    });
+    return () => stop?.();
+  }, [refreshChats, selectChat]);
 
   const newChat = useCallback(async () => {
     const chat = await api.createChat(kindRef.current);
@@ -1510,6 +1545,11 @@ export default function App() {
       switch (id) {
         case "new-chat":
           void newChat();
+          return;
+        case "quick-entry":
+          // The palette lives inside the main window, so this is the one route to
+          // the quick window that is not the chord.
+          void api.showQuickEntry().catch((e) => setError(String(e)));
           return;
         case "settings":
           openSettings();

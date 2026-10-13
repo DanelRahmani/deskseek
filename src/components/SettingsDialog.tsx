@@ -9,7 +9,14 @@ import { SearxngInstall } from "./SearxngInstall";
 import { MemorySection } from "./MemorySection";
 import { Icon } from "./Icon";
 import { when } from "../lib/time";
-import type { ApprovalRecord, EnvProbe, ModelInfo, Settings, ToolGrant } from "../types";
+import type {
+  ApprovalRecord,
+  EnvProbe,
+  ModelInfo,
+  QuickTarget,
+  Settings,
+  ToolGrant,
+} from "../types";
 
 /**
  * The stored "always allow" grants.
@@ -195,7 +202,8 @@ const SECTIONS: { id: SettingsSection; label: string; keywords: string }[] = [
   {
     id: "commands",
     label: "Commands",
-    keywords: "slash keyboard shortcut permission mode guard help",
+    keywords:
+      "slash keyboard shortcut quick entry window chord tray global permission mode guard help",
   },
 ];
 
@@ -1309,6 +1317,54 @@ export function SettingsDialog({
                   ))}
                 </ul>
                 <p className="mt-1 text-[11px] text-neutral-600">Ctrl works wherever Cmd does.</p>
+              </section>
+
+              <section>
+                <label className="block text-xs text-neutral-500">Quick entry</label>
+                <p className="mt-1 text-[11px] text-neutral-600">
+                  Ask something without leaving the application you are in. The chord raises a
+                  small window over whatever is on screen; the answer lands in a real
+                  conversation and the main window comes back to it.
+                </p>
+                <div className="mt-2 flex flex-wrap items-end gap-3">
+                  <label className="w-44">
+                    <span className="block text-[11px] text-neutral-500">Shortcut</span>
+                    <input
+                      className={inputCls}
+                      value={form.quickChord}
+                      placeholder="Ctrl+Alt+Space"
+                      onChange={(e) => setForm({ ...form, quickChord: e.target.value })}
+                    />
+                  </label>
+                  <label className="w-56">
+                    <span className="block text-[11px] text-neutral-500">A question goes to</span>
+                    <select
+                      className={inputCls}
+                      value={form.quickTarget}
+                      onChange={(e) =>
+                        setForm({ ...form, quickTarget: e.target.value as QuickTarget })
+                      }
+                    >
+                      <option value="last">My most recent chat</option>
+                      <option value="new">A new chat every time</option>
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void api.showQuickEntry().catch((e) => setStatus(String(e)));
+                    }}
+                    className="rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-200 hover:border-neutral-600"
+                  >
+                    Try it
+                  </button>
+                </div>
+                <p className="mt-2 text-[11px] text-neutral-600">
+                  Written like <span className="font-mono">Ctrl+Alt+Space</span>. Empty leaves it
+                  with no chord at all, which the palette can still open. A combination another
+                  application already owns is refused when you save and the one you had keeps
+                  working — with the rest of this screen unsaved, which is what refusing means.
+                </p>
               </section>
 
               <section>

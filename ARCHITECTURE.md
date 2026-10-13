@@ -65,6 +65,7 @@ to a run without knowing anything about runs:
 | `fs-changed` | `fs_watch.rs` | the workspace moved, so redraw the tree |
 | `mcp-log`, `mcp-ready` | `mcp/manager.rs` | a server's stderr; a server came up |
 | `scheduled-fired` | `commands.rs` | a scheduled task started a run |
+| `quick-sent` | `components/QuickEntry.tsx` | a question was asked from the quick-entry window and handed to a conversation, so open it |
 
 The two *parked* events are the interesting pair. An approval or a question parks
 the agent loop on a oneshot channel (`approvals.rs`, `questions.rs` — the same
@@ -105,6 +106,7 @@ Changing behaviour in this app is usually changing one of these.
 | The workspace watcher, and its refcounted roots | `fs_watch.rs` |
 | What a backup carries, and what it deliberately leaves out | `backup.rs` |
 | What the decision-and-spend export carries: the panels' own reads, digests and never arguments | `store/db.rs` |
+| The quick-entry chord: how the string in Settings becomes a shortcut the OS registers, and the one spelling that says which shortcut fired | `quick.rs` |
 
 The frontend has the same shape: a small pure module per rule, each with a
 `*.check.ts` beside it that `npm run check` runs (the README lists what each one

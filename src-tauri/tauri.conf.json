@@ -17,6 +17,19 @@
         "height": 800,
         "minWidth": 820,
         "minHeight": 560
+      },
+      {
+        "label": "quick",
+        "title": "Quick entry",
+        "width": 560,
+        "height": 132,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
       }
     ],
     "security": {

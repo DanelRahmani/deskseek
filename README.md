@@ -182,6 +182,13 @@ Both sections are functional:
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
+- **Quick entry** — a global chord (`Ctrl+Alt+Space` by default, changed in **Settings →
+  Commands**) raises a small always-on-top window over whatever you are doing, centred on the
+  monitor your pointer is on, and pressing it again puts the window away. The question goes to
+  your most recent conversation or to one of its own, whichever you choose; it is an ordinary
+  turn underneath, so the answer streams into the main window and the chat it landed in is
+  brought to the front. Honest limit: a chord another application already owns cannot be
+  registered, and that is reported where you set it rather than swallowed
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
   both sections, so a chat can be found by what was said in it rather than by its name. The
@@ -459,6 +466,14 @@ focus: in the composer it dismisses the slash-command menu and leaves the panel
 alone, and `F2` is the same — a bare key, so it acts when no field has focus. The
 map is a pure function (`src/lib/shortcuts.ts`) with its own checks, so a chord
 can never fire for the wrong key.
+
+Two chords are global rather than in-window, and so live outside that map.
+`Ctrl+Alt+Space` raises **quick entry** over whatever application you are in; its
+combination is set in **Settings → Commands**, and a combination another
+application owns is refused there when you save — the shortcut you had keeps
+working. `Ctrl+Alt+Esc` is the kill switch: it stops every run and pauses
+computer control, and it is fixed rather than configurable, because a hotkey you
+cannot find is not a means of stopping something.
 
 **Internet access** (both sections)
 

@@ -1638,6 +1638,126 @@ restart is something the user can see and revoke.
 
 ---
 
+## Phase 10: Quick entry and the desktop surfaces
+
+Planned 2026-10-14, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 9 made what the app
+does trustworthy when nobody is watching; this is the batch that makes it *reachable* — a question
+asked without leaving the application you are in, a picture of what you were looking at, a way back
+to the window after it is closed, and (the one browser item) a way to see why a page is broken. The
+archive's own reason for putting it here is the ratio: one more window, one more chord and one tray
+icon is the largest daily-habit change in the whole document for the least architecture, and all
+three competitors ship it.
+
+Two rules hold across every item, and neither is negotiable. **The quick window is the same app** —
+it calls the same `create_chat` and `send_message` the main window calls, so there is one run path
+rather than a second one that drifts. And **a chord that cannot be registered is reported**, not
+swallowed: a launcher that collides with another app is the first thing a user hits, so the failure
+has to reach the screen that set it.
+
+Order is the archive's, with one change said out loud: **9.4 (record a browser workflow) is not in
+this batch at all.** The archive marks it "V1 once 6.3 exists", and 6.3 — `recorder.rs`, reached
+through 6.2's plugin bundles — does not exist. It stays in the archive rather than becoming a dead
+line here.
+
+### 10.1 [M] Quick entry on a global chord ✅
+- **Why**: a small always-on-top window over any app, on a shortcut, is how users stop switching
+  windows to ask something. It is one extra window and one shortcut — and the pieces are already
+  here: the global-shortcut plugin is registered for the `Ctrl+Alt+Esc` kill switch, and the app
+  already reacts to a window's focus.
+- **Files**: `src-tauri/src/quick.rs` (new — the one rule for a chord: `WINDOW`, `DEFAULT_CHORD`,
+  `parse`, `label`, and `rebind`, which is what "changeable and reportable" means); `lib.rs` (the
+  chord registered beside the kill switch, the handler branch that says which shortcut fired, and
+  the `show_quick_entry` registration); `store/settings.rs` (`quick_chord`, `quick_target`, their
+  defaults and both round-trip assertions); `commands.rs` (`save_settings` rebinds before it
+  writes and puts the chord back if the write fails; `show_quick_entry`); `tauri.conf.json` (the
+  window: 560×132, undecorated, transparent, always-on-top, off the taskbar, `visible: false`);
+  `src/components/QuickEntry.tsx` (new); `src/main.tsx` (which window to render);
+  `src/lib/commands.ts` + `App.tsx` (the palette's *Quick entry*); `src/api.ts`, `src/types.ts`,
+  `SettingsDialog.tsx` (the chord, the target, *Try it*).
+- **Test**: `quick::tests` — the default parses; `Ctrl+Alt+Space`, `control+alt+space` and
+  `ctrl + alt + space` all produce the same `label`, which is the one the handler compares against;
+  a chord that is not a chord is refused by name (`Banana+Shift` is quoted back, `Ctrl+Alt` with no
+  key is refused, empty is refused); and an unparseable chord yields an **empty** label rather than
+  a panic, because the handler asks for it on every keypress and a hand-edited settings file must
+  not be able to take the app down. `store::settings::tests` gained the pair: a file with no
+  `quickChord` at all gets the default rather than an empty string (an upgrading install must not
+  lose the chord it never had to set), and a chord survives the file in both directions.
+  Falsified: making `label` return the user's text instead of the plugin's spelling
+  (`parse(chord).map(…).unwrap_or_default()` → `chord.trim().to_string()`) fails it on
+  `a_chord_is_the_same_however_it_is_spelled` and `an_unknown_chord_has_no_label_to_match_against`,
+  and restoring passes. `cargo test` 361 passed. Three things said out loud: the window is declared
+  in `tauri.conf.json` rather than built in `setup`, so it is a config it is hard to get wrong and
+  the front end can tell the two windows apart by label; the controls live in **Settings →
+  Commands** beside the keyboard list rather than in a section of their own, because the quick chord
+  *is* a keyboard shortcut; and the chord is stored as the user typed it and compared as the plugin
+  prints it, which is what makes `ctrl+alt+space` and `Ctrl+Alt+Space` the same chord in both
+  directions.
+- **Stop**: a question can be asked from inside another application without leaving it. One limit
+  named: a chord another application already owns cannot be registered, and the save is refused by
+  name rather than half-applied — the shortcut you had keeps working, and the rest of that screen
+  stays unsaved, which is what refusing means.
+
+### 10.2 [S] An Appshot from the focused window
+- **Why**: ChatGPT's Appshots bring a screenshot and the text of the frontmost window into a
+  conversation. DeskSeek has the text half (`ui_snapshot`); a picture of the window, filed into the
+  chat like any other attachment, is the missing half — and it is what makes "this error, here" a
+  question you can ask without typing the error.
+- **Files**: `src-tauri/src/tools/desktop.rs` (the capture: `remember_foreground`, `capture_focused`
+  and the pure `encode_png`), `Cargo.toml` (`png`, whose version is already resolved in the build
+  graph through `tauri-codegen`; `windows-sys` gains its GDI features), `lib.rs` (the chord
+  remembers the foreground window *before* the quick window takes focus), `commands.rs`
+  (`capture_focused_window`), `QuickEntry.tsx` (the 📷 button and the pending thumbnail),
+  `src/api.ts`, `src/types.ts`.
+- **Shape**: the identity of the window that was in front is remembered when the quick window is
+  *shown*, and the button captures *that* handle — by the time a button is clickable, our own window
+  has the focus. Windows-only, matching `ui_snapshot`'s existing honesty. The picture is written to
+  the app's own staging folder and only reaches the chat when the message is sent, through the same
+  `attach_path` a dropped file uses.
+- **Test**: `encode_png` is proved on a known buffer: a 2×2 RGBA image encodes to bytes that the
+  `png` decoder reads back at the same size with the same pixels, and a zero-sized buffer is refused
+  rather than written. The capture itself is Windows-only and needs a real window, so it is E2E.
+- **Stop**: a picture of the window you were just looking at lands in a conversation with one press.
+
+### 10.4 [S] A tray entry
+- **Why**: all three competitors ship one, and it is the natural home for the things you want when
+  the window is closed: a new chat, quick entry, and a way back. It is also the only surface that
+  exists while the window is just the tray.
+- **Files**: `Cargo.toml` (`tauri`'s `tray-icon` feature), `lib.rs` (the tray, its menu and its
+  click), `commands.rs` (`show_quick_entry`), `src/api.ts` (`onTray`), `src/App.tsx` (the action
+  switch), `src/types.ts`.
+- **Shape**: a menu — *New chat*, *Quick entry*, *Show DeskSeek*, *Quit* — with a left click on the
+  icon doing *Show DeskSeek*, matching what every tray icon on the platform does. The item is an
+  **event to the front end** rather than Rust reaching into the window: "new chat" is the same
+  function the ＋ button calls, and a second implementation of it in Rust is exactly the drift this
+  repo avoids.
+- **Test**: `the_tray_menu_is_the_four_things_the_window_can_do` — the labels and their ids as one
+  table the Rust build and the front end's switch are both checked against, so a rename on one side
+  cannot silently stop the other from matching.
+- **Stop**: the app is reachable with its window closed.
+
+### 9.2 [S] The browser's console, network and tabs
+- **Why**: Claude in Chrome reads console errors, network requests and DOM state, which is what
+  makes it useful for debugging a web app — and it is the archive's named prerequisite for every
+  later browser feature. CDP already offers all three; the browser session simply throws its events
+  away today.
+- **Files**: `src-tauri/src/tools/browser.rs` (the event collector, the three new tools and the
+  tab-aware `browser_open`), `tools/mod.rs` (the three tool records and their classes),
+  `conversation/agent.rs` (a prompt line saying they exist), `ToolStepGroup.tsx` (their labels),
+  `README.md`.
+- **Shape**: `Log.enable` and `Network.enable` are asked for once when the session starts, and the
+  session's own pump files the events it used to skip into two bounded ring buffers — bounded
+  because a network log is unbounded by nature. `browser_console` and `browser_network` are reads;
+  `browser_tabs` lists the open pages, and `browser_open` gains `new_tab`, which opens one and
+  attaches to it. Switching or closing a tab is a change to what the app is looking at, so
+  `browser_tab` is `Computer`.
+- **Test**: the shape half is pure and tested — a console entry renders with its level and text and
+  a payload it cannot print still renders; a request and its response join into one line with a
+  status; the ring buffer keeps the newest and drops the oldest; and a page-list is rendered with
+  the current tab marked.
+- **Stop**: a broken page can be explained from what it logged, not guessed at.
+
+---
+
 ## Explicitly not doing (and why)
 
 - **First-party OAuth connectors (Gmail, Drive, Calendar, Slack)**: an app registration, a

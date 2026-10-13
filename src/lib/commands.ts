@@ -21,6 +21,7 @@ export function buildPalette(
 ): PaletteItem[] {
   const items: PaletteItem[] = [
     { id: "new-chat", label: "New chat", hint: "Action" },
+    { id: "quick-entry", label: "Quick entry", hint: "Ask over whatever you are doing" },
     { id: "settings", label: "Settings", hint: "Action" },
     { id: "memory", label: "Memory", hint: "Action" },
     {

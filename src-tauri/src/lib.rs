@@ -11,6 +11,7 @@ mod memory_files;
 mod notify;
 mod prompts;
 mod questions;
+mod quick;
 mod runs;
 mod schedule;
 mod searxng;
@@ -93,9 +94,26 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, _shortcut, event| {
+                .with_handler(|app, shortcut, event| {
                     // The press is the event; the release is just the key coming up.
                     if event.state != tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        return;
+                    }
+                    // Two shortcuts are registered, so the handler has to say which
+                    // one fired. It compares the canonical spelling rather than the
+                    // user's text, so `Ctrl+Alt+Space` and `ctrl+alt+space` are the
+                    // same chord here as they are in Settings.
+                    let quick_chord = app
+                        .try_state::<AppState>()
+                        .map(|state| {
+                            let chord = state.settings.lock().unwrap().quick_chord.clone();
+                            quick::label(&chord)
+                        })
+                        .unwrap_or_default();
+                    if !quick_chord.is_empty() && shortcut.to_string() == quick_chord {
+                        if let Err(err) = quick::toggle(app) {
+                            eprintln!("could not raise the quick-entry window: {err}");
+                        }
                         return;
                     }
                     let Some(state) = app.try_state::<AppState>() else {
@@ -194,6 +212,25 @@ pub fn run() {
             );
             if let Err(err) = app.global_shortcut().register(kill_switch) {
                 eprintln!("could not register the Ctrl+Alt+Esc kill switch: {err}");
+            }
+
+            // The quick-entry chord, from the settings, registered the same way
+            // and failing the same way: a combination another application owns is
+            // reported and the app still starts — the tray and the palette are the
+            // other ways in.
+            let quick_chord = app
+                .try_state::<AppState>()
+                .map(|state| state.settings.lock().unwrap().quick_chord.clone())
+                .unwrap_or_default();
+            if !quick_chord.trim().is_empty() {
+                match quick::parse(&quick_chord) {
+                    Ok(key) => {
+                        if let Err(err) = app.global_shortcut().register(key) {
+                            eprintln!("could not register {quick_chord} for quick entry: {err}");
+                        }
+                    }
+                    Err(err) => eprintln!("{err}"),
+                }
             }
 
             // Starting MCP servers can involve downloading a package, so it
@@ -386,6 +423,7 @@ pub fn run() {
             commands::probe_environment,
             commands::computer_state,
             commands::set_computer_paused,
+            commands::show_quick_entry,
             commands::list_tree,
             commands::find_in_tree,
             commands::read_preview,

@@ -492,3 +492,17 @@ the parts only a person can see.
 - [ ] A server returning an image gives a result saying it was returned and is not shown; the
       reply does not describe a picture the user cannot see
 - [ ] Stopping the app leaves no orphaned child process — and so does killing it from Task Manager
+
+## Quick entry
+
+- [ ] `Ctrl+Alt+Space` pressed while another application has focus raises the quick window over it,
+      centred on the monitor the pointer is on, with no title bar and off the taskbar
+- [ ] Pressing the chord again puts the window away, and so does `Escape`
+- [ ] With *A question goes to* on *My most recent chat*, the question is added to that conversation
+      and the main window comes to the front showing it, with the answer streaming in
+- [ ] With it on *A new chat every time*, the question starts a conversation of its own that appears
+      in the sidebar
+- [ ] Changing the chord in *Settings → Commands* and saving registers the new one immediately and
+      stops the old one working
+- [ ] Setting the chord to one another application already owns reports that by name and leaves the
+      previous chord working, with nothing else on that screen saved

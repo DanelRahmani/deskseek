@@ -278,11 +278,29 @@ export interface Settings {
   /** Local "HH:MM". The window may wrap midnight. */
   quietFrom: string;
   quietTo: string;
+  /** The chord that raises the quick-entry window. Empty leaves it to the tray. */
+  quickChord: string;
+  /** Where a question asked in the quick window goes. */
+  quickTarget: QuickTarget;
   /** Set once the first-run setup screen has been finished or dismissed. */
   setupDone: boolean;
 }
 
 export type SandboxMode = "auto" | "host" | "docker" | "wsl";
+
+/** `last` keeps a quick question in the conversation you were reading; `new`
+ * gives each one a conversation of its own. */
+export type QuickTarget = "new" | "last";
+
+/** Sent by the quick window once it has handed a question to a conversation, so
+ * the main window can show the chat it landed in. `error` is set when the turn
+ * never started at all — the quick window is gone by then, so the failure has to
+ * reach the window that is left. */
+export interface QuickSentEvent {
+  chatId: string;
+  text: string;
+  error?: string;
+}
 
 /** Where a shell command actually runs. */
 export type SandboxRung = "host" | "docker" | "wsl";

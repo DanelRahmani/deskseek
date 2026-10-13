@@ -160,6 +160,15 @@ pub struct Settings {
     pub quiet_from: String,
     #[serde(default = "default_quiet_to")]
     pub quiet_to: String,
+    /// The chord that raises the quick-entry window. Empty leaves it to the tray
+    /// and the palette, which is the honest answer on a machine where no chord
+    /// can be registered.
+    #[serde(default = "default_quick_chord")]
+    pub quick_chord: String,
+    /// Where a quick question goes: `new` (a fresh conversation every time) or
+    /// `last` (the most recent one).
+    #[serde(default = "default_quick_target")]
+    pub quick_target: String,
     /// Set once the first-run setup screen has been finished or dismissed.
     #[serde(default)]
     pub setup_done: bool,
@@ -195,6 +204,14 @@ fn default_quiet_from() -> String {
 
 fn default_quiet_to() -> String {
     "09:00".to_string()
+}
+
+fn default_quick_chord() -> String {
+    crate::quick::DEFAULT_CHORD.to_string()
+}
+
+fn default_quick_target() -> String {
+    "last".to_string()
 }
 
 fn default_true() -> bool {
@@ -234,6 +251,8 @@ impl Default for Settings {
             quiet_hours: false,
             quiet_from: default_quiet_from(),
             quiet_to: default_quiet_to(),
+            quick_chord: default_quick_chord(),
+            quick_target: default_quick_target(),
             setup_done: false,
         }
     }
@@ -268,6 +287,11 @@ mod tests {
         assert_eq!(s.reminder_minutes, 50);
         assert_eq!(s.quiet_from, "18:00");
         assert_eq!(s.quiet_to, "09:00");
+        // Same for the quick-entry pair, which is newer still: a file with no
+        // `quickChord` at all gets the default rather than an empty string, or
+        // an upgrading install would lose the chord it never had to set.
+        assert_eq!(s.quick_chord, crate::quick::DEFAULT_CHORD);
+        assert_eq!(s.quick_target, "last");
     }
 
     #[test]
@@ -295,6 +319,15 @@ mod tests {
         assert!(back.quiet_hours);
         assert_eq!(back.quiet_from, "20:30");
         assert_eq!(back.quiet_to, "07:15");
+        // The chord is the one setting whose exact spelling matters to something
+        // outside this process, so it is the one most worth proving survives the
+        // file in both directions.
+        s.quick_chord = "Ctrl+Shift+Q".to_string();
+        s.quick_target = "new".to_string();
+        save(&path, &s).unwrap();
+        let back = load(&path);
+        assert_eq!(back.quick_chord, "Ctrl+Shift+Q");
+        assert_eq!(back.quick_target, "new");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -43,6 +43,7 @@ import type {
   PromptView,
   QuestionAnswer,
   QuestionEvent,
+  QuickSentEvent,
   Recap,
   ScheduledFiredEvent,
   ScheduledTask,
@@ -67,6 +68,8 @@ export const api = {
   backupProfile: () => invoke<string>("backup_profile"),
   /** Unpacks a profile over this one. Reload the window afterwards. */
   restoreProfile: (path: string) => invoke<void>("restore_profile", { path }),
+  /** Raise the quick-entry window — the tray's and the palette's way in. */
+  showQuickEntry: () => invoke<void>("show_quick_entry"),
   /** Sweeps the tables that grow for ever; returns what went and the size now. */
   maintainDb: () => invoke<Maintenance>("maintain_db"),
 
@@ -442,4 +445,9 @@ export function onGuard(handler: (e: GuardEvent) => void): Promise<UnlistenFn> {
 
 export function onFsChanged(handler: (e: FsEvent) => void): Promise<UnlistenFn> {
   return listen<FsEvent>("fs-changed", (event) => handler(event.payload));
+}
+
+/** A question was asked in the quick window and handed to a conversation. */
+export function onQuickSent(handler: (e: QuickSentEvent) => void): Promise<UnlistenFn> {
+  return listen<QuickSentEvent>("quick-sent", (event) => handler(event.payload));
 }
