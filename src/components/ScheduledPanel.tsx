@@ -4,8 +4,9 @@ import type { ScheduledDraft } from "../api";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { Icon, IconButton } from "./Icon";
 import { QuestionPrompt, answerFrom } from "./QuestionPrompt";
+import { money } from "./SpendPanel";
 import { when } from "../lib/time";
-import type { ParkedRequest, ProjectRow, ScheduledTask } from "../types";
+import type { ParkedRequest, ProjectRow, ScheduledTask, TaskRun } from "../types";
 
 interface Props {
   onClose: () => void;
@@ -67,6 +68,9 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const [form, setForm] = useState<ScheduledDraft>(BLANK);
   /** Runs waiting on an approval or a question, from the database. */
   const [parked, setParked] = useState<ParkedRequest[]>([]);
+  /** Which task's run history is open, if any, and what it fetched. */
+  const [runsOpen, setRunsOpen] = useState<string | null>(null);
+  const [runs, setRuns] = useState<Record<string, TaskRun[]>>({});
 
   const reload = useCallback(async () => {
     const [list, projectList, waiting] = await Promise.all([
@@ -193,6 +197,8 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
     try {
       await api.runScheduledNow(task.id);
       onChanged();
+      // The run just made a row, so an open history is now stale.
+      if (runsOpen === task.id) await loadRuns(task.id);
       setStatus(`"${task.title}" ran. Its next scheduled run is unchanged.`);
     } catch (e) {
       setStatus(String(e));
@@ -201,8 +207,26 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
     }
   };
 
-  const patch = (part: Partial<ScheduledDraft>) => setForm((prev) => ({ ...prev, ...part }));
+  /** Read a task's run history. One query when it is opened, not a poll. */
+  const loadRuns = async (taskId: string) => {
+    const fresh = await api.taskRuns(taskId);
+    setRuns((r) => ({ ...r, [taskId]: fresh }));
+  };
 
+  const toggleRuns = async (task: ScheduledTask) => {
+    if (runsOpen === task.id) {
+      setRunsOpen(null);
+      return;
+    }
+    setRunsOpen(task.id);
+    try {
+      await loadRuns(task.id);
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
+  const patch = (part: Partial<ScheduledDraft>) => setForm((prev) => ({ ...prev, ...part }));
   const needsWeekday = form.freq === "weekly" || form.freq === "monthly";
   const needsNth = form.freq === "monthly";
 
@@ -331,6 +355,58 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
               {task.enabled ? `Next: ${when(task.next_run_at)}` : "Paused"}
               {task.last_run_at ? ` · last ran ${when(task.last_run_at)}` : ""}
             </p>
+
+            <div className="mt-1 flex items-center gap-2">
+              <button
+                onClick={() => void toggleRuns(task)}
+                className="rounded px-1.5 py-0.5 text-[11px] text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-200"
+                title="What this task has actually run, and what it cost"
+              >
+                {runsOpen === task.id ? "Hide runs" : "Runs"}
+              </button>
+              {runsOpen === task.id && (runs[task.id] ?? []).length > 0 && (
+                <span className="tabular-nums text-[10px] text-neutral-600">
+                  {runs[task.id].length} run{runs[task.id].length === 1 ? "" : "s"} ·{" "}
+                  {money(runs[task.id].reduce((sum, run) => sum + run.cost_usd, 0))}
+                </span>
+              )}
+            </div>
+
+            {runsOpen === task.id && (
+              <div className="mt-1 space-y-1 rounded-lg border border-neutral-800 bg-neutral-950/60 p-2">
+                {(runs[task.id] ?? []).length === 0 ? (
+                  <p className="text-[11px] text-neutral-600">
+                    Nothing recorded yet. A run that spent nothing leaves no entry here — the same
+                    rule the spend view follows.
+                  </p>
+                ) : (
+                  (runs[task.id] ?? []).map((run) => (
+                    <div key={run.run_id} className="flex items-baseline gap-2 text-[11px]">
+                      <span className="shrink-0 text-neutral-400">{when(run.created_at)}</span>
+                      <span
+                        className="min-w-0 flex-1 truncate text-neutral-500"
+                        title={run.chat_title}
+                      >
+                        {run.chat_title || "chat deleted"}
+                      </span>
+                      {run.chat_title && (
+                        <button
+                          onClick={() => onOpenChat(run.chat_id)}
+                          className="shrink-0 text-sky-400 transition hover:text-sky-300"
+                          title="Open the conversation this run happened in"
+                        >
+                          open
+                        </button>
+                      )}
+                      <span className="shrink-0 tabular-nums text-neutral-400">
+                        {money(run.cost_usd)}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
             <p className="mt-1 line-clamp-3 text-[11px] text-neutral-600" title={task.prompt}>
               {task.prompt}
             </p>

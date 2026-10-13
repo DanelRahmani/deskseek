@@ -49,6 +49,7 @@ import type {
   SkillImport,
   SkillView,
   SpendReport,
+  TaskRun,
   ToolGrant,
   ToolEvent,
   ToolLog,
@@ -291,6 +292,12 @@ export const api = {
   deleteScheduled: (id: string) => invoke<void>("delete_scheduled", { id }),
   /** Run a task now without moving when it next runs on its own. */
   runScheduledNow: (id: string) => invoke<string>("run_scheduled_now", { id }),
+  /**
+   * A task's recent runs, newest first — read from the same `turn_usage` rows the
+   * spend view sums, so what a task has done and what it cost cannot disagree.
+   */
+  taskRuns: (taskId: string, limit?: number) =>
+    invoke<TaskRun[]>("task_runs", { taskId, limit: limit ?? null }),
 
   /** What the last `days` of turns cost, grouped by day, model and chat. */
   spendReport: (days: number) => invoke<SpendReport>("spend_report", { days }),

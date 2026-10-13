@@ -1454,6 +1454,11 @@ async fn run_tool(
 /// `unattended` marks a run started by the scheduler rather than by the user:
 /// it can still ask for approval, but it says so through a notification instead
 /// of waiting in silence.
+///
+/// `task_id` is the scheduled task this run belongs to, when there is one. It is
+/// written onto the run's `turn_usage` row and nothing else reads it here, so the
+/// Scheduled panel can list what a task has run and what it has cost from the
+/// same rows the spend view sums.
 pub async fn run(
     app: AppHandle,
     state: &AppState,
@@ -1461,6 +1466,7 @@ pub async fn run(
     run_id: &str,
     cancel: Cancel,
     unattended: bool,
+    task_id: Option<&str>,
 ) -> Result<(), String> {
     let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
     let settings = state.settings.lock().unwrap().clone();
@@ -1646,6 +1652,7 @@ pub async fn run(
                     cache_miss_tokens: outcome.usage.prompt_cache_miss_tokens,
                     cost_usd: cost,
                 },
+                task_id,
             );
         }
         last_usage = Some(outcome.usage.clone());

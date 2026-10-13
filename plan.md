@@ -1253,14 +1253,26 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   `"fortnightly"`. `cargo test` 338 passed.
 - **Stop**: a task can be set to run hourly, or on weekdays only, and the panel says when it is next.
 
-### 8.6 [S] A scheduled task shows its runs
+### 8.6 [S] A scheduled task shows its runs ✅
 - **Why**: a schedule you cannot audit is one you stop trusting. Claude keeps a past-runs view, and
   the honesty rule here is already set: a run that was stopped or errored still counts for what it
   really spent.
-- **Files**: `store/db.rs` (a task id on `turn_usage`, or its own small table; prefer the former, so
-  that spend stays one story rather than two), `commands.rs`, `ScheduledPanel.tsx`.
-- **Test**: a task lists its last N runs with outcome and cost, and the sum over them agrees with
-  `spend_report` for the same window, which is the rule 2.1 and 2.9 exist to keep.
+- **Files**: `store/db.rs` (`turn_usage.task_id` in the `CREATE TABLE` **and** as a guarded `ALTER`,
+  an index over it, `record_turn_usage` carrying it through every round with `COALESCE`, and
+  `task_runs`); `conversation/agent.rs` and `commands.rs` (`run_turn`/`start_turn` thread the task id
+  — `None` for anything the user typed, `Some` from the scheduler, including *Run now*); the
+  `task_runs` command; `src/api.ts`; `src/types.ts` (`TaskRun`); `ScheduledPanel.tsx` (*Runs* on a
+  task: newest first, each with its chat and its cost).
+- **Test**: `db::tests::a_task_lists_its_runs_and_they_agree_with_the_spend_view` — two runs of one
+  task listed newest-first with their cost, a turn the user typed absent from the list, the sum over
+  the task plus that turn equal to the window's whole `spend_report` total, a task that never ran
+  listing nothing, and the limit honoured. The upgrade test now also builds a pre-8.6 `turn_usage`
+  table on a **real temp file**, so the `task_id` ALTER *and* the index over it are exercised through
+  `open()`. `cargo test` 339 passed.
+  The plan's *outcome* is deliberately **not** stored: `turn_usage` has nowhere for it and the
+  **Files** line above does not ask for one, so a run is described by when, rounds, tokens, cost and
+  its chat. A run that spent nothing therefore leaves no row — the same rule the spend view already
+  follows, not a gap of this item's making. `last_run_at` on the task still says it ran.
 - **Stop**: the panel shows what a task has done and what it has cost.
 
 ### 8.7 [S] The model can schedule a task

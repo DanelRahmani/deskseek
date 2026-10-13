@@ -286,11 +286,21 @@ CREATE TABLE IF NOT EXISTS turn_usage (
     cache_hit_tokens  INTEGER NOT NULL DEFAULT 0,
     cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
     cost_usd          REAL NOT NULL DEFAULT 0,
+    -- The scheduled task that started this turn, or NULL for one the user began.
+    -- On the usage row rather than in a table of its own on purpose: a task's
+    -- spend and the spend view are then the same rows, so they cannot tell two
+    -- stories. Added by ALTER for databases written before the scheduler could
+    -- tag a run; NULL is right for every existing row, they were all typed.
+    task_id           TEXT,
     created_at        INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_turn_usage_time ON turn_usage(created_at);
 CREATE INDEX IF NOT EXISTS idx_turn_usage_chat ON turn_usage(chat_id, created_at);
+-- Over an ALTER-added column, which is only safe because the ALTERs run before
+-- this batch — see `open`. Removing a task leaves its runs behind (no foreign
+-- key), so a task's history outlives the task, exactly like the decision log.
+CREATE INDEX IF NOT EXISTS idx_turn_usage_task ON turn_usage(task_id, created_at);
 
 -- A tail a resend replaced, kept so it can be brought back. Without it, "ask
 -- again" is destructive: the only way to see the other answer is to lose this
@@ -433,6 +443,9 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // Tagging a turn with the scheduled task that started it arrived with 8.6.
+    // NULL for every existing row, which is right: they were all typed by hand.
+    let _ = conn.execute("ALTER TABLE turn_usage ADD COLUMN task_id TEXT", []);
     // A project's own instruction blocks arrived with 2.7. An older database
     // gets an empty array, which is exactly "no project rules yet".
     let _ = conn.execute(
@@ -2311,17 +2324,21 @@ pub struct TurnUsage<'a> {
 /// what it spent — in the history as well as in the chat's running total. That
 /// agreement is the whole point: a spend view that disagrees with the chat it is
 /// describing is worse than no spend view.
+///
+/// `task_id` is set only by the scheduler, and is carried through every round of
+/// the same run (`COALESCE`, so a later round cannot clear it).
 pub fn record_turn_usage(
     conn: &Connection,
     chat_id: &str,
     run_id: &str,
     round: &TurnUsage<'_>,
+    task_id: Option<&str>,
 ) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO turn_usage
              (id, chat_id, run_id, model, rounds, prompt_tokens, completion_tokens,
-              cache_hit_tokens, cache_miss_tokens, cost_usd, created_at)
-         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10)
+              cache_hit_tokens, cache_miss_tokens, cost_usd, task_id, created_at)
+         VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(run_id) DO UPDATE SET
              rounds            = rounds + 1,
              prompt_tokens     = prompt_tokens + excluded.prompt_tokens,
@@ -2329,7 +2346,8 @@ pub fn record_turn_usage(
              cache_hit_tokens  = cache_hit_tokens + excluded.cache_hit_tokens,
              cache_miss_tokens = cache_miss_tokens + excluded.cache_miss_tokens,
              cost_usd          = cost_usd + excluded.cost_usd,
-             model             = excluded.model",
+             model             = excluded.model,
+             task_id           = COALESCE(excluded.task_id, task_id)",
         params![
             uuid::Uuid::new_v4().to_string(),
             chat_id,
@@ -2340,10 +2358,64 @@ pub fn record_turn_usage(
             round.cache_hit_tokens,
             round.cache_miss_tokens,
             round.cost_usd,
+            task_id,
             now_ts(),
         ],
     )?;
     Ok(())
+}
+
+/// One scheduled run, as the Scheduled panel lists it: when it ran, what it spent
+/// and which chat it landed in.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRunRow {
+    pub run_id: String,
+    pub chat_id: String,
+    /// Joined rather than copied; empty when the chat has since been deleted.
+    pub chat_title: String,
+    pub model: String,
+    pub rounds: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub cost_usd: f64,
+    pub created_at: i64,
+}
+
+/// The most recent runs of one task, newest first.
+///
+/// The same `turn_usage` rows `spend_report` sums, which is the whole reason the
+/// task id lives there: a task's runs and the spend view are two readings of one
+/// number, never two stories. A deleted chat is a LEFT join, so a run whose chat
+/// is gone still counts.
+pub fn task_runs(
+    conn: &Connection,
+    task_id: &str,
+    limit: usize,
+) -> rusqlite::Result<Vec<TaskRunRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.run_id, t.chat_id, COALESCE(c.title, ''), t.model, t.rounds,
+                t.prompt_tokens, t.completion_tokens, t.cost_usd, t.created_at
+           FROM turn_usage t
+           LEFT JOIN chats c ON c.id = t.chat_id
+          WHERE t.task_id = ?1
+          ORDER BY t.created_at DESC, t.rowid DESC
+          LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![task_id, limit as i64], |r| {
+        Ok(TaskRunRow {
+            run_id: r.get(0)?,
+            chat_id: r.get(1)?,
+            chat_title: r.get(2)?,
+            model: r.get(3)?,
+            rounds: r.get(4)?,
+            prompt_tokens: r.get(5)?,
+            completion_tokens: r.get(6)?,
+            cost_usd: r.get(7)?,
+            created_at: r.get(8)?,
+        })
+    })?;
+    rows.collect()
 }
 
 /// One day's spend, summed over every turn that finished that day.
@@ -2566,6 +2638,23 @@ mod tests {
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                -- And `turn_usage` from before a run could be tagged with the task
+                -- that started it, so the `task_id` ALTER — and the index `SCHEMA`
+                -- builds over it — are exercised on a real file rather than only
+                -- on a fresh CREATE TABLE.
+                CREATE TABLE turn_usage (
+                    id                TEXT PRIMARY KEY,
+                    chat_id           TEXT NOT NULL,
+                    run_id            TEXT NOT NULL UNIQUE,
+                    model             TEXT NOT NULL,
+                    rounds            INTEGER NOT NULL DEFAULT 1,
+                    prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+                    completion_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_hit_tokens  INTEGER NOT NULL DEFAULT 0,
+                    cache_miss_tokens INTEGER NOT NULL DEFAULT 0,
+                    cost_usd          REAL NOT NULL DEFAULT 0,
+                    created_at        INTEGER NOT NULL
+                );
                 INSERT INTO chats
                     (id, title, kind, model, created_at, updated_at)
                     VALUES ('old-1', 'A chat from before', 'chat', 'm', 1, 1);
@@ -2608,6 +2697,20 @@ mod tests {
             )
             .unwrap();
         assert_eq!(built, 1, "the index over the ALTERed column was not created");
+
+        // Same for `task_id`: the ALTER added it, `SCHEMA` indexed it, and both
+        // had to happen in that order or the batch would have aborted on this
+        // file. Reading through `task_runs` is also the guard that the column is
+        // really selectable here.
+        assert!(task_runs(&conn, "no such task", 10).unwrap().is_empty());
+        let task_index: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_turn_usage_task'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(task_index, 1, "the index over the ALTERed task_id column was not created");
 
         // And the new features work against the upgraded file, not just against
         // an in-memory schema.
@@ -3554,6 +3657,7 @@ mod tests {
                     cache_miss_tokens: 0,
                     cost_usd: cost,
                 },
+                None,
             )
             .unwrap();
         }
@@ -3724,9 +3828,9 @@ mod tests {
         let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
 
         // Three rounds of one turn: two tool loops and the answer.
-        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 100, 20, 0.25)).unwrap();
-        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 200, 30, 0.5)).unwrap();
-        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 50, 10, 0.25)).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 100, 20, 0.25), None).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 200, 30, 0.5), None).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("m", 50, 10, 0.25), None).unwrap();
 
         let report = spend_report(&conn, 0, 10).unwrap();
         assert_eq!(report.turns, 1, "three rounds of one turn must not be three turns");
@@ -3739,6 +3843,48 @@ mod tests {
             .query_row("SELECT rounds FROM turn_usage", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rounds, 3);
+    }
+
+    #[test]
+    fn a_task_lists_its_runs_and_they_agree_with_the_spend_view() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+
+        // Two runs of one task, and one ordinary turn that must not appear in its
+        // list. One-off costs, so the totals below are sums of literals.
+        record_turn_usage(&conn, &chat.id, "run-task-1", &round("m", 100, 20, 0.25), Some("t-1"))
+            .unwrap();
+        record_turn_usage(&conn, &chat.id, "run-task-2", &round("m", 200, 30, 0.5), Some("t-1"))
+            .unwrap();
+        record_turn_usage(&conn, &chat.id, "run-human", &round("m", 50, 10, 0.75), None).unwrap();
+
+        let runs = task_runs(&conn, "t-1", 10).unwrap();
+        assert_eq!(runs.len(), 2, "only the task's own runs");
+        // Newest first, and the round trip through the row is what is asserted.
+        assert_eq!(runs[0].run_id, "run-task-2");
+        assert_eq!(runs[0].cost_usd, 0.5);
+        assert_eq!(runs[0].rounds, 1);
+        assert_eq!(runs[0].chat_title, "New chat");
+        assert_eq!(runs[1].run_id, "run-task-1");
+
+        // The task's runs are the same rows the spend view sums, so leaving the
+        // ordinary turn out of the list and including it in the window are the
+        // two halves of one agreement rather than two stories.
+        let task_total: f64 = runs.iter().map(|r| r.cost_usd).sum();
+        assert_eq!(task_total, 0.75);
+        let report = spend_report(&conn, 0, 10).unwrap();
+        assert_eq!(report.turns, 3);
+        assert!((report.total_usd - (task_total + 0.75)).abs() < 1e-9, "{}", report.total_usd);
+        assert!(
+            runs.iter().all(|r| r.cost_usd != 0.75),
+            "the turn the user typed must not be in the task's list"
+        );
+
+        // A task that has never run lists nothing rather than failing, and the
+        // limit is honoured newest-first.
+        assert!(task_runs(&conn, "t-2", 10).unwrap().is_empty());
+        assert_eq!(task_runs(&conn, "t-1", 1).unwrap().len(), 1);
+        assert_eq!(task_runs(&conn, "t-1", 1).unwrap()[0].run_id, "run-task-2");
     }
 
     #[test]
@@ -3756,7 +3902,7 @@ mod tests {
             ("run-3", 3, "pro", 0.125),
             ("run-4", 40, "flash", 1.0),
         ] {
-            record_turn_usage(&conn, &chat.id, run, &round(model, 1_000, 100, cost)).unwrap();
+            record_turn_usage(&conn, &chat.id, run, &round(model, 1_000, 100, cost), None).unwrap();
             conn.execute(
                 "UPDATE turn_usage SET created_at = ?2 WHERE run_id = ?1",
                 params![run, now - days_ago * 86_400],
@@ -3877,6 +4023,7 @@ mod tests {
                     cache_miss_tokens: 0,
                     cost_usd: 0.5,
                 },
+                None,
             )
             .unwrap();
         };
@@ -3950,7 +4097,7 @@ mod tests {
         let conn = open(&path).expect("an older database must still open");
 
         let chat = get_chat(&conn, "old-1").unwrap();
-        record_turn_usage(&conn, &chat.id, "run-1", &round("flash", 10, 5, 0.25)).unwrap();
+        record_turn_usage(&conn, &chat.id, "run-1", &round("flash", 10, 5, 0.25), None).unwrap();
         let report = spend_report(&conn, 0, 10).unwrap();
         assert_eq!(report.turns, 1);
         assert_eq!(report.total_usd, 0.25);

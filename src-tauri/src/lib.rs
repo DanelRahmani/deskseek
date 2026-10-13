@@ -329,6 +329,7 @@ pub fn run() {
             commands::update_scheduled,
             commands::delete_scheduled,
             commands::run_scheduled_now,
+            commands::task_runs,
             commands::probe_environment,
             commands::computer_state,
             commands::set_computer_paused,

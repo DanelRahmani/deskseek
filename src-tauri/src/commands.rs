@@ -297,7 +297,7 @@ pub async fn resend_last_turn(
 
     // This replaces a turn, so it registers a run exactly as send_message does:
     // one live run per chat, and it cancels any turn already in flight.
-    run_turn(app, &state, &chat_id, false).await
+    run_turn(app, &state, &chat_id, false, None).await
 }
 
 /// Puts back the answer a resend replaced, and keeps the one it replaces.
@@ -1743,6 +1743,7 @@ async fn run_turn(
     state: &AppState,
     chat_id: &str,
     unattended: bool,
+    task_id: Option<&str>,
 ) -> Result<(), String> {
     let run_id = uuid::Uuid::new_v4().to_string();
     let (live, cancel) = state.runs.begin(chat_id);
@@ -1750,7 +1751,7 @@ async fn run_turn(
         let conn = state.db.lock().unwrap();
         let _ = db::mark_run_started(&conn, chat_id, &run_id);
     }
-    let result = agent::run(app, state, chat_id, &run_id, cancel, unattended).await;
+    let result = agent::run(app, state, chat_id, &run_id, cancel, unattended, task_id).await;
     state.runs.finish(chat_id, live);
     {
         let conn = state.db.lock().unwrap();
@@ -1767,7 +1768,7 @@ pub async fn send_message(
     text: String,
     attachments: Option<Vec<Attachment>>,
 ) -> Result<(), String> {
-    start_turn(app, &state, &chat_id, &text, attachments.unwrap_or_default(), false).await
+    start_turn(app, &state, &chat_id, &text, attachments.unwrap_or_default(), false, None).await
 }
 
 /// The body of `send_message`, callable outside a command context.
@@ -1780,6 +1781,10 @@ pub async fn send_message(
 /// `unattended` says the user did not press send. It changes nothing about what
 /// the run may do; it only makes a prompt the run parks on raise a notification,
 /// so a scheduled task cannot sit in silence waiting to be noticed.
+///
+/// `task_id` is the scheduled task this turn belongs to, or `None` for anything a
+/// person started — including *Run now* from the panel, which is still the task's
+/// run and is tagged as one.
 pub async fn start_turn(
     app: AppHandle,
     state: &AppState,
@@ -1787,6 +1792,7 @@ pub async fn start_turn(
     text: &str,
     attachments: Vec<Attachment>,
     unattended: bool,
+    task_id: Option<&str>,
 ) -> Result<(), String> {
     keychain::get_api_key()?.ok_or("No API key set")?;
 
@@ -1831,7 +1837,7 @@ pub async fn start_turn(
     }
 
     // One live run per chat: registering cancels any turn already in flight.
-    let result = run_turn(app.clone(), state, chat_id, unattended).await;
+    let result = run_turn(app.clone(), state, chat_id, unattended, task_id).await;
     // Tell someone who is not looking. `notify` decides whether that is a toast
     // at all; this only reports what happened.
     notify::turn_finished(&app, state, chat_id, result.is_err());
@@ -1968,6 +1974,21 @@ pub fn delete_scheduled(state: State<'_, AppState>, id: String) -> Result<(), St
     db::delete_scheduled(&conn, &id).map_err(|e| e.to_string())
 }
 
+/// A scheduled task's recent runs, newest first.
+///
+/// Read from `turn_usage`, the same rows `spend_report` sums, so what the panel
+/// lists for a task and what the spend view reports over the same window are two
+/// readings of one number. Capped, so the panel cannot ask for the whole history.
+#[tauri::command]
+pub fn task_runs(
+    state: State<'_, AppState>,
+    task_id: String,
+    limit: Option<usize>,
+) -> Result<Vec<db::TaskRunRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::task_runs(&conn, &task_id, limit.unwrap_or(20).min(100)).map_err(|e| e.to_string())
+}
+
 /// Runs a task now, without moving when it next runs on its own.
 #[tauri::command]
 pub async fn run_scheduled_now(
@@ -2054,7 +2075,7 @@ pub async fn fire_scheduled(
     // No toast here: `start_turn` reports when the run *finishes*, which is the
     // moment the user asked to hear about. The event above is what says it
     // started, for the UI that is already open.
-    start_turn(app.clone(), state, &chat_id, &task.prompt, Vec::new(), true).await?;
+    start_turn(app.clone(), state, &chat_id, &task.prompt, Vec::new(), true, Some(&task.id)).await?;
     Ok(chat_id)
 }
 

@@ -93,6 +93,26 @@ export interface ScheduledTask {
   created_at: number;
 }
 
+/**
+ * One run of a scheduled task, as the panel lists them.
+ *
+ * Read from the same `turn_usage` rows the spend view sums. A run that spent
+ * nothing is not here — it never produced a priced round — which is the same
+ * rule the spend view follows rather than a gap of its own.
+ */
+export interface TaskRun {
+  run_id: string;
+  chat_id: string;
+  /** The chat it landed in, joined; empty when that chat has since been deleted. */
+  chat_title: string;
+  model: string;
+  rounds: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_usd: number;
+  created_at: number;
+}
+
 /** A `notify_user` ping, or a run finishing while the user was away. */
 export interface NotifyEvent {
   chatId: string | null;
