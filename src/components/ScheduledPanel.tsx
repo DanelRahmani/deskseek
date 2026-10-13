@@ -125,6 +125,19 @@ function nextLine(task: ScheduledTask): string {
   return `Next: ${when(task.next_run_at)}`;
 }
 
+/**
+ * A model's label with its published output rate, so the cheap one is visible
+ * where the choice is made.
+ *
+ * The rate is a fact the backend published; nothing here does arithmetic on it,
+ * which is what keeps the cost of a turn a thing only Rust ever computes.
+ */
+function rateLabel(model: ModelInfo): string {
+  return model.price
+    ? `${model.label} — $${model.price.out}/1M out`
+    : `${model.label} — rate unknown`;
+}
+
 const BLANK: ScheduledDraft = {
   title: "",
   prompt: "",
@@ -697,7 +710,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
               <option value="">The chat's own model</option>
               {models.map((model) => (
                 <option key={model.id} value={model.id}>
-                  {model.label}
+                  {rateLabel(model)}
                 </option>
               ))}
             </select>

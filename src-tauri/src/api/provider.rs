@@ -189,6 +189,61 @@ pub fn join(base: &str, path: &str) -> String {
     )
 }
 
+/// How much cheaper an alternative has to be before it is worth saying out loud,
+/// as a fraction of what was actually spent.
+///
+/// A model that would have saved a fraction of a cent is not a decision worth
+/// interrupting a conversation for, and a suggestion nobody acts on is noise that
+/// makes the next one easier to ignore.
+const WORTH_MENTIONING: f64 = 0.75;
+
+/// A cheaper model for the work one turn just did, with the number that makes the
+/// case.
+///
+/// Computed here rather than in the window, because the price table lives here: a
+/// frontend that multiplied tokens by a rate would be a second answer to "what
+/// did that cost", and the two would disagree the first time a rate changed.
+///
+/// It is advice and never a switch. The user is shown what the same tokens would
+/// have cost somewhere else and decides; an app that moved the work on its own
+/// would have changed the quality of an answer without saying so.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Advice {
+    pub model: String,
+    pub label: String,
+    /// What the same tokens would have cost on `model`.
+    pub usd: f64,
+    /// What they did cost, so the pair can be shown as a ratio rather than as two
+    /// unconnected figures.
+    pub spent: f64,
+}
+
+/// The cheapest priced model this work would have been cheaper on, or nothing.
+///
+/// Nothing is the common answer and the right one: a turn that cost nothing to
+/// compare (no tokens), a chat on an unpriced model (no rate to reason from), a
+/// list with one model in it, and an alternative that would have saved so little
+/// that mentioning it would be noise.
+pub fn advise(current: &Model, models: &[Model], usage: &Usage, peak: bool) -> Option<Advice> {
+    let spent = current.cost(usage, peak)?;
+    if usage.prompt_tokens + usage.completion_tokens == 0 {
+        return None;
+    }
+    let cheaper = models
+        .iter()
+        .filter(|model| model.id != current.id)
+        .filter_map(|model| model.cost(usage, peak).map(|usd| (model, usd)))
+        .filter(|(_, usd)| *usd < spent * WORTH_MENTIONING)
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))?;
+    Some(Advice {
+        model: cheaper.0.id.clone(),
+        label: cheaper.0.label.clone(),
+        usd: cheaper.1,
+        spent,
+    })
+}
+
 /// Merges a reported usage into the running total, field by field.
 ///
 /// Field-wise rather than wholesale, because one dialect announces the input side
@@ -624,6 +679,79 @@ mod tests {
         // An empty `content` array is rejected by both dialects, so the message
         // arrives with nothing rather than with `[]`.
         assert!(out[0].content.is_none());
+    }
+
+    #[test]
+    fn advice_names_the_cheapest_model_that_would_have_actually_saved_money() {
+        let usage = Usage {
+            prompt_tokens: 1_000_000,
+            prompt_cache_miss_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let dear = seed().remove(0).model("deepseek-v4-pro").cloned().unwrap();
+        let models = seed().remove(0).models;
+        let advice = advise(&dear, &models, &usage, false).expect("flash is far cheaper");
+        assert_eq!(advice.model, "deepseek-flash");
+        assert_eq!(advice.label, "DeepSeek Flash (V4.1)");
+        // 0.66 a million in, against 0.15: the numbers are the price table's own.
+        assert!((advice.spent - 0.66).abs() < 1e-9, "got {}", advice.spent);
+        assert!((advice.usd - 0.15).abs() < 1e-9, "got {}", advice.usd);
+    }
+
+    #[test]
+    fn advice_is_quiet_when_there_is_nothing_useful_to_say() {
+        let usage = Usage {
+            prompt_tokens: 1_000_000,
+            prompt_cache_miss_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let models = seed().remove(0).models;
+        let cheap = models[0].clone();
+        let dear = models[1].clone();
+
+        // Already on the cheap one: nothing in the list is cheaper, so there is
+        // no suggestion rather than one pointing back at itself.
+        assert_eq!(advise(&cheap, &models, &usage, false), None);
+        // One model only — the list holds the model already in use and nothing
+        // else, so there is nothing to compare it against.
+        assert_eq!(advise(&dear, &[dear.clone()], &usage, false), None);
+        // An unpriced model: no rate to reason from.
+        assert_eq!(advise(&Model::unlisted("m"), &models, &usage, false), None);
+        // And a turn that used no tokens has nothing to compare.
+        assert_eq!(advise(&dear, &models, &Usage::default(), false), None);
+    }
+
+    #[test]
+    fn a_saving_too_small_to_act_on_is_not_worth_saying() {
+        // Both halves of the bill are in play, so a cheaper model has to be
+        // cheaper on a rate the tokens actually touch.
+        let usage = Usage {
+            prompt_tokens: 1_000_000,
+            prompt_cache_miss_tokens: 1_000_000,
+            completion_tokens: 1_000_000,
+            ..Default::default()
+        };
+        let rate = |miss: f64, out: f64| Price {
+            hit: 0.0,
+            miss,
+            out,
+            peak_multiplier: 1.0,
+        };
+        // $2.00 of work on the model in use.
+        let current = model_with("dear", Some(rate(1.0, 1.0)), false);
+        // Half a cent cheaper: real, and not worth a line in a conversation.
+        let nearly = model_with("nearly", Some(rate(1.0, 0.99)), false);
+        assert_eq!(
+            advise(&current, &[current.clone(), nearly], &usage, false),
+            None
+        );
+        // Half the rate on both halves: the same work for a dollar.
+        let half = model_with("half", Some(rate(0.5, 0.5)), false);
+        let advice = advise(&current, &[current.clone(), half, model_with("nearly", Some(rate(1.0, 0.99)), false)], &usage, false)
+            .expect("a dollar against two is worth mentioning");
+        assert_eq!(advice.model, "half");
+        assert!((advice.usd - 1.0).abs() < 1e-9, "got {}", advice.usd);
+        assert!((advice.spent - 2.0).abs() < 1e-9, "got {}", advice.spent);
     }
 
     #[test]

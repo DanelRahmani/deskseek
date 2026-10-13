@@ -29,6 +29,7 @@ import { ToolStepGroup } from "./ToolStepGroup";
 import { ApprovalPrompt } from "./ApprovalPrompt";
 import { QuestionPrompt } from "./QuestionPrompt";
 import { TaskList } from "./TaskList";
+import { money } from "./SpendPanel";
 
 interface Props {
   chat: ChatRow | null;
@@ -250,6 +251,9 @@ export function ChatView({
   // hidden on a fact, never on a guess, and a model missing from the list is
   // exactly the case where the app does not know.
   const takesEffort = models.find((m) => m.id === chat?.model)?.effort ?? true;
+  // What this chat's last turn would have cost on a cheaper model. It arrives
+  // with the turn it describes, so it can never be advice about a stale figure.
+  const advice = usage?.advice ?? null;
   // Derived from the tool calls rather than plumbed through as its own prop:
   // `update_tasks` already carries the plan, and only the newest one counts.
   const tasks = useMemo(() => tasksFrom(tools), [tools]);
@@ -634,6 +638,19 @@ export function ChatView({
                 >
                   no thinking setting
                 </span>
+              )}
+              {advice && (
+                // A suggestion with a number, and the switch left to the user.
+                // Clicking it changes the chat's model — the one thing an app
+                // must not do on its own, because it changes how good the next
+                // answer is.
+                <button
+                  onClick={() => onModelChange(advice.model, chat.thinking, chat.effort)}
+                  className="max-w-[16rem] truncate rounded-md px-2 py-1 text-xs text-amber-300/80 transition duration-150 hover:bg-neutral-800 hover:text-amber-200"
+                  title={`This turn cost ${money(advice.spent)} on ${chat.model}. The same tokens would have cost ${money(advice.usd)} on ${advice.label}.`}
+                >
+                  {advice.label} — {money(advice.usd)} instead of {money(advice.spent)}
+                </button>
               )}
             </>
           )}

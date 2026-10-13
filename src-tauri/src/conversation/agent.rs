@@ -1675,6 +1675,10 @@ pub async fn run(
         &settings.sandbox_image,
     );
     let mut cost_total = 0.0f64;
+    // The suggestion the finished turn will carry, if any: what the same tokens
+    // would have cost on a cheaper model of this endpoint. Kept from the round
+    // that produced the answer, because that is the round the user just watched.
+    let mut advice: Option<crate::api::provider::Advice> = None;
     let mut last_usage = None;
     let mut last_message_id = String::new();
     let mut last_finish: Option<String> = None;
@@ -1831,6 +1835,12 @@ pub async fn run(
         if let Some(cost) = price {
             cost_total += cost;
         }
+        // Advice and never a switch: the user is told what this turn would have
+        // cost elsewhere and decides. Computed here, where the price table is,
+        // so the window never does the arithmetic itself.
+        advice = settings.endpoint().and_then(|endpoint| {
+            crate::api::provider::advise(&model_info, &endpoint.models, &outcome.usage, peak)
+        });
         // Fold this turn's spend into the chat as it happens, so a stop or an
         // error later in the run does not lose what was already paid for — and
         // into the history, in the same breath, because the spend view and the
@@ -2164,6 +2174,7 @@ pub async fn run(
             "usage": last_usage,
             "costUsd": if cost_total > 0.0 { Some(cost_total) } else { None },
             "finishReason": last_finish,
+            "advice": advice,
         }),
     );
 

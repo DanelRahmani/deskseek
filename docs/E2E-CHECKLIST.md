@@ -612,3 +612,15 @@ the parts only a person can see.
       thinking, and the reply still arrives (the budget must leave room to answer)
 - [ ] A model the endpoint does not list keeps its thinking controls, on the principle that a
       control is hidden on a fact and not on a guess
+
+## A cheaper model, suggested
+
+- [ ] A turn on the dearer model, with a cheaper one on the same endpoint, draws a line naming the
+      cheaper model and what the same tokens would have cost there
+- [ ] Clicking that line switches the chat's model, and the next turn runs on it — the app never
+      switches by itself
+- [ ] A turn too small to matter ($0.00, or a saving under a quarter) draws no line at all, and a
+      turn on the cheapest model draws none either
+- [ ] A chat on an endpoint with one model, or on an unpriced model, never shows the line
+- [ ] The task form's model list shows each model's published rate, and says *rate unknown* for a
+      model with none

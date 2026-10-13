@@ -2097,16 +2097,31 @@ than a module.
   checking the mutation reached the disk, and restoring passes. `cargo test` 431 → 432.
 - **Stop**: the effort control either works or says it cannot, and never silently does nothing.
 
-### 13.2 [S] Cheap-model routing with a recommendation
+### 13.2 [S] Cheap-model routing with a recommendation ✅
 - **Why**: every vendor picks a model per surface and prices it; the honest app-side counterpart of
   a routing habit is a suggestion at the point of the decision.
-- **Files**: `api/provider.rs` (the estimate: what the pinning would have cost at the other model's
-  rate), `ChatView.tsx` and `ScheduledPanel.tsx` (the suggestion line beside the picker).
-- **Shape**: **never silently route.** A suggestion with the reason and the estimate is honest; a
-  silent downgrade that changes an answer's quality is not. It is text next to the control, and the
-  control stays the user's.
-- **Test**: the estimator says "cheaper" only when the other model is in fact cheaper for the tokens
-  just spent, and says nothing when there is one model to choose from or no price to compare.
+- **Files**: `api/provider.rs` (`Advice`, `advise`, and the `WORTH_MENTIONING` threshold);
+  `conversation/agent.rs` (the suggestion computed from the round's own tokens and carried on the
+  `chat-done` event); `ChatView.tsx` (the line beside the model picker, which is also the switch);
+  `ScheduledPanel.tsx` (the published rate on each model in the pin picker), `types.ts`.
+- **Shape**: **never silently route.** The suggestion is a line of text with a number — what this
+  turn's tokens would have cost on a cheaper model of the same endpoint — and the model only
+  changes if the user clicks it. It carries the turn's own tokens rather than a rate comparison, so
+  the number is about work that actually happened; it is computed in Rust, because the price table
+  lives there and a window that multiplied tokens by a rate would be a second answer to "what did
+  that cost". Silence is the common answer and the right one: no tokens, an unpriced model, one
+  model to choose from, or a saving small enough that mentioning it would be noise. One deviation
+  from the archive's Files list, and it is the panel's half: the pin picker shows each model's
+  *published* output rate in its label rather than a second estimate, because a task has no tokens
+  to compare until it has run — the rate is a fact the backend published, and no arithmetic on it
+  happens in the window.
+- **Test**: `cargo test` — the suggestion names the cheapest model that would really have saved
+  money, and stays quiet for each of the four reasons above; a saving of half a cent is not worth a
+  line while half the rate is. Falsified: dropping the threshold (`*usd < spent * WORTH_MENTIONING`
+  → `*usd < spent`) fails `a_saving_too_small_to_act_on_is_not_worth_saying` with
+  `left: Some(Advice { model: "nearly", usd: 1.99, spent: 2.0 }), right: None` — a suggestion
+  nobody would act on — after checking the mutation reached the disk, and restoring passes.
+  `cargo test` 432 → 434 (two of the new tests are the quiet cases).
 - **Stop**: a cheaper model is suggested with a number, and never chosen for the user.
 
 ### 9.1 [M] Vision into tool results

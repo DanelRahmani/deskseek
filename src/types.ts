@@ -601,12 +601,28 @@ export interface ApprovalEvent {
   workspace: string;
 }
 
+/**
+ * A cheaper model for the work one turn just did, with the number that makes the
+ * case. Advice and never a switch: the app does not move work on its own.
+ */
+export interface Advice {
+  /** The model id the suggestion is to switch to. */
+  model: string;
+  label: string;
+  /** What the same tokens would have cost there. */
+  usd: number;
+  /** What they did cost here, so the pair can be shown as a ratio. */
+  spent: number;
+}
+
 export interface DoneEvent {
   chatId: string;
   messageId: string;
   usage: Usage | null;
   costUsd: number | null;
   finishReason: string | null;
+  /** Present only when a cheaper model would have made a real difference. */
+  advice: Advice | null;
 }
 
 export interface ErrorEvent {
