@@ -96,6 +96,23 @@ export interface ScheduledTask {
   next_run_at: number;
   last_run_at: number | null;
   created_at: number;
+  /**
+   * What makes this task due: `cadence` for the calendar, `file` and `git` for a
+   * trigger that waits for something to change. `next_run_at` is the next *check*
+   * for a trigger rather than the next run.
+   */
+  kind: string;
+  /** What a trigger watches — a folder, or a repository. Empty for a cadence. */
+  target: string;
+  /** Glob, or ref name. Blank means "any file" and "HEAD". */
+  filter: string;
+  /** Seconds between a trigger's checks. */
+  interval_secs: number;
+  /** The last fingerprint a trigger saw; null until it has looked once. */
+  last_state: string | null;
+  last_checked_at: number | null;
+  /** What the last check found, in words. */
+  last_note: string;
 }
 
 /**

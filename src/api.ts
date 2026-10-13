@@ -352,6 +352,15 @@ export type ScheduledDraft = {
   time: string;
   weekday: number;
   nth: number;
+  /**
+   * What makes the task due. `"cadence"` runs it on the calendar above; `"file"`
+   * and `"git"` make it wait for something to change, and then `target` is what
+   * is watched and `filter` says which change counts.
+   */
+  kind: string;
+  target: string;
+  filter: string;
+  interval_secs: number;
 };
 
 /**

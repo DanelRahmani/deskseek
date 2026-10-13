@@ -19,6 +19,7 @@ mod skills;
 mod store;
 mod tools;
 mod tray;
+mod triggers;
 
 use std::sync::{Arc, Mutex};
 
@@ -68,6 +69,14 @@ async fn scheduled_tick(handle: &tauri::AppHandle) {
         store::db::due_scheduled(&conn, store::db::now_ts()).unwrap_or_default()
     };
     for task in due {
+        // A trigger is due when its next *check* has come round, and what it does
+        // then is look and compare rather than run. The row is the same one the
+        // calendar uses, which is the whole point of `triggers.rs` — but the two
+        // paths part here, and only one of them advances a calendar.
+        if crate::triggers::Kind::parse(&task.kind).is_some() {
+            crate::triggers::tick(handle, &state, &task).await;
+            continue;
+        }
         // Move it on *first*: a run that outlasts this tick must not be started
         // again by the next one.
         let sched = schedule::Schedule::parse(&task.freq, &task.time, task.weekday, task.nth);

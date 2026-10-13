@@ -24,6 +24,7 @@ use crate::store::{
     settings::{Instruction, Settings},
 };
 use crate::tools::{browse, desktop, exec, guard::{Egress, PermissionMode}, sandbox, sandbox_exec, walk};
+use crate::triggers;
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -2046,7 +2047,9 @@ pub fn list_scheduled(state: State<'_, AppState>) -> Result<Vec<db::ScheduledRow
 /// The one create path: the form's command and the model's `schedule_task` tool
 /// both come through it, so a task made either way gets the same normalising
 /// (`Schedule::parse`) and the same clock. A second copy of this would be a
-/// second answer to "when does it first run".
+/// second answer to "when does it first run". `spec` is the watching half — a
+/// cadence unless the caller says otherwise — and it is what decides whether
+/// "first run" means a time or the first look.
 #[allow(clippy::too_many_arguments)]
 pub fn create_scheduled_task(
     state: &AppState,
@@ -2058,12 +2061,17 @@ pub fn create_scheduled_task(
     time: &str,
     weekday: i64,
     nth: i64,
+    spec: &triggers::Spec,
 ) -> Result<db::ScheduledRow, String> {
     if prompt.trim().is_empty() {
         return Err("A scheduled task needs something to do.".to_string());
     }
+    spec.validate()?;
     let sched = schedule::Schedule::parse(freq, time, weekday, nth);
-    let next = schedule::next_run_at(Local::now(), &sched);
+    let next = match spec.first_check(db::now_ts()) {
+        Some(next) => next,
+        None => schedule::next_run_at(Local::now(), &sched),
+    };
     let conn = state.db.lock().unwrap();
     db::create_scheduled(
         &conn,
@@ -2075,6 +2083,7 @@ pub fn create_scheduled_task(
         &clock(sched.time),
         sched.weekday as i64,
         sched.nth as i64,
+        spec,
         next,
     )
     .map_err(|e| e.to_string())
@@ -2095,7 +2104,12 @@ pub fn create_scheduled(
     time: String,
     weekday: i64,
     nth: i64,
+    kind: String,
+    target: String,
+    filter: String,
+    interval_secs: i64,
 ) -> Result<db::ScheduledRow, String> {
+    let spec = triggers::Spec::new(&kind, &target, &filter, interval_secs);
     create_scheduled_task(
         &state,
         &title,
@@ -2106,11 +2120,14 @@ pub fn create_scheduled(
         &time,
         weekday,
         nth,
+        &spec,
     )
 }
 
 /// Rewrites a task. A changed time moves its next run: otherwise an edit made
-/// ten minutes before the old time would appear to do nothing for a day.
+/// ten minutes before the old time would appear to do nothing for a day. A
+/// trigger's "next run" is its next look on its own interval, and an edit
+/// always re-arms it — see `db::update_scheduled`.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn update_scheduled(
@@ -2125,12 +2142,21 @@ pub fn update_scheduled(
     weekday: i64,
     nth: i64,
     enabled: bool,
+    kind: String,
+    target: String,
+    filter: String,
+    interval_secs: i64,
 ) -> Result<(), String> {
     if prompt.trim().is_empty() {
         return Err("A scheduled task needs something to do.".to_string());
     }
+    let spec = triggers::Spec::new(&kind, &target, &filter, interval_secs);
+    spec.validate()?;
     let sched = schedule::Schedule::parse(&freq, &time, weekday, nth);
-    let next = schedule::next_run_at(Local::now(), &sched);
+    let next = match spec.first_check(db::now_ts()) {
+        Some(next) => next,
+        None => schedule::next_run_at(Local::now(), &sched),
+    };
     let conn = state.db.lock().unwrap();
     db::update_scheduled(
         &conn,
@@ -2144,6 +2170,7 @@ pub fn update_scheduled(
         sched.weekday as i64,
         sched.nth as i64,
         enabled,
+        &spec,
         next,
     )
     .map_err(|e| e.to_string())

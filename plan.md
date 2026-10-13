@@ -1809,6 +1809,120 @@ line here.
 
 ---
 
+## Phase 11: Triggers
+
+Planned 2026-10-15, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 10 made the app
+*reachable*; this is the batch that makes the scheduler an automation engine — a task that starts
+because something changed rather than because a clock said so. All three items are the archive's,
+and all three stay local: no cloud account, no new dependency, no server.
+
+One rule holds across all three, and it is the reason they are one batch rather than three
+features. **A trigger is a scheduled task with a different kind.** It has the same prompt, the same
+chat-or-project, the same `enabled`, the same run path (`fire_scheduled`), the same run history and
+the same row in the Scheduled panel. What changes is what makes it due. A second table would have
+been a second answer to "what is a task", and the panel, the history and the spend attribution
+would each have had to learn about it. The consequence is that `next_run_at` means "next **check**"
+for a poll trigger, and the one 30-second tick in `lib.rs::scheduled_tick` drives both kinds — no
+second scheduler.
+
+The second rule is the edge. **A poll is not a fire.** Every trigger keeps the last thing it saw in
+`last_state`, and fires only when a fresh look *differs* from it. A condition that is true is not
+the same as a condition that just *became* true, and without that distinction a folder that stays
+busy, or a page whose text merely exists, would start a run every interval forever. A `NULL`
+`last_state` means "never looked": the first observation stores the fingerprint and does not fire,
+which is also what makes a trigger that was added while the app was shut start at most one run when
+it opens rather than replaying the whole time it was closed.
+
+### 7.2 [M] Event triggers — a file or a git ref ✅
+- **Why**: ChatGPT starts a task when something happens in Gmail, Slack or GitHub; a cadence-only
+  scheduler either fires too often or too late. The two local kinds need no cloud account: a file
+  appearing in a folder, and a git ref moving.
+- **Files**: `src-tauri/src/triggers.rs` (**new** — `Kind`, `Spec`, the two fingerprints, the
+  decision function and `tick`); `store/db.rs` (seven columns on `scheduled_tasks`, `touch_scheduled`,
+  `set_scheduled_note`, `set_scheduled_state`, `fires_since`, and the `Spec` threaded through create
+  and update, which now clears `last_state`); `lib.rs` (`mod triggers`, and the tick branching on the
+  kind); `commands.rs` (`create_scheduled_task` and `update_scheduled` carry the `Spec` and ask
+  `Spec::first_check` for the first look); `conversation/agent.rs` (the model's `schedule_task` still
+  makes a cadence); `src/components/ScheduledPanel.tsx` (the kind picker, the target/filter/interval
+  form and the trigger's own row), `src/api.ts` + `src/types.ts` (the four fields on the draft and
+  the seven on the task).
+- **Shape**: `Spec { kind, target, filter, interval_secs }`. A *file* trigger fingerprints the
+  folder — the matching entries' names and mtimes, sorted — so a new file and a changed file both
+  move it and a file that merely sits there does not. A *git* trigger fingerprints
+  `git rev-parse <ref>` from the folder you point it at. Both reuse what is here:
+  `walk::wildcard_match` is the glob, and the process is asked rather than `.git` being read, because
+  a branch may be packed, HEAD may be detached and a worktree keeps its refs elsewhere.
+- **Test**: `triggers::tests`, eight of them — `decide(None, …)` is `Arm` and never `Fire`, a
+  repeated fingerprint is `Same` and a changed one is `Fire` (including to and from the empty
+  string, which is a fingerprint like any other); a scratch folder read twice fingerprints the same
+  and a new `*.csv` moves it while a new `*.txt` does not; a blank filter matches every name; a
+  folder that is not there is an error rather than an empty fingerprint, which would read as "the
+  folder is empty"; a trigger with no target is refused by the name of what is missing; a misspelt
+  kind keeps the calendar rather than becoming a trigger that could never fire; and a one-second
+  interval is clamped to the tick. `store::db::tests` gained
+  `a_trigger_keeps_what_it_watches_and_forgets_its_state_when_edited` (the seven columns survive
+  create, an edit re-arms) and `the_trigger_cap_counts_runs_inside_its_window_and_no_others` (the
+  run from before the hour is not counted, and another task's runs are not this task's), and
+  `an_older_database_upgrades_instead_of_refusing_to_open` now creates a pre-trigger
+  `scheduled_tasks` on a real file and asserts the seven ALTERs landed. Falsified: making `decide`
+  fire on the first look (`None => Decision::Arm` → `Decision::Fire`) fails
+  `a_condition_that_stays_true_fires_once` on `left == right` and nothing else, and restoring
+  passes. `cargo test` 379 passed. Five things said out loud: the kinds live in `triggers.rs` rather
+  than in `schedule.rs` as the plan guessed, because that file owns the calendar and this owns the
+  edge; `fs_watch.rs` is untouched and the check is a **poll** — a folder that writes fifty files in
+  one interval is one run rather than fifty, and there is no baseline to reconstruct for the time
+  the app was closed; the cap is **derived** from `turn_usage` rather than kept as a second counter
+  that could disagree with the run history; a capped change leaves the fingerprint alone, so the cap
+  delays a run rather than dropping it; and the model's `schedule_task` tool still only makes
+  cadences, because a folder or a URL is something a person picks.
+- **Stop**: "when a new file lands in this folder" starts a task with no cadence involved. One
+  limit named: a file is noticed up to one interval late, because the check is a poll rather than an
+  OS watch — and a change that happened and was undone while the app was shut is simply never seen.
+
+### 7.3 [S] A monitor — a page condition, on an interval
+- **Why**: half the useful automations are "tell me when this changes". The archive calls it a
+  monitor: a prompt, an interval, a bounded check and a state.
+- **Files**: `src-tauri/src/triggers.rs` (a third kind and the fetch); `commands.rs`/`lib.rs`
+  (nothing new — the same branch); `src/components/ScheduledPanel.tsx` (the interval and the
+  filter become "look for"). No new dependency: the fetch is `browse::fetch_url`, which the
+  `fetch_url` tool already uses, so one place owns "how this app reads a page".
+- **Shape**: a *url* trigger fingerprints the page. With a filter it fingerprints *whether the page
+  says it* (`yes`/`no`) and so fires on the transition to present — the predicate case. With an
+  empty filter it fingerprints a hash of the page's text and so fires on any change — the "tell me
+  when this changes" case. Both share the edge rule and the cap, because they are the same trigger
+  with a different fingerprint.
+- **Test**: the pure half in `triggers::tests` — an empty filter hashes, a filter looks for its own
+  text and is case-insensitive, and a fingerprint carried forward from a previous poll of the same
+  text is `Same`. Falsified: making the filtered case return the text instead of `yes`/`no` fails
+  on the length, and restoring passes.
+- **Stop**: "tell me when this page changes" starts a task without a cadence. One limit named: the
+  check honours no per-chat egress policy, because a monitor has no chat until it fires — the URL
+  is one *you* typed into the form rather than one a model chose, which is the line that makes it
+  a declared destination and not an egress decision.
+
+### 3.3 [M] MCP events — a server wakes a task
+- **Why**: ChatGPT lets a user act on updates a server pushes, turning a polling schedule into an
+  event. DeskSeek's MCP client is complete; what was missing is that the client was built with no
+  handler at all, so a server-initiated notification had nowhere to land.
+- **Files**: `src-tauri/src/mcp/manager.rs` (a `ClientHandler` that forwards a custom notification
+  to the app, and the two `serve` calls that install it); `triggers.rs` (the `mcp` kind and
+  `matching_tasks`); `src/components/ScheduledPanel.tsx` (an *MCP event* kind with a server picker).
+- **Shape**: rmcp already routes any `notifications/*` a server sends to `on_custom_notification`,
+  so the handler is a struct with the app handle and a channel; the `Client` type alias grows the
+  handler from `()` to that struct. A notification names its server and its method; every enabled
+  `mcp` trigger whose target is that server and whose filter is that method fires. An `mcp` trigger
+  is never polled, so its `next_run_at` is the never-due sentinel and the tick skips it.
+- **Test**: `triggers::tests::one_notification_matches_the_tasks_that_asked_for_it` — a payload
+  matches on both server and method, a different method matches nothing, and a server the user did
+  not subscribe to matches nothing. The handler's own half needs a live server, so it is E2E.
+- **Stop**: a server can wake a task without a cadence. One limit named, and it is the archive's own
+  open decision: events that arrive while the app is closed are **dropped**, not replayed — unlike
+  a missed cadence, which fires once on the next launch. There is no backlog to replay because
+  nothing is listening while the app is shut, and inventing one would mean a server able to queue
+  runs inside DeskSeek. A server that sends nothing gets nothing; nothing here polls it.
+
+---
+
 ## Explicitly not doing (and why)
 
 - **First-party OAuth connectors (Gmail, Drive, Calendar, Slack)**: an app registration, a

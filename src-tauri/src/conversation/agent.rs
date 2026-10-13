@@ -1238,6 +1238,9 @@ async fn run_tool(
     // talking has the same clock as one made by filling the form in.
     if name == "schedule_task" {
         let draft = tools::parse_schedule(args)?;
+        // Always a cadence: the model's tool describes a clock, and the trigger
+        // half of a task is set up in the panel, where the folder or URL it
+        // watches can be picked rather than dictated.
         let row = crate::commands::create_scheduled_task(
             state,
             &draft.title,
@@ -1248,6 +1251,7 @@ async fn run_tool(
             &draft.time,
             draft.weekday,
             draft.nth,
+            &crate::triggers::Spec::default(),
         )?;
         // Say the cadence it actually ended up with, not the one that was asked
         // for: a frequency this build does not know falls back to daily, and the

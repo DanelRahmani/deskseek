@@ -37,6 +37,7 @@ one.
 - An **Appshot**: one button in that window photographs the window you were just in and attaches both the picture and its readable text to the question, so an error on screen can be asked about without retyping it
 - DeskSeek lives in the **system tray** — *New chat*, *Quick entry*, *Show DeskSeek* and *Quit*, with a left click on the icon bringing the window back. Closing the window puts it away instead of ending the session, as long as there is a tray to come back from
 - The browser gained the three tools that explain a broken page: `browser_console` reads what it logged, `browser_network` lists every request with its status or why it failed, and `browser_open` with `new_tab` opens a second tab alongside the one you are on — with `browser_tabs` and `browser_tab` to see the list, switch between them or close one
+- A scheduled task can wait for something to change instead of a clock: point one at a folder (optionally only files matching `*.csv`) or at a git repository and a ref, and it starts a run when what it sees differs from the last look — never every time it looks, at most six runs an hour, and the panel says in words why it did not fire
 
 ## 0.4.0 — 2026-10-12
 

@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use super::settings::Instruction;
+use crate::triggers;
 
 pub fn now_ts() -> i64 {
     chrono::Utc::now().timestamp()
@@ -389,7 +390,22 @@ CREATE TABLE IF NOT EXISTS scheduled_tasks (
     enabled     INTEGER NOT NULL DEFAULT 1,
     next_run_at INTEGER NOT NULL,
     last_run_at INTEGER,
-    created_at  INTEGER NOT NULL
+    created_at  INTEGER NOT NULL,
+    -- What makes this task due. 'cadence' is the calendar in `schedule.rs`;
+    -- 'file' and 'git' wait for something to change instead.
+    kind        TEXT NOT NULL DEFAULT 'cadence',
+    -- What a trigger watches: a folder, or a repository.
+    target      TEXT NOT NULL DEFAULT '',
+    -- Glob, or ref name. Blank means "any file" and "HEAD".
+    filter      TEXT NOT NULL DEFAULT '',
+    -- Seconds between a trigger's checks. Read only by a trigger.
+    interval_secs INTEGER NOT NULL DEFAULT 300,
+    -- The last thing a trigger saw. NULL means it has never looked, and that is
+    -- what makes a first look arm rather than fire.
+    last_state  TEXT,
+    last_checked_at INTEGER,
+    -- What the last check found or did, in words, for the panel.
+    last_note   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE INDEX IF NOT EXISTS idx_scheduled_due ON scheduled_tasks(next_run_at);
@@ -506,6 +522,32 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     // gets an empty array, which is exactly "no project rules yet".
     let _ = conn.execute(
         "ALTER TABLE projects ADD COLUMN instructions TEXT NOT NULL DEFAULT '[]'",
+        [],
+    );
+    // Triggers arrived with 7.2. Every task an older database holds is a cadence,
+    // which is exactly what the default says, and none of them has a state —
+    // "never looked" being the thing that arms a trigger rather than an empty
+    // string that would read as a fingerprint nobody could match.
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'cadence'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN target TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN filter TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN interval_secs INTEGER NOT NULL DEFAULT 300",
+        [],
+    );
+    let _ = conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN last_state TEXT", []);
+    let _ = conn.execute("ALTER TABLE scheduled_tasks ADD COLUMN last_checked_at INTEGER", []);
+    let _ = conn.execute(
+        "ALTER TABLE scheduled_tasks ADD COLUMN last_note TEXT NOT NULL DEFAULT ''",
         [],
     );
 
@@ -1823,10 +1865,23 @@ pub struct ScheduledRow {
     pub next_run_at: i64,
     pub last_run_at: Option<i64>,
     pub created_at: i64,
+    /// `"cadence"` for the calendar, `"file"` or `"git"` for a trigger.
+    pub kind: String,
+    /// What a trigger watches: a folder, or a repository. Empty for a cadence.
+    pub target: String,
+    /// Glob, or ref name.
+    pub filter: String,
+    pub interval_secs: i64,
+    /// The last fingerprint a trigger saw. `None` means it has never looked.
+    pub last_state: Option<String>,
+    pub last_checked_at: Option<i64>,
+    /// What the last check found, in words.
+    pub last_note: String,
 }
 
 const SCHEDULED_COLS: &str = "id, title, prompt, chat_id, project_id, freq, time, weekday, nth, \
-                              enabled, next_run_at, last_run_at, created_at";
+                              enabled, next_run_at, last_run_at, created_at, kind, target, filter, \
+                              interval_secs, last_state, last_checked_at, last_note";
 
 fn scheduled_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledRow> {
     Ok(ScheduledRow {
@@ -1843,6 +1898,13 @@ fn scheduled_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<ScheduledRow> {
         next_run_at: r.get(10)?,
         last_run_at: r.get(11)?,
         created_at: r.get(12)?,
+        kind: r.get(13)?,
+        target: r.get(14)?,
+        filter: r.get(15)?,
+        interval_secs: r.get(16)?,
+        last_state: r.get(17)?,
+        last_checked_at: r.get(18)?,
+        last_note: r.get(19)?,
     })
 }
 
@@ -1855,7 +1917,9 @@ pub fn list_scheduled(conn: &Connection) -> rusqlite::Result<Vec<ScheduledRow>> 
 }
 
 /// Adds a task. `next_run_at` comes from the caller, so the row has no clock of
-/// its own and a test can schedule a task into the past.
+/// its own and a test can schedule a task into the past. `spec` is the whole
+/// watching half — which change the task waits for — and is a cadence unless the
+/// caller says otherwise.
 #[allow(clippy::too_many_arguments)]
 pub fn create_scheduled(
     conn: &Connection,
@@ -1867,17 +1931,36 @@ pub fn create_scheduled(
     time: &str,
     weekday: i64,
     nth: i64,
+    spec: &triggers::Spec,
     next_run_at: i64,
 ) -> rusqlite::Result<ScheduledRow> {
     let id = uuid::Uuid::new_v4().to_string();
     let ts = now_ts();
     let title = title.trim();
     let title = if title.is_empty() { "Scheduled task" } else { title };
+    let kind = spec.kind_id();
     conn.execute(
         "INSERT INTO scheduled_tasks
-         (id, title, prompt, chat_id, project_id, freq, time, weekday, nth, enabled, next_run_at, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11)",
-        params![id, title, prompt, chat_id, project_id, freq, time, weekday, nth, next_run_at, ts],
+         (id, title, prompt, chat_id, project_id, freq, time, weekday, nth, enabled, next_run_at,
+          created_at, kind, target, filter, interval_secs)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 1, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            id,
+            title,
+            prompt,
+            chat_id,
+            project_id,
+            freq,
+            time,
+            weekday,
+            nth,
+            next_run_at,
+            ts,
+            kind,
+            spec.target,
+            spec.filter,
+            spec.interval_secs
+        ],
     )?;
     Ok(ScheduledRow {
         id,
@@ -1893,11 +1976,23 @@ pub fn create_scheduled(
         next_run_at,
         last_run_at: None,
         created_at: ts,
+        kind: kind.to_string(),
+        target: spec.target.clone(),
+        filter: spec.filter.clone(),
+        interval_secs: spec.interval_secs,
+        last_state: None,
+        last_checked_at: None,
+        last_note: String::new(),
     })
 }
 
 /// Rewrites a task, including when it next runs — a changed time has to move the
 /// next run, or the edit would only take effect after the old one fired.
+///
+/// `last_state` is cleared on every edit. The stored fingerprint described the
+/// target and the filter that were there a moment ago, so carrying it forward
+/// would compare a new folder against an old folder's contents and fire on the
+/// difference, which is not a change in anything the user is watching.
 #[allow(clippy::too_many_arguments)]
 pub fn update_scheduled(
     conn: &Connection,
@@ -1911,6 +2006,7 @@ pub fn update_scheduled(
     weekday: i64,
     nth: i64,
     enabled: bool,
+    spec: &triggers::Spec,
     next_run_at: i64,
 ) -> rusqlite::Result<()> {
     let title = title.trim();
@@ -1918,7 +2014,8 @@ pub fn update_scheduled(
     conn.execute(
         "UPDATE scheduled_tasks
          SET title = ?2, prompt = ?3, chat_id = ?4, project_id = ?5, freq = ?6, time = ?7,
-             weekday = ?8, nth = ?9, enabled = ?10, next_run_at = ?11
+             weekday = ?8, nth = ?9, enabled = ?10, next_run_at = ?11, kind = ?12, target = ?13,
+             filter = ?14, interval_secs = ?15, last_state = NULL
          WHERE id = ?1",
         params![
             id,
@@ -1931,7 +2028,11 @@ pub fn update_scheduled(
             weekday,
             nth,
             enabled as i64,
-            next_run_at
+            next_run_at,
+            spec.kind_id(),
+            spec.target,
+            spec.filter,
+            spec.interval_secs
         ],
     )?;
     Ok(())
@@ -1965,6 +2066,64 @@ pub fn mark_scheduled_ran(
         params![id, next_run_at, ran_at],
     )?;
     Ok(())
+}
+
+/// Moves a trigger's next *check* on, without touching what it saw.
+///
+/// Called before the check runs rather than after, for the same reason
+/// `mark_scheduled_ran` is: a check slower than the interval must not be started
+/// again by the tick behind it.
+pub fn touch_scheduled(
+    conn: &Connection,
+    id: &str,
+    next_run_at: i64,
+    checked_at: i64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE scheduled_tasks SET next_run_at = ?2, last_checked_at = ?3 WHERE id = ?1",
+        params![id, next_run_at, checked_at],
+    )?;
+    Ok(())
+}
+
+/// Says what a check found, for a look that did not move the fingerprint.
+pub fn set_scheduled_note(conn: &Connection, id: &str, note: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE scheduled_tasks SET last_note = ?2 WHERE id = ?1",
+        params![id, note],
+    )?;
+    Ok(())
+}
+
+/// Stores the fingerprint a trigger just saw, with the note that goes with it.
+///
+/// Both in one statement: the state is what the next tick compares against, so it
+/// must not be able to land without the sentence that explains it.
+pub fn set_scheduled_state(
+    conn: &Connection,
+    id: &str,
+    state: &str,
+    note: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE scheduled_tasks SET last_state = ?2, last_note = ?3 WHERE id = ?1",
+        params![id, state, note],
+    )?;
+    Ok(())
+}
+
+/// How many runs a task has started since a moment — the trigger cap's one
+/// source.
+///
+/// Counted from the run history rather than from a counter on the task, because
+/// the history is already the record of what a task did and a second count could
+/// quietly disagree with it.
+pub fn fires_since(conn: &Connection, task_id: &str, since: i64) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM turn_usage WHERE task_id = ?1 AND created_at > ?2",
+        params![task_id, since],
+        |row| row.get(0),
+    )
 }
 
 // --------------------------------------------------------------- artifacts
@@ -2912,6 +3071,64 @@ mod tests {
         conn
     }
 
+    /// `create_scheduled` with the watching half left at a cadence, which is what
+    /// every test here but the trigger ones wants.
+    fn schedule(
+        conn: &Connection,
+        title: &str,
+        prompt: &str,
+        freq: &str,
+        time: &str,
+        weekday: i64,
+        nth: i64,
+        next_run_at: i64,
+    ) -> rusqlite::Result<ScheduledRow> {
+        create_scheduled(
+            conn,
+            title,
+            prompt,
+            None,
+            None,
+            freq,
+            time,
+            weekday,
+            nth,
+            &triggers::Spec::default(),
+            next_run_at,
+        )
+    }
+
+    /// `update_scheduled` with the watching half left at a cadence.
+    #[allow(clippy::too_many_arguments)]
+    fn reschedule(
+        conn: &Connection,
+        id: &str,
+        title: &str,
+        prompt: &str,
+        freq: &str,
+        time: &str,
+        weekday: i64,
+        nth: i64,
+        enabled: bool,
+        next_run_at: i64,
+    ) -> rusqlite::Result<()> {
+        update_scheduled(
+            conn,
+            id,
+            title,
+            prompt,
+            None,
+            None,
+            freq,
+            time,
+            weekday,
+            nth,
+            enabled,
+            &triggers::Spec::default(),
+            next_run_at,
+        )
+    }
+
     #[test]
     fn an_older_database_upgrades_instead_of_refusing_to_open() {
         // Exactly the `chats` table as it was before projects existed: the same
@@ -2982,7 +3199,28 @@ mod tests {
                     PRIMARY KEY (workspace, tool)
                 );
                 INSERT INTO tool_permissions (workspace, tool, created_at)
-                    VALUES ('/repo', 'git_push', 1);",
+                    VALUES ('/repo', 'git_push', 1);
+                -- And a scheduled task from before a task could watch something,
+                -- so the seven trigger ALTERs are exercised on a real file rather
+                -- than only on a fresh CREATE TABLE.
+                CREATE TABLE scheduled_tasks (
+                    id          TEXT PRIMARY KEY,
+                    title       TEXT NOT NULL,
+                    prompt      TEXT NOT NULL,
+                    chat_id     TEXT,
+                    project_id  TEXT,
+                    freq        TEXT NOT NULL DEFAULT 'daily',
+                    time        TEXT NOT NULL DEFAULT '09:00',
+                    weekday     INTEGER NOT NULL DEFAULT 0,
+                    nth         INTEGER NOT NULL DEFAULT 1,
+                    enabled     INTEGER NOT NULL DEFAULT 1,
+                    next_run_at INTEGER NOT NULL,
+                    last_run_at INTEGER,
+                    created_at  INTEGER NOT NULL
+                );
+                INSERT INTO scheduled_tasks
+                    (id, title, prompt, freq, time, weekday, nth, enabled, next_run_at, created_at)
+                    VALUES ('task-1', 'Before triggers', 'p', 'daily', '09:00', 0, 1, 1, 1, 1);",
             )
             .unwrap();
         }
@@ -3061,9 +3299,23 @@ mod tests {
         // The pre-2.7 project is still there — the upgrade adds a column, it does
         // not empty the table — and the new call paths run against the file.
         assert_eq!(list_projects(&conn).unwrap().len(), 1);
-        assert!(list_scheduled(&conn).unwrap().is_empty());
-        create_scheduled(&conn, "t", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
-        assert_eq!(list_scheduled(&conn).unwrap().len(), 1);
+        // A task written before triggers existed is a cadence — which is what a
+        // default of 'cadence' says — and has no fingerprint, because "never
+        // looked" is the state that arms a trigger and not something an upgrade
+        // should invent. `list_scheduled` selects every column, so this is a real
+        // read of seven columns only the ALTERs could have added.
+        let upgraded = &list_scheduled(&conn).unwrap()[0];
+        assert_eq!(upgraded.title, "Before triggers");
+        assert_eq!(upgraded.kind, "cadence");
+        assert_eq!(upgraded.target, "");
+        assert_eq!(upgraded.filter, "");
+        assert_eq!(upgraded.interval_secs, 300);
+        assert!(upgraded.last_state.is_none());
+        assert!(upgraded.last_checked_at.is_none());
+        assert_eq!(upgraded.last_note, "");
+        // And the new features work against the upgraded file too.
+        schedule(&conn, "t", "p", "daily", "09:00", 0, 1, 1).unwrap();
+        assert_eq!(list_scheduled(&conn).unwrap().len(), 2);
 
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
@@ -4097,12 +4349,12 @@ mod tests {
     #[test]
     fn only_tasks_whose_time_has_come_are_due() {
         let conn = mem();
-        let soon = create_scheduled(
-            &conn, "Morning brief", "summarise the news", None, None, "daily", "09:00", 0, 1, 1_000,
+        let soon = schedule(
+            &conn, "Morning brief", "summarise the news", "daily", "09:00", 0, 1, 1_000,
         )
         .unwrap();
-        let later = create_scheduled(
-            &conn, "Weekly review", "check the books", None, None, "weekly", "17:00", 2, 1, 9_000,
+        let later = schedule(
+            &conn, "Weekly review", "check the books", "weekly", "17:00", 2, 1, 9_000,
         )
         .unwrap();
 
@@ -4121,12 +4373,12 @@ mod tests {
     #[test]
     fn a_disabled_task_is_never_due() {
         let conn = mem();
-        let task = create_scheduled(
-            &conn, "Later", "do a thing", None, None, "daily", "09:00", 0, 1, 1,
+        let task = schedule(
+            &conn, "Later", "do a thing", "daily", "09:00", 0, 1, 1,
         )
         .unwrap();
-        update_scheduled(
-            &conn, &task.id, "Later", "do a thing", None, None, "daily", "09:00", 0, 1, false, 1,
+        reschedule(
+            &conn, &task.id, "Later", "do a thing", "daily", "09:00", 0, 1, false, 1,
         )
         .unwrap();
         assert!(due_scheduled(&conn, 999_999).unwrap().is_empty());
@@ -4136,8 +4388,8 @@ mod tests {
     #[test]
     fn advancing_a_task_records_the_run_and_moves_it_on() {
         let conn = mem();
-        let task = create_scheduled(
-            &conn, "Brief", "p", None, None, "daily", "09:00", 0, 1, 1_000,
+        let task = schedule(
+            &conn, "Brief", "p", "daily", "09:00", 0, 1, 1_000,
         )
         .unwrap();
         assert!(task.last_run_at.is_none());
@@ -4154,12 +4406,12 @@ mod tests {
     #[test]
     fn updating_a_task_moves_its_next_run_and_keeps_one_row() {
         let conn = mem();
-        let task = create_scheduled(
-            &conn, "Old", "old prompt", None, None, "daily", "09:00", 0, 1, 1_000,
+        let task = schedule(
+            &conn, "Old", "old prompt", "daily", "09:00", 0, 1, 1_000,
         )
         .unwrap();
-        update_scheduled(
-            &conn, &task.id, "New", "new prompt", None, None, "weekly", "08:30", 2, 1, true,
+        reschedule(
+            &conn, &task.id, "New", "new prompt", "weekly", "08:30", 2, 1, true,
             555_000,
         )
         .unwrap();
@@ -4180,8 +4432,124 @@ mod tests {
     #[test]
     fn a_task_with_no_title_still_shows_up_in_the_list() {
         let conn = mem();
-        create_scheduled(&conn, "  ", "p", None, None, "daily", "09:00", 0, 1, 1).unwrap();
+        schedule(&conn, "  ", "p", "daily", "09:00", 0, 1, 1).unwrap();
         assert_eq!(list_scheduled(&conn).unwrap()[0].title, "Scheduled task");
+    }
+
+    #[test]
+    fn a_trigger_keeps_what_it_watches_and_forgets_its_state_when_edited() {
+        let conn = mem();
+        let watching = triggers::Spec::new("file", "C:\\inbox", "*.csv", 120);
+        let task = create_scheduled(
+            &conn,
+            "Watch inbox",
+            "brief me",
+            None,
+            None,
+            "daily",
+            "09:00",
+            0,
+            1,
+            &watching,
+            1_000,
+        )
+        .unwrap();
+        assert_eq!(task.kind, "file");
+        assert_eq!(task.target, "C:\\inbox");
+        assert_eq!(task.filter, "*.csv");
+        assert_eq!(task.interval_secs, 120);
+        assert!(
+            task.last_state.is_none(),
+            "a trigger that has just been made has never looked"
+        );
+
+        set_scheduled_state(&conn, &task.id, "a.csv:1", "armed").unwrap();
+        let stored = &list_scheduled(&conn).unwrap()[0];
+        assert_eq!(stored.last_state.as_deref(), Some("a.csv:1"));
+        assert_eq!(stored.last_note, "armed");
+
+        // An edit points the trigger somewhere else, and the fingerprint that
+        // described the old folder goes with it: carried forward it would report
+        // the new folder's contents as a change against the old folder's.
+        update_scheduled(
+            &conn,
+            &task.id,
+            "Watch repo",
+            "brief me",
+            None,
+            None,
+            "daily",
+            "09:00",
+            0,
+            1,
+            true,
+            &triggers::Spec::new("git", "C:\\src", "main", 60),
+            2_000,
+        )
+        .unwrap();
+        let after = &list_scheduled(&conn).unwrap()[0];
+        assert_eq!(after.kind, "git");
+        assert_eq!(after.target, "C:\\src");
+        assert_eq!(after.filter, "main");
+        assert!(after.last_state.is_none(), "an edit re-arms the trigger");
+    }
+
+    #[test]
+    fn the_trigger_cap_counts_runs_inside_its_window_and_no_others() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "auto").unwrap();
+        let task = create_scheduled(
+            &conn,
+            "Watch",
+            "brief me",
+            None,
+            None,
+            "daily",
+            "09:00",
+            0,
+            1,
+            &triggers::Spec::new("file", "C:\\inbox", "", 300),
+            1_000,
+        )
+        .unwrap();
+
+        // Three runs of this task, one of them older than the window.
+        for (index, run) in ["r-1", "r-2", "r-3"].iter().enumerate() {
+            record_turn_usage(
+                &conn,
+                &chat.id,
+                run,
+                &TurnUsage {
+                    model: "m",
+                    kind: TURN,
+                    priced: true,
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    cache_hit_tokens: 0,
+                    cache_miss_tokens: 0,
+                    cost_usd: 0.0,
+                },
+                Some(&task.id),
+            )
+            .unwrap();
+            if index == 0 {
+                conn.execute(
+                    "UPDATE turn_usage SET created_at = 10 WHERE run_id = ?1",
+                    [run],
+                )
+                .unwrap();
+            }
+        }
+
+        assert_eq!(
+            fires_since(&conn, &task.id, 1_000).unwrap(),
+            2,
+            "the run from before the hour is not counted"
+        );
+        assert_eq!(fires_since(&conn, &task.id, 0).unwrap(), 3);
+        // Another task's runs are not this task's, which is the whole reason the
+        // cap can be read off the run history instead of kept as a counter.
+        assert_eq!(fires_since(&conn, "someone-else", 0).unwrap(), 0);
     }
 
     fn round(model: &str, prompt: u32, completion: u32, cost: f64) -> TurnUsage<'_> {

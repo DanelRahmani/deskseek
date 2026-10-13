@@ -19,6 +19,36 @@ interface Props {
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const NTHS = ["first", "second", "third", "fourth"];
 
+/**
+ * What can make a task due. `cadence` is the calendar below; the other two wait
+ * for something to change, and are the reason a task has a `target` at all.
+ */
+const KINDS = [
+  { id: "cadence", label: "On a schedule" },
+  { id: "file", label: "When a file changes" },
+  { id: "git", label: "When a git ref moves" },
+];
+
+/** What each kind watches, as the form's own label for it. */
+const TARGET_LABEL: Record<string, string> = {
+  file: "Folder to watch",
+  git: "Repository folder",
+};
+
+/** What counts as a change, and the example that makes the field legible. */
+const FILTER_LABEL: Record<string, string> = {
+  file: "Only files matching, e.g. *.csv — blank watches everything",
+  git: "Ref, e.g. main — blank means HEAD",
+};
+
+/** The check interval, in the minutes a person thinks in rather than seconds. */
+const INTERVALS = [
+  { secs: 60, label: "Every minute" },
+  { secs: 300, label: "Every 5 minutes" },
+  { secs: 900, label: "Every 15 minutes" },
+  { secs: 3600, label: "Every hour" },
+];
+
 const quiet =
   "rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40";
 const field =
@@ -31,6 +61,15 @@ const field =
  * starts at Monday — the one place the two conventions meet.
  */
 function describe(task: ScheduledTask): string {
+  if (task.kind === "file") {
+    const what = task.filter.trim() || "any file";
+    return `When ${what} changes in ${task.target || "a folder that is no longer set"}`;
+  }
+  if (task.kind === "git") {
+    return `When ${task.filter.trim() || "HEAD"} moves in ${
+      task.target || "a folder that is no longer set"
+    }`;
+  }
   if (task.freq === "hourly") return `Every hour at :${task.time.slice(-2)}`;
   if (task.freq === "weekdays") return `Weekdays at ${task.time}`;
   if (task.freq === "weekly") return `Every ${WEEKDAYS[task.weekday]} at ${task.time}`;
@@ -38,6 +77,11 @@ function describe(task: ScheduledTask): string {
     return `The ${NTHS[task.nth - 1]} ${WEEKDAYS[task.weekday]} of the month at ${task.time}`;
   }
   return `Every day at ${task.time}`;
+}
+
+/** A trigger looks, rather than runs, so its second line says so. */
+function isTrigger(task: ScheduledTask): boolean {
+  return task.kind !== "cadence";
 }
 
 const BLANK: ScheduledDraft = {
@@ -49,6 +93,10 @@ const BLANK: ScheduledDraft = {
   time: "09:00",
   weekday: 0,
   nth: 1,
+  kind: "cadence",
+  target: "",
+  filter: "",
+  interval_secs: 300,
 };
 
 /**
@@ -149,12 +197,20 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
       setStatus("A task needs something to do.");
       return;
     }
+    if (form.kind !== "cadence" && !form.target.trim()) {
+      setStatus(`A trigger needs something to watch: a ${TARGET_LABEL[form.kind].toLowerCase()}.`);
+      return;
+    }
     setBusy(true);
     try {
       await api.createScheduled(form);
       setForm(BLANK);
       await reload();
-      setStatus("Scheduled. It runs on the calendar above.");
+      setStatus(
+        form.kind === "cadence"
+          ? "Scheduled. It runs on the calendar above."
+          : "Watching. It looks on its interval and starts a run when that changes.",
+      );
     } catch (e) {
       setStatus(String(e));
     } finally {
@@ -173,6 +229,10 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
         time: task.time,
         weekday: task.weekday,
         nth: task.nth,
+        kind: task.kind,
+        target: task.target,
+        filter: task.filter,
+        interval_secs: task.interval_secs,
         enabled: !task.enabled,
       });
       await reload();
@@ -229,6 +289,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const patch = (part: Partial<ScheduledDraft>) => setForm((prev) => ({ ...prev, ...part }));
   const needsWeekday = form.freq === "weekly" || form.freq === "monthly";
   const needsNth = form.freq === "monthly";
+  const watching = form.kind !== "cadence";
 
   return (
     <aside className="panel-in-right flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
@@ -352,9 +413,19 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
 
             <p className="mt-1 text-[11px] text-neutral-500">{describe(task)}</p>
             <p className="mt-0.5 text-[11px] text-neutral-500">
-              {task.enabled ? `Next: ${when(task.next_run_at)}` : "Paused"}
+              {task.enabled
+                ? isTrigger(task)
+                  ? `Next check: ${when(task.next_run_at)}`
+                  : `Next: ${when(task.next_run_at)}`
+                : "Paused"}
+              {isTrigger(task) && task.last_checked_at
+                ? ` · last checked ${when(task.last_checked_at)}`
+                : ""}
               {task.last_run_at ? ` · last ran ${when(task.last_run_at)}` : ""}
             </p>
+            {isTrigger(task) && task.last_note && (
+              <p className="mt-0.5 text-[11px] text-neutral-600">{task.last_note}</p>
+            )}
 
             <div className="mt-1 flex items-center gap-2">
               <button
@@ -429,61 +500,113 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
               rows={3}
               className={`${field} resize-none`}
             />
-            <div className="flex gap-2">
-              <select
-                value={form.freq}
-                onChange={(e) => patch({ freq: e.target.value })}
-                className={field}
-                title="How often"
-              >
-                <option value="hourly">Every hour</option>
-                <option value="daily">Every day</option>
-                <option value="weekdays">Weekdays</option>
-                <option value="weekly">Every week</option>
-                <option value="monthly">Every month</option>
-              </select>
-              <input
-                type="time"
-                value={form.time}
-                onChange={(e) => patch({ time: e.target.value || "09:00" })}
-                className={`${field} w-32`}
-                title={form.freq === "hourly" ? "Only the minute is used" : "Local time"}
-              />
-            </div>
-            {form.freq === "hourly" && (
-              <p className="text-[11px] text-neutral-600">
-                Hourly reads the minute only: it runs at :{form.time.slice(-2)} past every hour.
-              </p>
-            )}
-            {(needsWeekday || needsNth) && (
-              <div className="flex gap-2">
-                {needsNth && (
-                  <select
-                    value={form.nth}
-                    onChange={(e) => patch({ nth: Number(e.target.value) })}
-                    className={field}
-                    title="Which one of the month"
-                  >
-                    {NTHS.map((label, index) => (
-                      <option key={label} value={index + 1}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <select
-                  value={form.weekday}
-                  onChange={(e) => patch({ weekday: Number(e.target.value) })}
+            <select
+              value={form.kind}
+              onChange={(e) => patch({ kind: e.target.value })}
+              className={field}
+              title="What makes this task start"
+            >
+              {KINDS.map((kind) => (
+                <option key={kind.id} value={kind.id}>
+                  {kind.label}
+                </option>
+              ))}
+            </select>
+            {watching && (
+              <>
+                <input
+                  value={form.target}
+                  onChange={(e) => patch({ target: e.target.value })}
+                  placeholder={TARGET_LABEL[form.kind]}
                   className={field}
-                  title="Which day"
+                  title={TARGET_LABEL[form.kind]}
+                />
+                <input
+                  value={form.filter}
+                  onChange={(e) => patch({ filter: e.target.value })}
+                  placeholder={FILTER_LABEL[form.kind]}
+                  className={field}
+                  title={FILTER_LABEL[form.kind]}
+                />
+                <select
+                  value={form.interval_secs}
+                  onChange={(e) => patch({ interval_secs: Number(e.target.value) })}
+                  className={field}
+                  title="How often it looks"
                 >
-                  {WEEKDAYS.map((label, index) => (
-                    <option key={label} value={index}>
-                      {label}
+                  {INTERVALS.map((interval) => (
+                    <option key={interval.secs} value={interval.secs}>
+                      {interval.label}
                     </option>
                   ))}
                 </select>
-              </div>
+                <p className="text-[11px] leading-relaxed text-neutral-600">
+                  It looks on that interval and starts a run only when what it sees has changed
+                  — a folder that stays busy starts one run, not fifty. A change it never sees
+                  while the app is closed does not start one later.
+                </p>
+              </>
+            )}
+            {!watching && (
+              <>
+                <div className="flex gap-2">
+                  <select
+                    value={form.freq}
+                    onChange={(e) => patch({ freq: e.target.value })}
+                    className={field}
+                    title="How often"
+                  >
+                    <option value="hourly">Every hour</option>
+                    <option value="daily">Every day</option>
+                    <option value="weekdays">Weekdays</option>
+                    <option value="weekly">Every week</option>
+                    <option value="monthly">Every month</option>
+                  </select>
+                  <input
+                    type="time"
+                    value={form.time}
+                    onChange={(e) => patch({ time: e.target.value || "09:00" })}
+                    className={`${field} w-32`}
+                    title={form.freq === "hourly" ? "Only the minute is used" : "Local time"}
+                  />
+                </div>
+                {form.freq === "hourly" && (
+                  <p className="text-[11px] text-neutral-600">
+                    Hourly reads the minute only: it runs at :{form.time.slice(-2)} past every
+                    hour.
+                  </p>
+                )}
+                {(needsWeekday || needsNth) && (
+                  <div className="flex gap-2">
+                    {needsNth && (
+                      <select
+                        value={form.nth}
+                        onChange={(e) => patch({ nth: Number(e.target.value) })}
+                        className={field}
+                        title="Which one of the month"
+                      >
+                        {NTHS.map((label, index) => (
+                          <option key={label} value={index + 1}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    <select
+                      value={form.weekday}
+                      onChange={(e) => patch({ weekday: Number(e.target.value) })}
+                      className={field}
+                      title="Which day"
+                    >
+                      {WEEKDAYS.map((label, index) => (
+                        <option key={label} value={index}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </>
             )}
             <select
               value={form.project_id ?? ""}
