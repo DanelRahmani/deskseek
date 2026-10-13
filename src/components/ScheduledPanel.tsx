@@ -30,6 +30,8 @@ const field =
  * starts at Monday — the one place the two conventions meet.
  */
 function describe(task: ScheduledTask): string {
+  if (task.freq === "hourly") return `Every hour at :${task.time.slice(-2)}`;
+  if (task.freq === "weekdays") return `Weekdays at ${task.time}`;
   if (task.freq === "weekly") return `Every ${WEEKDAYS[task.weekday]} at ${task.time}`;
   if (task.freq === "monthly") {
     return `The ${NTHS[task.nth - 1]} ${WEEKDAYS[task.weekday]} of the month at ${task.time}`;
@@ -358,7 +360,9 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
                 className={field}
                 title="How often"
               >
+                <option value="hourly">Every hour</option>
                 <option value="daily">Every day</option>
+                <option value="weekdays">Weekdays</option>
                 <option value="weekly">Every week</option>
                 <option value="monthly">Every month</option>
               </select>
@@ -367,9 +371,14 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
                 value={form.time}
                 onChange={(e) => patch({ time: e.target.value || "09:00" })}
                 className={`${field} w-32`}
-                title="Local time"
+                title={form.freq === "hourly" ? "Only the minute is used" : "Local time"}
               />
             </div>
+            {form.freq === "hourly" && (
+              <p className="text-[11px] text-neutral-600">
+                Hourly reads the minute only: it runs at :{form.time.slice(-2)} past every hour.
+              </p>
+            )}
             {(needsWeekday || needsNth) && (
               <div className="flex gap-2">
                 {needsNth && (

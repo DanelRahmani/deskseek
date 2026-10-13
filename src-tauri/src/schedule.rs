@@ -1,18 +1,26 @@
 //! When a scheduled task next runs.
 //!
 //! Arithmetic over local time and nothing else. The whole need is "every day at
-//! 09:00", "every Monday at 17:00" and "the first Wednesday of the month at
-//! 08:00", so a cron crate would be a dependency and a grammar for three shapes.
-//! `next_run_at` is pure, so the calendar rules are pinned by tests rather than
-//! by waiting a week to see whether it fires.
+//! 09:00", "every Monday at 17:00", "the first Wednesday of the month at 08:00"
+//! — and, since 8.5, "every hour" and "every weekday" — so a cron crate would be
+//! a dependency and a grammar for five shapes. `next_run_at` is pure, so the
+//! calendar rules are pinned by tests rather than by waiting a week to see
+//! whether it fires.
 
-use chrono::{DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveTime, TimeZone};
+use chrono::{
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveTime, TimeZone, Timelike,
+    Weekday,
+};
 
 /// How often a task repeats. `weekday` and `nth` are read only by the shape that
-/// uses them, so a daily task carries values that are simply ignored.
+/// uses them, so a daily task carries values that are simply ignored — and so
+/// does an hourly one, which reads only the *minute* of `time`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freq {
+    Hourly,
     Daily,
+    /// Every Monday to Friday; the weekend is skipped.
+    Weekdays,
     Weekly,
     Monthly,
 }
@@ -22,6 +30,8 @@ impl Freq {
     /// most likely to notice, rather than a task that silently never runs.
     pub fn parse(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
+            "hourly" => Self::Hourly,
+            "weekdays" => Self::Weekdays,
             "weekly" => Self::Weekly,
             "monthly" => Self::Monthly,
             _ => Self::Daily,
@@ -30,7 +40,9 @@ impl Freq {
 
     pub fn id(self) -> &'static str {
         match self {
+            Self::Hourly => "hourly",
             Self::Daily => "daily",
+            Self::Weekdays => "weekdays",
             Self::Weekly => "weekly",
             Self::Monthly => "monthly",
         }
@@ -106,6 +118,20 @@ pub fn next_run_at(now: DateTime<Local>, s: &Schedule) -> i64 {
     let after = now.timestamp();
 
     match s.freq {
+        Freq::Hourly => {
+            // "Every hour at :MM" — the minute is read, the hour is not. Worked
+            // out on the timestamp so 23:30 rolls straight to 00:30 rather than
+            // wrapping a date; strictly after, so a task whose minute is now does
+            // not fire again — the same rule daily follows.
+            let mut candidate = now.with_minute(s.time.minute()).unwrap_or(now);
+            candidate = candidate.with_second(0).unwrap_or(candidate);
+            candidate = candidate.with_nanosecond(0).unwrap_or(candidate);
+            if candidate.timestamp() > after {
+                candidate.timestamp()
+            } else {
+                (candidate + Duration::hours(1)).timestamp()
+            }
+        }
         Freq::Daily => {
             let today_at = local_at(today, s.time);
             if today_at > after {
@@ -113,6 +139,23 @@ pub fn next_run_at(now: DateTime<Local>, s: &Schedule) -> i64 {
             } else {
                 local_at(today + Duration::days(1), s.time)
             }
+        }
+        Freq::Weekdays => {
+            // Monday to Friday at the same time; Saturday and Sunday are skipped.
+            // Eight days always hold a weekday, so one of them is ahead of `now`.
+            let mut date = today;
+            for _ in 0..8 {
+                let weekend = matches!(date.weekday(), Weekday::Sat | Weekday::Sun);
+                if !weekend {
+                    let ts = local_at(date, s.time);
+                    if ts > after {
+                        return ts;
+                    }
+                }
+                date = date + Duration::days(1);
+            }
+            // Unreachable: a weekday always turns up well inside eight days.
+            local_at(today + Duration::days(7), s.time)
         }
         Freq::Weekly => {
             // Eight days covers every weekday, so one of them matches.
@@ -226,7 +269,7 @@ mod tests {
     #[test]
     fn every_frequency_lands_strictly_in_the_future() {
         let now = at(2026, 10, 12, 10, 0);
-        for freq in [Freq::Daily, Freq::Weekly, Freq::Monthly] {
+        for freq in [Freq::Hourly, Freq::Daily, Freq::Weekdays, Freq::Weekly, Freq::Monthly] {
             let s = sched(freq, "10:00", 2, 1);
             let ts = next_run_at(now, &s);
             assert!(ts > now.timestamp(), "{freq:?} did not move forward");
@@ -234,11 +277,45 @@ mod tests {
     }
 
     #[test]
+    fn hourly_reads_the_minute_and_crosses_midnight() {
+        let s = sched(Freq::Hourly, "09:30", 0, 1);
+        // Later the same hour, then the next hour, then over a day boundary.
+        assert_eq!(next_run_at(at(2026, 10, 12, 9, 10), &s), stamp(2026, 10, 12, 9, 30));
+        assert_eq!(next_run_at(at(2026, 10, 12, 9, 40), &s), stamp(2026, 10, 12, 10, 30));
+        assert_eq!(next_run_at(at(2026, 10, 12, 23, 30), &s), stamp(2026, 10, 13, 0, 30));
+        // Exactly on the minute is already gone: strictly after, like every other
+        // shape, or advancing and firing would re-fire forever.
+        assert_eq!(next_run_at(at(2026, 10, 12, 9, 30), &s), stamp(2026, 10, 12, 10, 30));
+    }
+
+    #[test]
+    fn weekdays_skip_the_weekend() {
+        let s = sched(Freq::Weekdays, "09:00", 0, 1);
+        // Monday, later that day.
+        assert_eq!(next_run_at(at(2026, 10, 12, 8, 0), &s), stamp(2026, 10, 12, 9, 0));
+        // Friday after the time has gone: the next weekday is Monday, not Saturday.
+        assert_eq!(next_run_at(at(2026, 10, 16, 18, 0), &s), stamp(2026, 10, 19, 9, 0));
+        // Saturday and Sunday both wait for Monday.
+        assert_eq!(next_run_at(at(2026, 10, 17, 8, 0), &s), stamp(2026, 10, 19, 9, 0));
+        assert_eq!(next_run_at(at(2026, 10, 18, 8, 0), &s), stamp(2026, 10, 19, 9, 0));
+    }
+
+    #[test]
     fn an_unparseable_row_still_schedules_something() {
-        let s = Schedule::parse("hourly", "nonsense", -3, 99);
+        let s = Schedule::parse("fortnightly", "nonsense", -3, 99);
         assert_eq!(s.freq, Freq::Daily);
         assert_eq!(s.time, NaiveTime::from_hms_opt(9, 0, 0).unwrap());
         assert_eq!(s.weekday, 4);
         assert_eq!(s.nth, 4);
+    }
+
+    #[test]
+    fn the_two_new_shapes_round_trip_through_their_ids() {
+        for (id, freq) in [("hourly", Freq::Hourly), ("weekdays", Freq::Weekdays)] {
+            assert_eq!(Freq::parse(id), freq);
+            assert_eq!(freq.id(), id);
+        }
+        // `weekdays` and `weekly` are different shapes, not a prefix of each other.
+        assert_ne!(Freq::parse("weekdays"), Freq::parse("weekly"));
     }
 }

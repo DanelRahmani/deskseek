@@ -18,6 +18,7 @@ one.
 - Another assistant's memory file or prompt folder imports into editable categories and saved prompts — additive, with nothing already written overwritten
 - A chat can be set to not feed memory: nothing said in it is remembered, and no memory is shown to it
 - A project's memory can be edited from the panel that shows it — forget one line, or add one, without leaving for Settings → Memory
+- A scheduled task can run every hour (on a chosen minute) or on weekdays only
 
 ## 0.4.0 — 2026-10-12
 

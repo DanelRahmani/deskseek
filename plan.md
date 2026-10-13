@@ -1237,13 +1237,20 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   showing another's notes). `cargo test` 335 passed.
 - **Stop**: a project's memory can be changed from the panel that displays it.
 
-### 8.5 [S] Hourly and weekdays
+### 8.5 [S] Hourly and weekdays ✅
 - **Why**: the three fields *are* the schedule, and that stays. Two more values close the gap with
   Claude, ChatGPT and Gemini without teaching anyone a cron string.
-- **Files**: `schedule.rs` (the pure local-time arithmetic and its tests), `ScheduledPanel.tsx`.
-- **Test**: `next_run_at` for an hourly task across a day boundary and for a weekday task across a
-  weekend, plus the invariant that holds this area together: the answer is **strictly after** now,
-  and it is advanced *before* the run starts, which is what stops a task firing twice.
+- **Files**: `schedule.rs` (`Freq::Hourly` and `Freq::Weekdays`, their ids, and the two `next_run_at`
+  arms — an hourly task reads only the *minute* of `time` and works on the timestamp so 23:30 rolls
+  to 00:30; a weekday task skips Saturday and Sunday); `ScheduledPanel.tsx` (both options, and a line
+  saying the hourly shape reads the minute only). `create_scheduled` needed no change: it already
+  sends the shape through `Schedule::parse`, which normalises whatever the panel writes.
+- **Test**: in `schedule.rs`, `hourly_reads_the_minute_and_crosses_midnight` (later the same hour →
+  the next hour → over a day boundary, and exactly-on-the-minute is already gone),
+  `weekdays_skip_the_weekend` (Friday evening → Monday, and both weekend days land on Monday),
+  `the_two_new_shapes_round_trip_through_their_ids`, and the strictly-after invariant extended to all
+  five shapes. The old "unknown value" test moved off `"hourly"` — now a real shape — onto
+  `"fortnightly"`. `cargo test` 338 passed.
 - **Stop**: a task can be set to run hourly, or on weekdays only, and the panel says when it is next.
 
 ### 8.6 [S] A scheduled task shows its runs

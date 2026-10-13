@@ -67,10 +67,10 @@ export interface ProjectSpend {
 }
 
 /**
- * One recurring task: a prompt and when to run it. The three fields that
- * describe the schedule are `freq`, `time` and — for weekly and monthly —
- * `weekday`/`nth`, so "the first Wednesday of the month at 08:00" is one
- * description rather than a timestamp that has to be recomputed on every edit.
+ * One recurring task: a prompt and when to run it. The fields that describe the
+ * schedule are `freq` and `time`, plus `weekday`/`nth` for the weekly and monthly
+ * shapes, so "the first Wednesday of the month at 08:00" is one description
+ * rather than a timestamp that has to be recomputed on every edit.
  */
 export interface ScheduledTask {
   id: string;
@@ -79,9 +79,9 @@ export interface ScheduledTask {
   /** The chat it runs in, or null to start a fresh one each time. */
   chat_id: string | null;
   project_id: string | null;
-  /** `daily` | `weekly` | `monthly` */
+  /** `hourly` | `daily` | `weekdays` | `weekly` | `monthly` */
   freq: string;
-  /** Local wall-clock "HH:MM". */
+  /** Local wall-clock "HH:MM". An hourly task reads only the minute. */
   time: string;
   /** 0 = Monday. Read only by the weekly and monthly shapes. */
   weekday: number;
