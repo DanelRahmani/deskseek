@@ -25,8 +25,8 @@ added seven more of the same kind: a fold's note, an `Always allow cargo` that t
 does not ask again, a chat set to *No network* refusing a fetch, a delete still
 prompting in *Skip*, the *By what spent it* rows, and an *Auto* run whose reviewer
 cannot be reached. Only a window can confirm them; none is reachable from
-`cargo test`. Phase 10 added ten more, and they are the least reachable of the lot:
-a global chord pressed from inside another application, a window that is
+`cargo test`. Phase 10 added twenty-three more, and they are the least reachable of
+the lot: a global chord pressed from inside another application, a window that is
 photographed, a tray whose left click brings the window back, and a browser whose
 console and network log only exist while a real page is running.
 
