@@ -297,6 +297,14 @@ the parts only a person can see.
       reads as `(the whole tool)`; taking one back asks again, and leaves the others alone
 - [ ] In *Manual*, drive the browser on one site: allow `browser_click` permanently and the button
       names that site, so a second click there runs without a prompt while another site's does not
+- [ ] Set a chat to *No network* and ask it to fetch a page, then to run `git push`: both are
+      refused, the refusal names the policy, and *Settings → Tools → Recent decisions* has a
+      `blocked` line for each — while an ordinary `cargo test` and a `write_file` in the same chat
+      still run
+- [ ] Set the same chat to *Read only*: a fetch and a search now work, while `curl -d @file url`
+      and a `browser_type` are still refused
+- [ ] Both switches say they are a policy and not a sandbox, in the row and in the notice set when
+      they are changed
 
 ## Where commands run
 

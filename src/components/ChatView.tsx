@@ -5,6 +5,7 @@ import type {
   Attachment,
   ChatRow,
   DoneEvent,
+  Egress,
   InterruptedRun,
   MessageRow,
   ModelInfo,
@@ -78,6 +79,11 @@ interface Props {
    * memory is shown here and nothing said here is remembered.
    */
   onIncognito: (incognito: boolean) => void;
+  /**
+   * What this chat may send out. A declared policy is a refusal rather than a
+   * prompt, so it holds in every mode — see EGRESS.
+   */
+  onEgress: (egress: Egress) => void;
   onPickWorkspace: () => void;
   /** Show where this chat keeps its own files. */
   onRevealFolder: () => void;
@@ -146,6 +152,20 @@ export const MODES: { id: PermissionMode; label: string; hint: string }[] = [
   { id: "skip", label: "Skip", hint: "Never ask; only catastrophic commands are refused" },
 ];
 
+/// What a chat may send out. Three rungs, and `all` is not a policy at all —
+/// nothing is declared, so the guard's own heuristic decides what it always did.
+/// A declared rung is a refusal rather than a prompt, which is why it is a
+/// switch beside the approval mode rather than one more thing to approve.
+export const EGRESS: { id: Egress; label: string; hint: string }[] = [
+  { id: "all", label: "Network: on", hint: "Say nothing about the network; the safety guard decides as it always has" },
+  { id: "read-only", label: "Read only", hint: "It may read the web; it may not send anything out" },
+  { id: "none", label: "No network", hint: "Nothing reaches out: no fetching, no searching, no command that talks to a remote" },
+];
+
+export const EGRESS_NOTE =
+  "A policy, not a sandbox: a program the agent runs can still open a socket by itself. It refuses \
+what this app sends out — a fetch, an upload, a browser action";
+
 /** Kept in sync with the switch in App.tsx's send(). */
 export const COMMANDS = [
   { name: "/mode", description: "Ask, Standard, Plan or Agent — or cycle with Shift+Tab" },
@@ -204,6 +224,7 @@ export function ChatView({
   onAgentMode,
   onModeChange,
   onIncognito,
+  onEgress,
   onPickWorkspace,
   onRevealFolder,
   onAttach,
@@ -909,6 +930,29 @@ export function ChatView({
                 Incognito
               </button>
 
+              <div
+                className="flex items-center gap-0.5 rounded-lg bg-neutral-900 p-0.5"
+                title={EGRESS.find((e) => e.id === chat.egress)?.hint}
+              >
+                {EGRESS.map((rung) => {
+                  const active = chat.egress === rung.id;
+                  return (
+                    <button
+                      key={rung.id}
+                      onClick={() => onEgress(rung.id)}
+                      title={rung.hint}
+                      className={`rounded-md px-1.5 py-0.5 text-[12px] transition duration-150 ${
+                        active
+                          ? "bg-amber-500/15 font-medium text-amber-300"
+                          : "text-neutral-500 hover:text-neutral-300"
+                      }`}
+                    >
+                      {rung.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <span className="ml-auto hidden text-[11px] text-neutral-600 sm:block">
                 Shift+Tab to change mode
               </span>
@@ -917,6 +961,16 @@ export function ChatView({
                 <span className="w-full text-[11px] text-amber-300/80">
                   This chat does not feed memory — nothing here is remembered, and no memory is
                   shown to it.
+                </span>
+              )}
+
+              {chat.egress !== "all" && (
+                <span className="w-full text-[11px] text-amber-300/80">
+                  {chat.egress === "none"
+                    ? "This chat reaches no network at all":
+                    "This chat may read the web but send nothing out"}
+                  {" — "}
+                  {EGRESS_NOTE}
                 </span>
               )}
             </div>

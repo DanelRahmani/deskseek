@@ -561,6 +561,25 @@ publishing, `rm -rf /`) are still refused — a refusal is final, so do not retr
         }
     }
 
+    // A declared network policy is a refusal worth planning around rather than
+    // walking into: said once here, the model does not have to discover it a
+    // refused call at a time. The wording matches the refusal itself.
+    match guard::Egress::parse(&chat.egress) {
+        guard::Egress::All => {}
+        guard::Egress::ReadOnly => base.push_str(
+            "\n\n# Network\n\n\
+This chat is set to read the web, not send to it: reading pages and searching are fine, but an \
+upload, a `curl -d`, and a browser action that submits a form are refused. A refusal is final — \
+tell the user what you wanted to send instead of retrying it.",
+        ),
+        guard::Egress::None => base.push_str(
+            "\n\n# Network\n\n\
+This chat does not reach the network at all: no fetching, no searching, no browser, and no command \
+that talks to a remote (`curl`, `wget`, `git push`, `git clone`). A refusal is final — say what you \
+could not reach and why it mattered.",
+        ),
+    }
+
     // The guidance block is done; the project context inside it is reported on
     // its own, so it is taken out of the block's total rather than counted twice.
     parts.push(part(
@@ -1573,6 +1592,10 @@ pub async fn run(
         guard::PermissionMode::parse(&chat.permission_mode)
     };
     let mut strikes: u32 = 0;
+    // The chat's declared network policy, read once: it is the same answer for
+    // every call in the run, and a policy that changed halfway through a run
+    // would be a policy nobody could reason about.
+    let egress = guard::Egress::parse(&chat.egress);
     // Desktop actions cost something real, so the run gets a budget.
     let mut computer_actions: usize = 0;
 
@@ -1805,6 +1828,43 @@ pub async fn run(
                     ));
                 }
             }
+            // What this chat said it may send out comes before everything else:
+            // before the mode, before the guard and before the user is asked. A
+            // declared policy is a refusal rather than a second opinion, which is
+            // what makes it true in Manual as well as in Skip.
+            if let Some(reason) = guard::egress_blocks(egress, &name, &args) {
+                denial = Some(format!(
+                    "Blocked by this chat's network policy: {reason}. Tell the user what you \
+                     wanted to send and where, rather than retrying it."
+                ));
+                // Written down for the same reason the guard's refusal is: a
+                // refusal produces no tool result, so the log is the only place
+                // it exists afterwards.
+                let _ = app.emit(
+                    EVENT_GUARD,
+                    serde_json::json!({
+                        "chatId": chat_id,
+                        "tool": name,
+                        "args": args,
+                        "reason": reason,
+                        "mode": mode.as_str(),
+                        "policy": egress.as_str(),
+                    }),
+                );
+                {
+                    let conn = state.db.lock().unwrap();
+                    let _ = db::log_decision(
+                        &conn,
+                        chat_id,
+                        &name,
+                        db::BLOCKED,
+                        reason,
+                        &approvals::args_digest(&args),
+                        &ws.to_string_lossy(),
+                    );
+                }
+            }
+
             let allowed = if denial.is_some() {
                 false
             } else if matches!(class, ToolClass::Read | ToolClass::Internal) {

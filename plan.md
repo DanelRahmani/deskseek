@@ -1500,15 +1500,31 @@ restart is something the user can see and revoke.
   a grant is matched on the target *text*, so `ui_click`'s window ("notepad") and a site are
   compared as the app spelled them — case-sensitively, because a path and a program name are.
 
-### 9.3 [S] A chat that declares what it may send out
+### 9.3 [S] A chat that declares what it may send out ✅
 - **Why**: the guard already *tries* to catch an upload by pattern-matching arguments; a policy the
   user states is stronger and can say *why* it refused. Claude Cowork respects session egress
   permissions, and this is the honest local equivalent.
-- **Files**: `store/settings.rs` or `db.rs` (the per-chat policy, with the serde-default habit);
-  `tools/guard.rs` (consult the policy before the heuristic); `commands.rs`; `src/types.ts`;
-  `ChatView.tsx` (the switch, and the sentence saying it is a policy and not a sandbox).
-- **Test**: a chat set to no uploads refuses an upload outright, and an ordinary local write is
-  untouched by it.
+- **Files**: `tools/guard.rs` (`Egress` — the three rungs, `parse`/`as_str`, and `egress_blocks`,
+  the one rule saying what a declared policy refuses); `store/db.rs` (`chats.egress` in the
+  `CREATE TABLE` **and** as a guarded `ALTER`, through `ChatRow`, both SELECTs, `duplicate_chat` and
+  `set_chat_egress`); `conversation/agent.rs` (the policy is asked before the mode, before the guard
+  and before the user — a refusal rather than a second opinion — plus a `# Network` prompt section
+  so the model plans around it); `commands.rs` and `src/api.ts` (`set_chat_egress`); `src/types.ts`
+  (`Egress`, `ChatRow.egress`); `ChatView.tsx` (the three-way switch beside *Incognito*, a banner
+  when it is not `all`, and the sentence that says it is a policy and not a sandbox); `App.tsx`
+  (the setter and its notice).
+- **Test**: `guard::tests::a_declared_policy_refuses_going_out_and_leaves_local_work_alone` — with
+  nothing declared the policy says nothing at all (so it cannot become a second, quieter copy of
+  the heuristic); `none` refuses a POST, a `git push`, a fetch, a search and a browser action,
+  while `cargo test` and a `write_file` are untouched; `read-only` allows a fetch, a search and a
+  bare `curl https://…` while refusing `curl -d`, a `browser_type` and a write; and the rungs
+  round-trip through the strings the database holds. The upgrade test on a **real temp file** now
+  also asserts `kept.egress == "all"`, which is a real read of the column only the ALTER could
+  have added. Falsified: making the `none` rung stop checking the outbound list
+  (`OUTBOUND.iter().any(…)` → `false`) fails it on the `curl -X POST` case, and restoring passes.
+  `cargo test` 353 passed. Deliberate deviation from the plan, said out loud: the
+  policy is **per chat** (a column on `chats`, like incognito) rather than per run — a per-run
+  switch would be a second control for one rule, and the chat is the unit the user thinks in.
 - **Stop**: a chat set to "no uploads" cannot send a local file out, and says why when refused.
 
 ### 9.4 [S] A delete is never auto-approved

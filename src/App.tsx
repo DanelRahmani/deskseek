@@ -25,6 +25,7 @@ import type {
   Attachment,
   ChatRow,
   DoneEvent,
+  Egress,
   InterruptedRun,
   MessageHit,
   MessageRow,
@@ -1002,6 +1003,29 @@ export default function App() {
     [refreshChats],
   );
 
+  // What a chat may send out. A declared policy is a refusal rather than a
+  // prompt, so the notice says so plainly — and says the honest limit with it.
+  const changeEgress = useCallback(
+    async (chatId: string, egress: Egress) => {
+      try {
+        await api.setChatEgress(chatId, egress);
+        setChatsById((prev) =>
+          prev[chatId] ? { ...prev, [chatId]: { ...prev[chatId], egress } } : prev,
+        );
+        setNotice(
+          egress === "none"
+            ? "This chat now reaches no network at all. It is a policy, not a sandbox — a program it runs can still open a socket by itself."
+            : egress === "read-only"
+              ? "This chat may read the web but not send to it. A policy, not a sandbox."
+              : "This chat has no declared network policy again.",
+        );
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [],
+  );
+
   const stop = useCallback(async (chatId: string) => {
     try {
       await api.stopChat(chatId);
@@ -1803,6 +1827,7 @@ export default function App() {
                     onModeChange={(mode) => id && changeMode(id, mode)}
                     onAgentMode={(mode) => id && changeAgentMode(id, mode)}
                     onIncognito={(on) => id && changeIncognito(id, on)}
+                    onEgress={(egress) => id && changeEgress(id, egress)}
                     onPickWorkspace={() => pickWorkspace(id, pane)}
                     onRevealFolder={() => id && void revealChatFolder(id)}
                     onContext={() => setPanel((current) => (current === "context" ? "none" : "context"))}

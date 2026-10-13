@@ -14,6 +14,7 @@ import type {
   DeltaEvent,
   DesignView,
   DoneEvent,
+  Egress,
   ErrorEvent,
   EnvProbe,
   FilePreview,
@@ -119,6 +120,9 @@ export const api = {
     invoke<void>("set_chat_model", { chatId, model, thinking, effort }),
   setChatPermissionMode: (chatId: string, mode: PermissionMode) =>
     invoke<void>("set_chat_permission_mode", { chatId, mode }),
+  /** What this chat may send out. A declared policy holds in every mode. */
+  setChatEgress: (chatId: string, egress: Egress) =>
+    invoke<void>("set_chat_egress", { chatId, egress }),
   /** Chat mode only: how much rope this conversation has. */
   setChatMode: (chatId: string, mode: string) =>
     invoke<void>("set_chat_mode", { chatId, mode }),

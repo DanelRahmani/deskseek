@@ -40,6 +40,10 @@ pub struct ChatRow {
     /// This chat does not feed memory, and its prompt carries none. Handled by
     /// `memory::enabled` so the read and the write agree.
     pub incognito: bool,
+    /// What this chat may send out: `all` (nothing declared), `read-only` or
+    /// `none`. See `tools::guard::Egress` — it is consulted before the mode and
+    /// before the user is asked.
+    pub egress: String,
     /// The project this chat belongs to, or `None`. Membership only — the chat's
     /// own folder and memory do not depend on it.
     pub project_id: Option<String>,
@@ -93,6 +97,10 @@ CREATE TABLE IF NOT EXISTS chats (
     -- Added by ALTER for databases written before the switch existed. Not
     -- activity, so flipping it does not bump `updated_at`.
     incognito    INTEGER NOT NULL DEFAULT 0,
+    -- What this chat may send out: 'all' (nothing declared), 'read-only' (it may
+    -- read the web, not send to it) or 'none'. See tools::guard::Egress. Added by
+    -- ALTER for databases written before the switch existed.
+    egress       TEXT NOT NULL DEFAULT 'all',
     -- The project this chat belongs to, or NULL. Membership only: the chat's own
     -- folder and memory do not depend on it. Also added by ALTER for databases
     -- written before projects existed.
@@ -463,6 +471,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         "ALTER TABLE chats ADD COLUMN incognito INTEGER NOT NULL DEFAULT 0",
         [],
     );
+    // A chat's declared network policy arrived with 9.3. An older database gets
+    // 'all', which is exactly "nothing was declared before".
+    let _ = conn.execute(
+        "ALTER TABLE chats ADD COLUMN egress TEXT NOT NULL DEFAULT 'all'",
+        [],
+    );
     // Tagging a turn with the scheduled task that started it arrived with 8.6.
     // NULL for every existing row, which is right: they were all typed by hand.
     let _ = conn.execute("ALTER TABLE turn_usage ADD COLUMN task_id TEXT", []);
@@ -553,7 +567,7 @@ pub fn swap_file(conn: &mut Connection, live: &Path, restored: &Path) -> Result<
 /// it is archived.
 pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito, egress
          FROM chats WHERE kind = ?1 ORDER BY updated_at DESC",
     )?;
     let rows = stmt.query_map([kind], |r| {
@@ -574,6 +588,7 @@ pub fn list_chats(conn: &Connection, kind: &str) -> rusqlite::Result<Vec<ChatRow
             project_id: r.get(13)?,
             folder: r.get(14)?,
             incognito: r.get::<_, i64>(15)? != 0,
+            egress: r.get(16)?,
         })
     })?;
     rows.collect()
@@ -609,6 +624,7 @@ pub fn create_chat(
         agent_mode: "standard".to_string(),
         archived: false,
         incognito: false,
+        egress: "all".to_string(),
         project_id: None,
         created_at: ts,
         updated_at: ts,
@@ -647,10 +663,18 @@ pub fn duplicate_chat(conn: &Connection, id: &str) -> rusqlite::Result<Option<Ch
     )?;
     rename_chat(conn, &copy.id, &format!("{} (copy)", source.title))?;
     // `incognito` comes with it: the copy is the same conversation, so it must
-    // not quietly start feeding memory when the original does not.
+    // not quietly start feeding memory when the original does not. The declared
+    // network policy comes with it for the same reason — a copy of an off-the-grid
+    // chat must not be the one that starts talking.
     conn.execute(
-        "UPDATE chats SET agent_mode = ?2, project_id = ?3, incognito = ?4 WHERE id = ?1",
-        params![copy.id, source.agent_mode, source.project_id, source.incognito as i64],
+        "UPDATE chats SET agent_mode = ?2, project_id = ?3, incognito = ?4, egress = ?5 WHERE id = ?1",
+        params![
+            copy.id,
+            source.agent_mode,
+            source.project_id,
+            source.incognito as i64,
+            source.egress
+        ],
     )?;
     let skills = get_chat_skills(conn, id)?;
     if !skills.is_empty() {
@@ -673,7 +697,7 @@ pub fn duplicate_chat(conn: &Connection, id: &str) -> rusqlite::Result<Option<Ch
 
 pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
     conn.query_row(
-        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito
+        "SELECT id, title, kind, workspace, model, thinking, effort, permission_mode, cost_usd, created_at, updated_at, archived, agent_mode, project_id, folder, incognito, egress
          FROM chats WHERE id = ?1",
         [id],
         |r| {
@@ -694,6 +718,7 @@ pub fn get_chat(conn: &Connection, id: &str) -> rusqlite::Result<ChatRow> {
                 project_id: r.get(13)?,
                 folder: r.get(14)?,
                 incognito: r.get::<_, i64>(15)? != 0,
+                egress: r.get(16)?,
             })
         },
     )
@@ -716,6 +741,16 @@ pub fn set_chat_incognito(conn: &Connection, id: &str, incognito: bool) -> rusql
     conn.execute(
         "UPDATE chats SET incognito = ?2 WHERE id = ?1",
         params![id, incognito as i64],
+    )?;
+    Ok(())
+}
+
+/// What this chat is allowed to send out — `all`, `read-only` or `none`. Not
+/// activity either, so `updated_at` stays where it is.
+pub fn set_chat_egress(conn: &Connection, id: &str, egress: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE chats SET egress = ?2 WHERE id = ?1",
+        params![id, egress],
     )?;
     Ok(())
 }
@@ -2888,6 +2923,11 @@ mod tests {
         // exactly what a default of 0 means. (`get_chat` selects every column, so
         // this is a real read of a column only the ALTER could have added.)
         assert!(!kept.incognito, "an upgraded chat must not be incognito");
+        // And the `egress` ALTER ran: a chat written before the switch declares
+        // no network policy, which is what a default of 'all' means. `get_chat`
+        // selects every column, so this is a real read of a column only the ALTER
+        // could have added.
+        assert_eq!(kept.egress, "all", "an upgraded chat must declare no policy");
 
         // The permission table was rebuilt rather than altered, and the grant the
         // user gave before targets existed survived as a whole-tool grant — which

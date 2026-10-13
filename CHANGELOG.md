@@ -29,6 +29,7 @@ one.
 - The decision log and the spend export to one file in your documents folder — the same rows the panels show, with a call's arguments left out in favour of their digests
 - A chat that has nearly filled the model's context window folds itself into a summary between turns rather than waiting for you to notice, and the note says how many messages went into it
 - A permanent "always allow" now names what it covers — the program, folder, app or site — so allowing `cargo` in a folder no longer allows every command in it, and the grants list shows each one's target
+- A chat can declare what it may send out — *Read only* (read the web, send nothing) or *No network* — and the policy is a refusal in every mode rather than one more thing to approve
 
 ## 0.4.0 — 2026-10-12
 

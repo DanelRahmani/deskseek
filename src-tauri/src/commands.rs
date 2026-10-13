@@ -23,7 +23,7 @@ use crate::store::{
     db, keychain,
     settings::{Instruction, Settings},
 };
-use crate::tools::{browse, desktop, exec, guard::PermissionMode, sandbox, sandbox_exec, walk};
+use crate::tools::{browse, desktop, exec, guard::{Egress, PermissionMode}, sandbox, sandbox_exec, walk};
 use crate::AppState;
 
 fn title_from(text: &str) -> String {
@@ -432,6 +432,19 @@ pub fn set_chat_permission_mode(
     let mode = PermissionMode::parse(&mode).as_str();
     let conn = state.db.lock().unwrap();
     db::set_chat_permission_mode(&conn, &chat_id, mode).map_err(|e| e.to_string())
+}
+
+/// What this chat is allowed to send out. Parsed rather than stored raw, so the
+/// database only ever holds a policy the run loop can act on.
+#[tauri::command]
+pub fn set_chat_egress(
+    state: State<'_, AppState>,
+    chat_id: String,
+    egress: String,
+) -> Result<(), String> {
+    let egress = Egress::parse(&egress).as_str();
+    let conn = state.db.lock().unwrap();
+    db::set_chat_egress(&conn, &chat_id, egress).map_err(|e| e.to_string())
 }
 
 /// How much rope this chat has. An unrecognised value becomes standard rather
@@ -2973,6 +2986,7 @@ mod tests {
             agent_mode: "standard".to_string(),
             archived: false,
             incognito: false,
+            egress: "all".to_string(),
             project_id: None,
             created_at: 0,
             updated_at: 0,

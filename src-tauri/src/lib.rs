@@ -293,6 +293,7 @@ pub fn run() {
             commands::set_chat_incognito,
             commands::set_chat_model,
             commands::set_chat_permission_mode,
+            commands::set_chat_egress,
             commands::set_chat_mode,
             commands::set_chat_workspace,
             commands::get_memory,

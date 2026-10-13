@@ -450,6 +450,12 @@ can never fire for the wrong key.
   when a page needs poking at — so they prompt for nothing either
 - `browser_read` drives the Chromium-family browser already on your machine — nothing to
   download. Point it at Chrome or Edge explicitly if auto-detection picks the wrong one
+- A chat can **declare what it may send out** — *Read only* (pages and searches are fine, an
+  upload or a form-submitting click is not) or *No network* (nothing reaches out at all) — set
+  in the composer's row beside *Incognito*. It is a **refusal in every mode** rather than one
+  more thing to approve, so it holds in *Skip* too, and the refusal says which policy refused it.
+  Said plainly beside the switch: it is a policy and not a sandbox, because a program the agent
+  runs can open a socket by itself. What it refuses is what *this app* sends out
 
 **Driving a browser** (both sections)
 

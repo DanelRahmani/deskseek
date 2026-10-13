@@ -36,6 +36,11 @@ export interface ChatRow {
    * prompt carries no memory at all.
    */
   incognito: boolean;
+  /**
+   * What this chat may send out, once you have said. A declared policy is a
+   * refusal, not a prompt: it holds in every mode.
+   */
+  egress: Egress;
   /** The project this chat belongs to, or null. Membership only. */
   project_id: string | null;
   created_at: number;
@@ -184,6 +189,13 @@ export interface MessagePage {
 }
 
 export type PermissionMode = "manual" | "auto" | "skip";
+
+/**
+ * What a chat is allowed to send out. `all` is not a policy at all — nothing is
+ * declared, so the guard's own heuristic decides; `read-only` may read the web
+ * and not send to it; `none` reaches nothing. See `tools::guard::Egress`.
+ */
+export type Egress = "all" | "read-only" | "none";
 
 export interface MessageRow {
   id: string;
