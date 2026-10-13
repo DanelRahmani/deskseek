@@ -63,6 +63,10 @@ const HOUR: i64 = 3_600;
 /// Most directory entries one fingerprint reads. A folder with a hundred
 /// thousand files would otherwise be read on every tick.
 const MAX_ENTRIES: usize = 2_000;
+/// How long `git rev-parse` gets before the check is called failed. Short: it
+/// reads a few files, and a trigger that hangs is worse than one that reports
+/// against a stuck repository.
+const GIT_TIMEOUT: u64 = 15;
 
 /// Which change a trigger waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -181,7 +185,7 @@ impl Spec {
 
     /// Never faster than the tick that would have to notice it.
     pub fn interval(&self) -> i64 {
-        self.interval_secs.max(MIN_INTERVAL_SECS)
+        clamped(self.interval_secs)
     }
 
     /// When a trigger first looks, or `None` for a cadence — where the caller
@@ -199,6 +203,12 @@ impl Spec {
             NEVER
         })
     }
+}
+
+/// Never faster than the tick that would have to notice it, whatever an interval
+/// was set to or hand-edited into.
+fn clamped(secs: i64) -> i64 {
+    secs.max(MIN_INTERVAL_SECS)
 }
 
 /// What a fresh fingerprint means against the one that was stored.
@@ -273,33 +283,44 @@ pub fn file_fingerprint(dir: &Path, filter: &str) -> Result<String, String> {
 /// `git` is asked rather than `.git` being read, because the answer is not in one
 /// file: a branch may be packed, HEAD may be detached, and a worktree keeps its
 /// refs somewhere else again. The tool that already knows is the one to ask.
+///
+/// It is asked through `exec::capture`, which is this app's one recipe for running
+/// a program: no console window flashes, the sensitive environment is removed, and
+/// the child is killed if it outlives its timeout. Spawning `git` directly here
+/// would have flashed a window every interval, forever, and left a stray process
+/// on a hard kill.
 pub async fn git_fingerprint(repo: &Path, reference: &str) -> Result<String, String> {
     let reference = {
         let reference = reference.trim();
         if reference.is_empty() { "HEAD" } else { reference }
     };
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .arg("rev-parse")
-        .arg(reference)
-        .output()
-        .await
-        .map_err(|e| format!("could not run git: {e}"))?;
-
-    if !output.status.success() {
-        let why = String::from_utf8_lossy(&output.stderr);
-        let why = why.trim();
+    let Some(repo) = repo.to_str() else {
         return Err(format!(
-            "git rev-parse {reference} failed{}",
-            if why.is_empty() {
-                String::new()
-            } else {
-                format!(": {why}")
-            }
+            "{} is not a path git can be pointed at",
+            repo.display()
         ));
+    };
+
+    let text = crate::tools::exec::capture("git", &["-C", repo, "rev-parse", reference], GIT_TIMEOUT)
+        .await
+        .ok_or("could not run git — is it installed and on PATH?")?;
+
+    // `rev-parse` prints the resolved id or prints why it has none, and an id is
+    // hex. Anything else is git explaining itself, and saying so beats storing an
+    // error message as if it were a commit.
+    let resolved = text.trim();
+    if is_object_id(resolved) {
+        return Ok(resolved.to_string());
     }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    Err(format!("git could not resolve {reference}: {resolved}"))
+}
+
+/// Whether git's answer is a commit id rather than the reason it has none.
+///
+/// The rule is the *shape*, not the length: forty characters in a SHA-1
+/// repository and sixty-four in a SHA-256 one, and both are hex.
+fn is_object_id(text: &str) -> bool {
+    text.len() >= 7 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// What a page's text means.
@@ -380,7 +401,7 @@ pub async fn tick(app: &AppHandle, state: &AppState, task: &db::ScheduledRow) {
     // Move the next check on *first*, exactly as the calendar path does: a check
     // that takes longer than the interval must not be started again by the tick
     // that follows it.
-    let next = now + task.interval_secs.max(MIN_INTERVAL_SECS);
+    let next = now + clamped(task.interval_secs);
     touch(state, &task.id, next, now);
 
     let fingerprint = match look(&state.http, kind, task).await {
@@ -399,11 +420,7 @@ pub async fn tick(app: &AppHandle, state: &AppState, task: &db::ScheduledRow) {
         }
         Decision::Same => note(state, &task.id, "no change"),
         Decision::Fire => {
-            let recent = {
-                let conn = state.db.lock().unwrap();
-                db::fires_since(&conn, &task.id, now - HOUR).unwrap_or(0)
-            };
-            if recent >= MAX_FIRES_PER_HOUR {
+            if at_cap(state, &task.id, now) {
                 // The fingerprint is deliberately *not* stored, so the change is
                 // still pending: it fires as soon as the hour clears rather than
                 // being thrown away because it arrived during a burst.
@@ -434,6 +451,16 @@ fn touch(state: &AppState, id: &str, next_run_at: i64, checked_at: i64) {
 fn note(state: &AppState, id: &str, text: &str) {
     let conn = state.db.lock().unwrap();
     let _ = db::set_scheduled_note(&conn, id, text);
+}
+
+/// Whether a trigger has already started as many runs this hour as it may.
+///
+/// Counted from the run history rather than from a counter on the task, and
+/// shared by the polled path and the pushed one — a chatty server is not a way
+/// round the cap.
+fn at_cap(state: &AppState, id: &str, now: i64) -> bool {
+    let conn = state.db.lock().unwrap();
+    db::fires_since(&conn, id, now - HOUR).unwrap_or(0) >= MAX_FIRES_PER_HOUR
 }
 
 /// Stores a new fingerprint *and* says what happened, together: the state is the
@@ -491,11 +518,7 @@ pub async fn on_mcp_event(app: &AppHandle, server: &str, method: &str) {
     };
 
     for task in woken {
-        let recent = {
-            let conn = state.db.lock().unwrap();
-            db::fires_since(&conn, &task.id, now - HOUR).unwrap_or(0)
-        };
-        if recent >= MAX_FIRES_PER_HOUR {
+        if at_cap(&state, &task.id, now) {
             note(
                 &state,
                 &task.id,
@@ -743,6 +766,25 @@ mod tests {
             matching_tasks(&[off], "fs", "ping").is_empty(),
             "pausing a task has to stop it being woken, not just being polled"
         );
+    }
+
+    #[test]
+    fn a_git_answer_is_an_id_or_it_is_gits_explanation() {
+        // 40 hex characters is a SHA-1 commit and 64 is a SHA-256 one; git moves
+        // object formats, so the rule is the shape rather than the length.
+        assert!(is_object_id("2f4a1c9e7b3d5a6f8c0e2b4d6a8c0e2f4b6d8a0c"));
+        assert!(is_object_id(&"a".repeat(64)));
+        // A short id from `--short`, which the caller must not be able to store as
+        // if it were the whole answer.
+        assert!(is_object_id("2f4a1c9"));
+        assert!(!is_object_id(""));
+        assert!(!is_object_id("unknown revision or path not in the working tree"));
+        assert!(
+            !is_object_id("fatal: not a git repository (or any of the parent directories)"),
+            "git's own explanation must never be stored as a commit"
+        );
+        // Hex characters only: a message that begins with one is still a message.
+        assert!(!is_object_id("deadbeef is not a commit"));
     }
 
     #[test]

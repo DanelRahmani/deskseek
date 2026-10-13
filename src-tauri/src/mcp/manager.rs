@@ -84,10 +84,6 @@ impl ClientHandler for Events {
             crate::triggers::on_mcp_event(&app, &server, &method).await;
         });
     }
-
-    fn get_info(&self) -> rmcp::model::ClientConfig {
-        rmcp::model::ClientConfig::default()
-    }
 }
 
 /// A tool as the server describes it, before we rename it.

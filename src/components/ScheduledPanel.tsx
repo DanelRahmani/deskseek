@@ -105,9 +105,12 @@ function describe(task: ScheduledTask): string {
   return `Every day at ${task.time}`;
 }
 
-/** A trigger looks, rather than runs, so its second line says so. */
-function isTrigger(task: ScheduledTask): boolean {
-  return task.kind !== "cadence";
+/**
+ * Whether a task waits for something to change rather than for a clock. The one
+ * place the panel decides it, so a row and the form cannot disagree.
+ */
+function isTrigger(kind: string): boolean {
+  return kind !== "cadence";
 }
 
 /**
@@ -118,7 +121,7 @@ function isTrigger(task: ScheduledTask): boolean {
 function nextLine(task: ScheduledTask): string {
   if (!task.enabled) return "Paused";
   if (task.kind === "mcp") return `Waiting on ${task.target}`;
-  if (isTrigger(task)) return `Next check: ${when(task.next_run_at)}`;
+  if (isTrigger(task.kind)) return `Next check: ${when(task.next_run_at)}`;
   return `Next: ${when(task.next_run_at)}`;
 }
 
@@ -330,7 +333,7 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
   const patch = (part: Partial<ScheduledDraft>) => setForm((prev) => ({ ...prev, ...part }));
   const needsWeekday = form.freq === "weekly" || form.freq === "monthly";
   const needsNth = form.freq === "monthly";
-  const watching = form.kind !== "cadence";
+  const watching = isTrigger(form.kind);
 
   return (
     <aside className="panel-in-right flex h-full w-96 shrink-0 flex-col border-l border-neutral-800 bg-neutral-950">
@@ -455,12 +458,12 @@ export function ScheduledPanel({ onClose, onChanged, onOpenChat }: Props) {
             <p className="mt-1 text-[11px] text-neutral-500">{describe(task)}</p>
             <p className="mt-0.5 text-[11px] text-neutral-500">
               {nextLine(task)}
-              {isTrigger(task) && task.last_checked_at
+              {isTrigger(task.kind) && task.last_checked_at
                 ? ` · last checked ${when(task.last_checked_at)}`
                 : ""}
               {task.last_run_at ? ` · last ran ${when(task.last_run_at)}` : ""}
             </p>
-            {isTrigger(task) && task.last_note && (
+            {isTrigger(task.kind) && task.last_note && (
               <p className="mt-0.5 text-[11px] text-neutral-600">{task.last_note}</p>
             )}
 

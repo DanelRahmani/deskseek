@@ -11,8 +11,11 @@ below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, an
 which of it is worth having here) is
 [`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is done and
 committed too, still local and unreleased with Phase 8's, and so is **Phase 10 (10.1, 10.2,
-10.4 and 9.2)** and **Phase 11 (7.2, 7.3 and 3.3)** — four phases and twenty-nine commits sitting on
-top of `origin/main`, and nothing in any of them has been in a real window yet. Phase 10's other
+10.4 and 9.2)** and **Phase 11 (7.2, 7.3 and 3.3)** — four phases and thirty commits sitting on
+top of `origin/main`, and nothing in any of them has been in a real window yet. Phase 11 ends with
+one small fix commit of its own: the git check had been spawning `git` directly, which on Windows
+flashes a console window — every interval, forever — and leaves a child behind on a hard kill, so it
+was moved onto `exec::capture`, the one recipe this app has for running a program. Phase 10's other
 archive item, **9.4**, is deliberately not here: it is "V1 once 6.3 exists", and 6.3 — `recorder.rs`,
 reached through 6.2's plugin bundles — does not. One commit in Phase 11 covers two items, **7.3 and
 3.3 together**, because they are the same enum, the same form and the same panel row: splitting them
@@ -1880,7 +1883,14 @@ it opens rather than replaying the whole time it was closed.
   the app was closed; the cap is **derived** from `turn_usage` rather than kept as a second counter
   that could disagree with the run history; a capped change leaves the fingerprint alone, so the cap
   delays a run rather than dropping it; and the model's `schedule_task` tool still only makes
-  cadences, because a folder or a URL is something a person picks.
+  cadences, because a folder or a URL is something a person picks. The git check asks `git`
+  through `exec::capture` rather than spawning it directly — `exec.rs` is the one recipe for
+  running a program, and it is the difference between a hidden child and a console window
+  flashing every interval — and `is_object_id` holds the answer to its shape (hex, 40 or 64
+  characters), because `rev-parse` prints either a commit or its reason for having none and an
+  error message stored as a fingerprint would look exactly like a commit. That last part arrived in
+  the phase's fix commit rather than this one, and is why Phase 11's last `cargo test` reads **385
+  passed** rather than the 379 this line first recorded.
 - **Stop**: "when a new file lands in this folder" starts a task with no cadence involved. One
   limit named: a file is noticed up to one interval late, because the check is a poll rather than an
   OS watch — and a change that happened and was undone while the app was shut is simply never seen.
@@ -1891,7 +1901,9 @@ it opens rather than replaying the whole time it was closed.
 - **Files**: `src-tauri/src/triggers.rs` (`Kind::Url`, `page_fingerprint` and `url_fingerprint`,
   and `look` takes the app's HTTP client again); `src/components/ScheduledPanel.tsx` (a fourth kind,
   and the labels that differ per kind instead of a single guess). `commands.rs`, `lib.rs` and the
-  database are untouched: the branch, the columns and the run path are the ones 7.2 landed.
+  database are untouched: the branch, the columns and the run path are the ones 7.2 landed. So is
+  `tools/browse.rs`, which the archive guessed would need changing: `fetch_url` already did exactly
+  what a monitor needs, and the whole item was picking it up.
 - **Shape**: a *url* trigger fingerprints the page. With a filter it fingerprints *whether the page
   says it* (`yes`/`no`) and so fires on the transition to present — the predicate case. With a blank
   filter it fingerprints a hash of the page's text and so fires on any change — the "tell me when
@@ -1925,7 +1937,12 @@ it opens rather than replaying the whole time it was closed.
   (`Kind::Mcp`, `NEVER`, `matching_tasks`, `on_mcp_event`, and the `polled` guard the tick needs);
   `src/components/ScheduledPanel.tsx` (the fifth kind, its own labels, a server picker reading
   `api.mcpServers()`, and a row that never renders the never-due sentinel as a date). `db.rs` and
-  `commands.rs` are untouched: the columns, the cap, `fire_scheduled` and the panel row are 7.2's.
+  `commands.rs` are untouched, and that is a deliberate deviation from the archive's Files list: it
+  guessed an *inbound event command*, but the notification arrives inside the MCP client, so the
+  handler hands it straight to `triggers::on_mcp_event` — a round trip through the window to say
+  "a server pushed something" would add a hop and a failure mode for nothing. The subscription list
+  is the `mcp` rows themselves rather than a second table, for the same reason the triggers share
+  `scheduled_tasks`: one place owns "what is a task".
 - **Shape**: rmcp already routes any `notifications/*` a server sends to `on_custom_notification`,
   so the handler is a struct holding the server's name and the window, and the `Client` alias grows
   the handler from `()` to that struct — the one-line change the archive meant by "an extension

@@ -953,6 +953,9 @@ src-tauri/src/
   backup.rs              one zip for the whole profile: what it carries, and how a
                          restore puts it back (writes: db's WAL is flushed first)
   schedule.rs            when a recurring task next runs (pure local-time arithmetic)
+  triggers.rs            a task that starts because something changed: what each kind
+                         fingerprints, the edge rule that makes a poll not a run, and
+                         where a server-initiated notification lands
   notify.rs              one place that decides whether a ping becomes an OS toast
   fs_watch.rs            workspace watcher, refcounted roots, coalesced events
   commands.rs            the Tauri command surface
