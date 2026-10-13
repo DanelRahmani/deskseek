@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme / motion / tree / a11y / changelog)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme / motion / tree / a11y / tray / changelog)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 - [ ] `CHANGELOG.md` has a dated section for the version being tagged, and `node scripts/release-notes.mjs v<version>` prints exactly it
@@ -512,3 +512,14 @@ the parts only a person can see.
       the assistant can talk about what was on the screen
 - [ ] 📷 with the remembered window closed, or minimised, is refused with a sentence rather than a
       blank picture
+
+## Tray
+
+- [ ] The DeskSeek icon is in the notification area, with a tooltip that names it
+- [ ] Right-clicking the icon lists exactly *New chat*, *Quick entry*, *Show DeskSeek*, *Quit*
+- [ ] *New chat* makes a conversation, listed in the sidebar exactly as the ＋ button's does
+- [ ] *Quick entry* raises the quick window on the monitor the pointer is on
+- [ ] A **left** click on the icon brings the main window back and puts it in front, un-minimised
+- [ ] Closing the main window hides it — the process keeps running, and the tray icon still brings
+      it back
+- [ ] *Quit* ends the process, and no MCP server or browser child is left behind

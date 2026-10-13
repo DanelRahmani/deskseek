@@ -35,6 +35,7 @@ one.
 - In *Auto* mode a cheap reviewer reads each action before it runs — the tool, its redacted arguments and the last few turns — and can refuse it or hand it to you; anything it cannot read clearly is handed to you rather than waved through
 - Ask a question over whatever you are doing: a global chord (`Ctrl+Alt+Space` by default, changeable in Settings) raises a small always-on-top window, and the answer lands in your most recent chat or one of its own — the main window comes back to it
 - An **Appshot**: one button in that window photographs the window you were just in and attaches both the picture and its readable text to the question, so an error on screen can be asked about without retyping it
+- DeskSeek lives in the **system tray** — *New chat*, *Quick entry*, *Show DeskSeek* and *Quit*, with a left click on the icon bringing the window back. Closing the window puts it away instead of ending the session, as long as there is a tray to come back from
 
 ## 0.4.0 — 2026-10-12
 

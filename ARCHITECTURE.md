@@ -66,6 +66,7 @@ to a run without knowing anything about runs:
 | `mcp-log`, `mcp-ready` | `mcp/manager.rs` | a server's stderr; a server came up |
 | `scheduled-fired` | `commands.rs` | a scheduled task started a run |
 | `quick-sent` | `components/QuickEntry.tsx` | a question was asked from the quick-entry window and handed to a conversation, so open it |
+| `tray-action` | `tray.rs` | a tray menu item the window has to run — the id is one the command palette already knows |
 
 The two *parked* events are the interesting pair. An approval or a question parks
 the agent loop on a oneshot channel (`approvals.rs`, `questions.rs` — the same
@@ -108,6 +109,7 @@ Changing behaviour in this app is usually changing one of these.
 | What the decision-and-spend export carries: the panels' own reads, digests and never arguments | `store/db.rs` |
 | The quick-entry chord: how the string in Settings becomes a shortcut the OS registers, and the one spelling that says which shortcut fired | `quick.rs` |
 | Capturing a window as a PNG: which window is remembered and when, and the alpha byte GDI leaves at zero | `tools/desktop.rs` |
+| The tray menu, and which half of it the window runs rather than this process | `tray.rs` |
 
 The frontend has the same shape: a small pure module per rule, each with a
 `*.check.ts` beside it that `npm run check` runs (the README lists what each one

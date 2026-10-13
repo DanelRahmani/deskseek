@@ -1735,22 +1735,35 @@ line here.
   accessibility tree holds — a canvas or a game gives the picture and says the text could not be
   read.
 
-### 10.4 [S] A tray entry
+### 10.4 [S] A tray entry ✅
 - **Why**: all three competitors ship one, and it is the natural home for the things you want when
   the window is closed: a new chat, quick entry, and a way back. It is also the only surface that
   exists while the window is just the tray.
-- **Files**: `Cargo.toml` (`tauri`'s `tray-icon` feature), `lib.rs` (the tray, its menu and its
-  click), `commands.rs` (`show_quick_entry`), `src/api.ts` (`onTray`), `src/App.tsx` (the action
-  switch), `src/types.ts`.
-- **Shape**: a menu — *New chat*, *Quick entry*, *Show DeskSeek*, *Quit* — with a left click on the
-  icon doing *Show DeskSeek*, matching what every tray icon on the platform does. The item is an
-  **event to the front end** rather than Rust reaching into the window: "new chat" is the same
-  function the ＋ button calls, and a second implementation of it in Rust is exactly the drift this
-  repo avoids.
-- **Test**: `the_tray_menu_is_the_four_things_the_window_can_do` — the labels and their ids as one
-  table the Rust build and the front end's switch are both checked against, so a rename on one side
-  cannot silently stop the other from matching.
-- **Stop**: the app is reachable with its window closed.
+- **Files**: `src-tauri/src/tray.rs` (**new** — the menu as one table, `install`, the event, and
+  the two tests); `Cargo.toml` (`tauri`'s `tray-icon` feature); `lib.rs` (`tray::install` in
+  `setup`, and `CloseRequested` hiding the main window instead of ending the process);
+  `src/App.tsx` (the `tray-action` listener, into the palette's own action switch); `src/api.ts`
+  (`onTray`), `src/types.ts` (`TrayEvent`); `src/lib/tray.check.ts` (**new**).
+- **Shape**: four items, and each row in the table says which side runs it. *New chat* and *Quick
+  entry* are **emitted** and handed to the same `runPalette` switch the command palette uses, so
+  there is one implementation of "new chat" rather than a third one that happens to look like it;
+  *Show DeskSeek* and *Quit* are done in Rust, because it owns the window and the process. A left
+  click on the icon is *Show DeskSeek* — what every other tray icon on the platform does — and the
+  menu is on right-click.
+- **Test**: `tray::tests::the_tray_menu_is_the_four_things_the_window_can_do` — four rows, four
+  unique ids, no blank labels, and *Show*/*Quit* pinned as the two this process runs (`run` reads
+  the same flag, so a flipped bit would silently make *New chat* quit the app).
+  `the_ids_the_window_runs_are_the_palette_s_own` pins the other two. The cross-language half is
+  `src/lib/tray.check.ts`, the **sixteenth** check script: it reads the table out of `tray.rs` and
+  the action ids out of `src/lib/commands.ts` and holds one to the other, so an id renamed on either
+  side fails the gate instead of leaving a menu item that does nothing. Falsified: renaming the
+  forwarded `quick-entry` to `quick-entry-window` fails it with
+  `the tray forwards "quick-entry-window" to the window, but the palette has no such action`, and
+  restoring passes. `cargo test` 365 passed.
+- **Stop**: the app is reachable with its window closed. One limit named: a machine whose shell has
+  the notification area switched off cannot create the tray, and the close handler asks whether one
+  exists before it hides anything — so there, closing the window quits the way it always did, rather
+  than leaving a process nobody can reach.
 
 ### 9.2 [S] The browser's console, network and tabs
 - **Why**: Claude in Chrome reads console errors, network requests and DOM state, which is what

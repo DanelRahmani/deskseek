@@ -18,6 +18,7 @@ import {
   onScheduledFired,
   onShot,
   onTool,
+  onTray,
 } from "./api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { pathToAttachment, toAttachment } from "./lib/attachments";
@@ -1699,6 +1700,22 @@ export default function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [activeId, closeTab, customise.open, menu, newChat, palette, runPalette, sheet, showSettings, showSetup, toggleSplit]);
+
+  /**
+   * A tray menu item the window has to run.
+   *
+   * Straight into `runPalette`, which is the same switch the command palette
+   * uses — so the tray's "New chat" *is* the ＋ button and the palette's, rather
+   * than a third thing that happens to look like it. Rust keeps the two items it
+   * must own (Show and Quit) and never sends them here.
+   */
+  useEffect(() => {
+    let stop: (() => void) | undefined;
+    void onTray((e) => runPalette(e.id)).then((fn) => {
+      stop = fn;
+    });
+    return () => stop?.();
+  }, [runPalette]);
 
   const runningIds = useMemo(
     () => Object.keys(sessions).filter((id) => sessions[id].busy),

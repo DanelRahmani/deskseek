@@ -18,6 +18,7 @@ mod searxng;
 mod skills;
 mod store;
 mod tools;
+mod tray;
 
 use std::sync::{Arc, Mutex};
 
@@ -233,6 +234,12 @@ pub fn run() {
                 }
             }
 
+            // The tray. A failure here is reported and survivable: the menu is
+            // four items, and everything it does is reachable from the window.
+            if let Err(err) = tray::install(app.handle()) {
+                eprintln!("could not put DeskSeek in the tray: {err}");
+            }
+
             // Starting MCP servers can involve downloading a package, so it
             // happens in the background: the window opens immediately.
             tauri::async_runtime::spawn(async move {
@@ -290,6 +297,17 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // Closing the main window puts it away instead of ending the process,
+            // which is what the tray is for — but only when there is actually a
+            // tray to come back from, or the app would keep running with nothing
+            // that can reach it.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == tray::MAIN_WINDOW && tray::closes_to_tray(window.app_handle()) {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                return;
+            }
             // A clicked toast brings the window to the front, and that focus is the
             // only signal the notification plugin gives us — it reports no click of
             // its own. So a focus arriving within the grace of a toast is read as

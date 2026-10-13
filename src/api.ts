@@ -60,6 +60,7 @@ import type {
   ToolLog,
   TreeEntry,
   TreeListing,
+  TrayEvent,
 } from "./types";
 
 export const api = {
@@ -453,4 +454,9 @@ export function onFsChanged(handler: (e: FsEvent) => void): Promise<UnlistenFn> 
 /** A question was asked in the quick window and handed to a conversation. */
 export function onQuickSent(handler: (e: QuickSentEvent) => void): Promise<UnlistenFn> {
   return listen<QuickSentEvent>("quick-sent", (event) => handler(event.payload));
+}
+
+/** A tray menu item the window has to run — the same ids the palette uses. */
+export function onTray(handler: (e: TrayEvent) => void): Promise<UnlistenFn> {
+  return listen<TrayEvent>("tray-action", (event) => handler(event.payload));
 }

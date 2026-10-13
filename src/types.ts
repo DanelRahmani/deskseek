@@ -292,6 +292,12 @@ export type SandboxMode = "auto" | "host" | "docker" | "wsl";
  * gives each one a conversation of its own. */
 export type QuickTarget = "new" | "last";
 
+/** Sent by the tray menu for an item the *window* has to run. The ids are the
+ * command palette's own, so the front end needs no table of its own. */
+export interface TrayEvent {
+  id: string;
+}
+
 /** A captured window: where its picture and its words are staged, and enough to
  * show a thumbnail without a second round trip to the disk. */
 export interface Appshot {

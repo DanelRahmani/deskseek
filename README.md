@@ -195,6 +195,12 @@ Both sections are functional:
   image, the words as text, filed into the chat's own folder. Windows only, matching `ui_snapshot`,
   and it refuses a window that is minimised or that will not draw itself rather than filing a
   blank picture
+- **Tray** — DeskSeek sits in the system tray with *New chat*, *Quick entry*, *Show DeskSeek* and
+  *Quit*; a left click on the icon brings the window back. **Closing the window puts it away
+  rather than ending the session**, which is what a tray icon is for. Quit from the menu (or the
+  icon's own right-click) really ends it. If the tray cannot be created — the shell has it
+  switched off — the window closes the ordinary way instead, because a hidden window with no way
+  back is worse than quitting
 - **Sidebar search** — filter the conversation list by title or folder as you type, and search
   the *text* of every conversation: matching messages are listed with the words in context, from
   both sections, so a chat can be found by what was said in it rather than by its name. The
@@ -877,6 +883,10 @@ a screen reader depends on: a full-screen overlay has to be a named dialog, the
 tree and the transcript have to say what they are, `outline-none` is banned in
 favour of `outline-hidden` (the Tailwind v4 spelling that survives Windows High
 Contrast Mode), and a button made of one icon has to have a name.
+
+One check spans the two languages: `src/lib/tray.check.ts` reads the tray's menu table out of
+`src-tauri/src/tray.rs` and holds the half the window runs to the command palette's own ids, so a
+menu item cannot be renamed on one side and quietly do nothing on the other.
 
 One check is not about the code at all. `src/lib/changelog.check.ts` holds
 [`CHANGELOG.md`](CHANGELOG.md) to the shape the release workflow reads it by —
