@@ -61,6 +61,7 @@ to a run without knowing anything about runs:
 | `chat-artifact` | `conversation/agent.rs` | a document was published |
 | `chat-shot`, `computer-state` | `tools/browser.rs`, `tools/desktop.rs` | a screenshot; the desktop-control gate |
 | `chat-notify` | `notify.rs` | something finished — the in-app event; `notify.rs` decides whether a toast goes with it |
+| `notify-open` | `lib.rs` | a toast was clicked, as a window focus arriving within the grace: which conversation to open |
 | `fs-changed` | `fs_watch.rs` | the workspace moved, so redraw the tree |
 | `mcp-log`, `mcp-ready` | `mcp/manager.rs` | a server's stderr; a server came up |
 | `scheduled-fired` | `commands.rs` | a scheduled task started a run |

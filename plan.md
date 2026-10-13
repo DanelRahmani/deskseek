@@ -2,14 +2,15 @@
 
 A phased plan for this repo, written 2026-10-12 and updated as phases land.
 Phases 1–3 are **done and pushed**: Phase 1 (`b437c6e`), Phase 2 (2.1–2.9) and
-Phase 3 (3.1–3.6). **Phase 4** (4.1–4.4) and **Phases 5–6** (5.1–5.4, 6.1–6.4) are
-done and committed as `7eb16c2`, still local; 5.2's file tree keys landed with 5.3,
-because the tree's roles and its keys are one edit to the same recursion. **Phase 7
-is on the working tree, uncommitted.** The next release is **0.4.0**, and
-`CHANGELOG.md`'s top section is what its tag will print. **Phase 8 (8.1–8.13) is done
-and committed, still local, and unreleased**: its items are below, and the analysis
-behind them (what Claude, ChatGPT and Gemini each do, and which of it is worth having
-here) is [`ReverseEngineering.md`](ReverseEngineering.md).
+Phase 3 (3.1–3.6). **Phases 4–7** (4.1–4.4, 5.1–5.4, 6.1–6.4, 7.1) are done too, and
+pushed: `7eb16c2` and then `e85c6f8`, both ancestors of the `v0.4.0` tag
+(`3cd175e`, which is `origin/main`). 5.2's file tree keys landed with 5.3, because
+the tree's roles and its keys are one edit to the same recursion. **Phase 8
+(8.1–8.13) is done and committed, still local, and unreleased**: its items are
+below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, and
+which of it is worth having here) is
+[`ReverseEngineering.md`](ReverseEngineering.md). The next release is **0.5.0**,
+and `CHANGELOG.md`'s top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
