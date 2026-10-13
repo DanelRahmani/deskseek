@@ -143,8 +143,12 @@ CREATE TABLE IF NOT EXISTS chat_skills (
 CREATE TABLE IF NOT EXISTS tool_permissions (
     workspace  TEXT NOT NULL,
     tool       TEXT NOT NULL,
+    -- What the grant covers, when the tool acts on something nameable: a site, a
+    -- program, a folder inside the workspace, an app. Empty means the whole tool,
+    -- which is what every grant written before targets existed meant.
+    target     TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    PRIMARY KEY (workspace, tool)
+    PRIMARY KEY (workspace, tool, target)
 );
 
 -- One line per decision the app made on the user's behalf, written as it
@@ -392,6 +396,22 @@ CREATE TABLE IF NOT EXISTS parked_requests (
 );
 "#;
 
+/// The column names of a table, or nothing when the table does not exist yet.
+///
+/// `PRAGMA` rather than a probe query, because the two answers this has to tell
+/// apart — "no such table" and "no such column" — are the same error from a
+/// probe, and an upgrade path that confuses them either rebuilds a table it
+/// should not or misses the one it should.
+fn table_columns(conn: &Connection, table: &str) -> Vec<String> {
+    let mut stmt = match conn.prepare(&format!("PRAGMA table_info({table})")) {
+        Ok(stmt) => stmt,
+        Err(_) => return Vec::new(),
+    };
+    let rows = stmt.query_map([], |r| r.get::<_, String>(1));
+    rows.map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
+}
+
 pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
     conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")?;
@@ -453,7 +473,29 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
         [],
     );
 
+    // `tool_permissions` gained a `target` in 9.2, and SQLite cannot widen a
+    // primary key in place: the old key was (workspace, tool) and the new one is
+    // the triple. So a database written before it is renamed out of the way here,
+    // the schema batch below makes the new shape, and the rows are carried over
+    // just after as whole-tool grants — which is exactly what they meant. A
+    // database that already has the column, and a fresh one, skip every step.
+    let carrying_grants = {
+        let columns = table_columns(&conn, "tool_permissions");
+        !columns.is_empty() && !columns.iter().any(|c| c == "target")
+    };
+    if carrying_grants {
+        conn.execute("ALTER TABLE tool_permissions RENAME TO tool_permissions_legacy", [])?;
+    }
+
     conn.execute_batch(SCHEMA)?;
+
+    if carrying_grants {
+        conn.execute_batch(
+            "INSERT INTO tool_permissions (workspace, tool, target, created_at)
+                 SELECT workspace, tool, '', created_at FROM tool_permissions_legacy;
+             DROP TABLE tool_permissions_legacy;",
+        )?;
+    }
 
     // Databases written before the search index existed have no rows in it. The
     // triggers only fire on new writes, so an empty index over a non-empty table
@@ -1295,44 +1337,77 @@ pub fn get_chat_skills(conn: &Connection, chat_id: &str) -> rusqlite::Result<Vec
 
 // -------------------------------------------------------------- permissions
 
-pub fn allow_tool(conn: &Connection, workspace: &str, tool: &str) -> rusqlite::Result<()> {
+/// Records that a tool may run without asking, in one folder, for one target.
+///
+/// `target` is what the call acts on — a site, a program, a folder, an app — and
+/// an empty one means the whole tool. The triple is the key, so "always allow
+/// `cargo`" and "always allow `npm`" are two grants that do not overwrite each
+/// other, and neither one answers for the other.
+pub fn allow_tool(
+    conn: &Connection,
+    workspace: &str,
+    tool: &str,
+    target: &str,
+) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT OR IGNORE INTO tool_permissions (workspace, tool, created_at) VALUES (?1, ?2, ?3)",
-        params![workspace, tool, now_ts()],
+        "INSERT OR IGNORE INTO tool_permissions (workspace, tool, target, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![workspace, tool, target, now_ts()],
     )?;
     Ok(())
 }
 
-pub fn revoke_tool(conn: &Connection, workspace: &str, tool: &str) -> rusqlite::Result<()> {
+pub fn revoke_tool(
+    conn: &Connection,
+    workspace: &str,
+    tool: &str,
+    target: &str,
+) -> rusqlite::Result<()> {
     conn.execute(
-        "DELETE FROM tool_permissions WHERE workspace = ?1 AND tool = ?2",
-        params![workspace, tool],
+        "DELETE FROM tool_permissions WHERE workspace = ?1 AND tool = ?2 AND target = ?3",
+        params![workspace, tool, target],
     )?;
     Ok(())
 }
 
-pub fn is_tool_allowed(conn: &Connection, workspace: &str, tool: &str) -> rusqlite::Result<bool> {
+/// Whether a call is already covered by a grant.
+///
+/// A grant with an empty target covers the whole tool and therefore every
+/// target; a grant with one covers exactly its own and nothing else. `target` is
+/// this call's own, empty when it has none — so a call that names no place
+/// answers only to a whole-tool grant, which is what stops a grant for one
+/// folder from covering a command.
+pub fn is_tool_allowed(
+    conn: &Connection,
+    workspace: &str,
+    tool: &str,
+    target: &str,
+) -> rusqlite::Result<bool> {
     let count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tool_permissions WHERE workspace = ?1 AND tool = ?2",
-        params![workspace, tool],
+        "SELECT COUNT(*) FROM tool_permissions
+          WHERE workspace = ?1 AND tool = ?2 AND (target = '' OR target = ?3)",
+        params![workspace, tool, target],
         |r| r.get(0),
     )?;
     Ok(count > 0)
 }
 
 pub fn list_allowed_tools(conn: &Connection, workspace: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT tool FROM tool_permissions WHERE workspace = ?1 ORDER BY tool")?;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT tool FROM tool_permissions WHERE workspace = ?1 ORDER BY tool",
+    )?;
     let rows = stmt.query_map([workspace], |r| r.get::<_, String>(0))?;
     rows.collect()
 }
 
-/// Every grant there is, as `(workspace, tool)`. The list above answers "what may
-/// this folder do"; nothing answered "what have I ever allowed", which is the
-/// question a user asks when they want it taken back.
-pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, String)>> {
-    let mut stmt =
-        conn.prepare("SELECT workspace, tool FROM tool_permissions ORDER BY workspace, tool")?;
-    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+/// Every grant there is, as `(workspace, tool, target)`. The list above answers
+/// "what may this folder do"; nothing answered "what have I ever allowed", which
+/// is the question a user asks when they want it taken back.
+pub fn all_allowed_tools(conn: &Connection) -> rusqlite::Result<Vec<(String, String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT workspace, tool, target FROM tool_permissions ORDER BY workspace, tool, target",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
     rows.collect()
 }
 
@@ -2781,7 +2856,19 @@ mod tests {
                     (id, title, kind, model, created_at, updated_at)
                     VALUES ('old-1', 'A chat from before', 'chat', 'm', 1, 1);
                 INSERT INTO projects (id, name, created_at, updated_at)
-                    VALUES ('p-1', 'Before 2.7', 1, 1);",
+                    VALUES ('p-1', 'Before 2.7', 1, 1);
+                -- And a grant from before a grant could name a target, whose
+                -- primary key was the pair rather than the triple. SQLite cannot
+                -- widen a key in place, so `open()` has to carry this row over
+                -- by hand — and only a real file proves it did.
+                CREATE TABLE tool_permissions (
+                    workspace  TEXT NOT NULL,
+                    tool       TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY (workspace, tool)
+                );
+                INSERT INTO tool_permissions (workspace, tool, created_at)
+                    VALUES ('/repo', 'git_push', 1);",
             )
             .unwrap();
         }
@@ -2801,6 +2888,20 @@ mod tests {
         // exactly what a default of 0 means. (`get_chat` selects every column, so
         // this is a real read of a column only the ALTER could have added.)
         assert!(!kept.incognito, "an upgraded chat must not be incognito");
+
+        // The permission table was rebuilt rather than altered, and the grant the
+        // user gave before targets existed survived as a whole-tool grant — which
+        // is exactly what it meant when they gave it.
+        assert!(is_tool_allowed(&conn, "/repo", "git_push", "").unwrap());
+        assert!(is_tool_allowed(&conn, "/repo", "git_push", "anywhere").unwrap());
+        assert_eq!(
+            all_allowed_tools(&conn).unwrap(),
+            vec![("/repo".to_string(), "git_push".to_string(), String::new())]
+        );
+        // And the old shape is gone: a second grant for the same tool now fits,
+        // which the pair-keyed table could not have held.
+        allow_tool(&conn, "/repo", "git_push", "origin").unwrap();
+        assert_eq!(all_allowed_tools(&conn).unwrap().len(), 2);
 
         // The `instructions` ALTER ran on the upgraded file: the old project kept
         // its name and gained an empty rule list rather than a malformed one.
@@ -3668,15 +3769,44 @@ mod tests {
     }
 
     #[test]
-    fn tool_permissions_are_scoped_to_a_workspace() {
+    fn a_grant_covers_its_own_target_and_nothing_else() {
         let conn = mem();
-        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command").unwrap());
-        allow_tool(&conn, "/repo-a", "run_command").unwrap();
-        assert!(is_tool_allowed(&conn, "/repo-a", "run_command").unwrap());
-        assert!(!is_tool_allowed(&conn, "/repo-b", "run_command").unwrap());
-        assert_eq!(list_allowed_tools(&conn, "/repo-a").unwrap().len(), 1);
-        revoke_tool(&conn, "/repo-a", "run_command").unwrap();
-        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command").unwrap());
+        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command", "cargo").unwrap());
+        allow_tool(&conn, "/repo-a", "run_command", "cargo").unwrap();
+        assert!(is_tool_allowed(&conn, "/repo-a", "run_command", "cargo").unwrap());
+        // Exactly its own target: another program still asks...
+        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command", "npm").unwrap());
+        // ...a call that names no target at all still asks (which is the rule
+        // that stops a grant for one folder from covering a command)...
+        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command", "").unwrap());
+        // ...and so does the same program in another folder.
+        assert!(!is_tool_allowed(&conn, "/repo-b", "run_command", "cargo").unwrap());
+        // A second target does not overwrite the first: the triple is the key.
+        allow_tool(&conn, "/repo-a", "run_command", "npm").unwrap();
+        assert!(is_tool_allowed(&conn, "/repo-a", "run_command", "cargo").unwrap());
+        assert!(is_tool_allowed(&conn, "/repo-a", "run_command", "npm").unwrap());
+        assert_eq!(all_allowed_tools(&conn).unwrap().len(), 2);
+        // Revoking one asks again and leaves the other alone.
+        revoke_tool(&conn, "/repo-a", "run_command", "cargo").unwrap();
+        assert!(!is_tool_allowed(&conn, "/repo-a", "run_command", "cargo").unwrap());
+        assert!(is_tool_allowed(&conn, "/repo-a", "run_command", "npm").unwrap());
+        assert_eq!(
+            list_allowed_tools(&conn, "/repo-a").unwrap(),
+            vec!["run_command".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_whole_tool_grant_still_covers_every_target_of_it() {
+        let conn = mem();
+        // What every grant meant before targets existed, and what a tool whose
+        // arguments name no place still means: the tool itself.
+        allow_tool(&conn, "/repo-a", "git_push", "").unwrap();
+        assert!(is_tool_allowed(&conn, "/repo-a", "git_push", "").unwrap());
+        assert!(is_tool_allowed(&conn, "/repo-a", "git_push", "anywhere at all").unwrap());
+        // And it is still one tool, in one folder.
+        assert!(!is_tool_allowed(&conn, "/repo-a", "git_commit", "").unwrap());
+        assert!(!is_tool_allowed(&conn, "/repo-b", "git_push", "").unwrap());
     }
 
     #[test]

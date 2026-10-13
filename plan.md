@@ -1459,16 +1459,46 @@ restart is something the user can see and revoke.
   anything. One limit named: the summariser's own call is not priced into the spend view yet, which
   is 9.5's job — and it is the same call `/summarise` has always made.
 
-### 9.2 [M] A grant that remembers its target
+### 9.2 [M] A grant that remembers its target ✅
 - **Why**: every new write or command asks today. Claude remembers an "always for this site" and an
   "always for this app", and generalising that to a target — a site, a command prefix, a path root —
   is what cuts approval fatigue without loosening the model.
-- **Files**: `store/db.rs` (`tool_grants`, in the `CREATE TABLE` and as a guarded `ALTER`);
-  `tools/mod.rs` (the target each tool name reduces to); `approvals.rs` (ask the grant before
-  asking the user); `commands.rs` and `src/api.ts` (list and revoke); `SettingsDialog.tsx`.
-- **Test**: a grant skips the prompt for exactly its target and nothing else, revoking it asks
-  again, and the decision log still records the first grant.
-- **Stop**: a repeated action on one site asks once.
+- **Files**: `approvals.rs` (`target` — the one rule turning a call into the thing it touches:
+  a site from a URL, the program a command line runs, the folder a write lands in, the app a
+  desktop click names; `target_is_the_page` for the four tools whose target is only on the page;
+  and the grant key, now the triple); `store/db.rs` (`tool_permissions.target` in the `CREATE TABLE`
+  **and** rebuilt through `open()`, `is_tool_allowed` taking a target, `allow_tool`/`revoke_tool`/
+  `all_allowed_tools` following); `tools/browser.rs` (`Browser::current_url` — the page, asked with
+  `try_lock` so a busy browser yields "no site" rather than a prompt that waits); `commands.rs`
+  (`ToolGrant.target`, `revoke_tool_permission` taking one); `conversation/agent.rs` (`approve`
+  computes the target once and uses it for all four questions — the session check, the stored check,
+  what the user is offered, what is stored); `src/types.ts`, `src/api.ts`, `SettingsDialog.tsx`
+  (the grant's target, `(the whole tool)` when there is none), `ApprovalPrompt.tsx` (*Always allow
+  `cargo` for this folder*).
+- **Test**: `approvals::tests::a_target_is_the_place_a_call_touches` (a site loses its scheme, port,
+  credentials and `www.`; `about:blank`, `data:` and `file:` have none; one command is that
+  command while `cd x && rm -rf y` is not; a write is its top folder or, at the root, the file
+  itself; `../secrets` and `C:/…` get none) and `a_target_cannot_smuggle_a_separator_into_the_key`.
+  In `db.rs`, `a_grant_covers_its_own_target_and_nothing_else` (cargo covered, npm not, no-target
+  not, another folder not, a second grant not overwriting the first, revoking one leaving the
+  other) and `a_whole_tool_grant_still_covers_every_target_of_it` (the old meaning, preserved).
+  The rebuild is exercised on a **real temp file**: `an_older_database_upgrades_instead_of_refusing_to_open`
+  now carries a pair-keyed `tool_permissions` with a row and asserts the grant survives as a
+  whole-tool one — and that a second grant for the same tool now fits, which the old key could not
+  hold. Two things the plan guessed differently, both said out loud: the table was **rebuilt**, not
+  widened with an ALTER plus a `tool_grants` beside it, because SQLite cannot widen a primary key in
+  place and two tables for one rule is the drift the repo avoids; and the target lives in
+  `approvals.rs` rather than `tools/mod.rs`, beside the grant key it has to agree with. The test
+  caught a real bug while being written — `about:blank` reduced to a site called `about`, which is
+  why a host now has to have a dot (or be `localhost`). Falsified: making a grant cover every
+  target (`target = ''` → `1 = 1` in the match) fails it on
+  `assertion failed: !is_tool_allowed(&conn, "/repo-a", "run_command", "npm")`, and restoring
+  passes. `cargo test` 352 passed.
+- **Stop**: a repeated action on one site asks once — and a repeated `cargo` in one folder asks once.
+  The decision log is untouched by any of this: it still records each decision with its arguments'
+  digest, and a grant that is given still writes the `allowed` line that made it. One limit named:
+  a grant is matched on the target *text*, so `ui_click`'s window ("notepad") and a site are
+  compared as the app spelled them — case-sensitively, because a path and a program name are.
 
 ### 9.3 [S] A chat that declares what it may send out
 - **Why**: the guard already *tries* to catch an upload by pattern-matching arguments; a policy the

@@ -88,6 +88,9 @@ nothing, or throws.
 - [ ] Switching between a long chat and a short one leaves the short one showing all of it
 - [ ] A 500-turn chat can be opened and scrolled: the newest answer is at the bottom, and the
       oldest turn is reachable by revealing, not lost
+- [ ] `/compact` replaces the transcript with one note that says how many messages it folded, and
+      the meter drops to match. (The *automatic* fold fires at 90% of a 1M-token window, so it is
+      not walkable by hand — its rule is pinned by `summarize::tests` instead)
 
 ## Conversations
 
@@ -287,6 +290,13 @@ the parts only a person can see.
       (`allowed` / `denied` / `blocked`) and a reason beside each
 - [ ] Deleting the chat a decision was made in leaves that line in the list, unnamed rather than
       removed
+- [ ] In *Ask*, allow a `run_command` permanently: the button names the program it will cover
+      (`Always allow cargo for this folder`), and the next `cargo` command in that folder runs
+      without a prompt while an `npm` command still asks
+- [ ] *Settings → Tools* shows each grant with the thing it covers, and an old grant with none
+      reads as `(the whole tool)`; taking one back asks again, and leaves the others alone
+- [ ] In *Manual*, drive the browser on one site: allow `browser_click` permanently and the button
+      names that site, so a second click there runs without a prompt while another site's does not
 
 ## Where commands run
 

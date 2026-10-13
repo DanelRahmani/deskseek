@@ -792,12 +792,33 @@ async fn approve(
 ) -> bool {
     let ws_key = workspace.to_string_lossy().to_string();
 
-    if state.approvals.has_session_grant(&ws_key, tool) {
+    // What a grant for this call would cover, computed once and used for every
+    // question below: the session check, the stored-grant check, what the user is
+    // asked to allow, and what is stored if they say yes. Four readings of one
+    // value, so the grant that is offered and the grant that is remembered cannot
+    // disagree about what they cover.
+    //
+    // A browser action's target is the page it is about to act on, which costs a
+    // round trip to the page — asked for those tools only. No page means no
+    // target, and no target simply means the grant on offer is the whole tool.
+    let page = if approvals::target_is_the_page(tool) {
+        state.browser.current_url().await
+    } else {
+        None
+    };
+    let target = approvals::target(tool, args, page.as_deref()).unwrap_or_default();
+    let what = if target.is_empty() {
+        tool.to_string()
+    } else {
+        format!("{tool} ({target})")
+    };
+
+    if state.approvals.has_session_grant(&ws_key, tool, &target) {
         return true;
     }
     {
         let conn = state.db.lock().unwrap();
-        if db::is_tool_allowed(&conn, &ws_key, tool).unwrap_or(false) {
+        if db::is_tool_allowed(&conn, &ws_key, tool, &target).unwrap_or(false) {
             return true;
         }
     }
@@ -808,6 +829,7 @@ async fn approve(
         "requestId": request_id,
         "chatId": chat_id,
         "tool": tool,
+        "target": target,
         "class": class,
         "args": args,
         "workspace": ws_key,
@@ -833,7 +855,7 @@ async fn approve(
             state,
             Some(chat_id),
             "A scheduled run needs you",
-            &format!("It is waiting for you to allow {tool}."),
+            &format!("It is waiting for you to allow {what}."),
         );
     }
 
@@ -844,12 +866,12 @@ async fn approve(
     };
     let (allowed, note) = match decision {
         Decision::Session => {
-            state.approvals.grant_session(&ws_key, tool);
+            state.approvals.grant_session(&ws_key, tool, &target);
             (true, "session")
         }
         Decision::Always => {
             let conn = state.db.lock().unwrap();
-            let _ = db::allow_tool(&conn, &ws_key, tool);
+            let _ = db::allow_tool(&conn, &ws_key, tool, &target);
             (true, "always")
         }
         Decision::Once => (true, "once"),

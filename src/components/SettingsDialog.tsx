@@ -31,7 +31,7 @@ function Grants() {
 
   const revoke = async (grant: ToolGrant) => {
     try {
-      await api.revokeToolPermission(grant.workspace, grant.tool);
+      await api.revokeToolPermission(grant.workspace, grant.tool, grant.target);
       setGrants((prev) => prev.filter((g) => g !== grant));
     } catch (e) {
       setError(String(e));
@@ -49,15 +49,24 @@ function Grants() {
   return (
     <ul className="mt-2 space-y-1">
       {grants.map((grant) => (
-        <li key={`${grant.workspace}|${grant.tool}`} className="flex items-center gap-2 text-xs">
+        <li
+          key={`${grant.workspace}|${grant.tool}|${grant.target}`}
+          className="flex items-center gap-2 text-xs"
+        >
           <span className="shrink-0 font-mono text-neutral-300">{grant.tool}</span>
+          {/* What the grant covers. Empty is a whole-tool grant, which is what
+              every grant meant before it could name one — said out loud rather
+              than shown as a blank. */}
+          <span className="shrink-0 font-mono text-amber-300/80">
+            {grant.target || "(the whole tool)"}
+          </span>
           <span className="truncate text-neutral-600" title={grant.workspace}>
             {grant.workspace}
           </span>
           <button
             onClick={() => void revoke(grant)}
             className="ml-auto shrink-0 text-neutral-500 transition hover:text-red-400"
-            title="Take this back: the tool asks again in this folder"
+            title="Take this back: the tool asks again for this one"
           >
             <Icon name="close" />
           </button>

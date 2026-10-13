@@ -104,8 +104,15 @@ export function ApprovalPrompt({ request, onDecide }: Props) {
         <button
           onClick={() => onDecide(request.requestId, "always")}
           className="rounded-md border border-neutral-700 px-3 py-1.5 text-xs text-neutral-200 hover:border-neutral-600"
+          title={
+            request.target
+              ? `Permanently allow ${request.tool} for ${request.target}, in this folder`
+              : `Permanently allow ${request.tool}, wherever it acts, in this folder`
+          }
         >
-          Always allow for this folder
+          {request.target
+            ? `Always allow ${request.target} for this folder`
+            : "Always allow for this folder"}
         </button>
         <button
           onClick={() => onDecide(request.requestId, "deny")}

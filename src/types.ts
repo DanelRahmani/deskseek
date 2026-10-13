@@ -137,10 +137,12 @@ export interface ScheduledFiredEvent {
   chatId: string;
 }
 
-/** One stored "always allow" grant: a tool, in one folder. */
+/** One stored "always allow" grant: a tool, in one folder, covering one thing. */
 export interface ToolGrant {
   workspace: string;
   tool: string;
+  /** A site, a program, a folder, an app — or empty for the whole tool. */
+  target: string;
 }
 
 /**
@@ -480,6 +482,13 @@ export interface ApprovalEvent {
   requestId: string;
   chatId: string;
   tool: string;
+  /**
+   * What a permanent grant for this call would cover — a site, a program, a
+   * folder, an app. Empty when it covers the whole tool, which is what the
+   * prompt says in that case. Optional because a run parked before targets
+   * existed is still in the database and still answerable from the panel.
+   */
+  target?: string;
   class: ToolClassName;
   args: Record<string, unknown>;
   workspace: string;

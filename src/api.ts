@@ -182,8 +182,8 @@ export const api = {
     invoke<boolean>("respond_question", { requestId, answer }),
   listToolPermissions: (workspace: string) =>
     invoke<string[]>("list_tool_permissions", { workspace }),
-  revokeToolPermission: (workspace: string, tool: string) =>
-    invoke<void>("revoke_tool_permission", { workspace, tool }),
+  revokeToolPermission: (workspace: string, tool: string, target: string) =>
+    invoke<void>("revoke_tool_permission", { workspace, tool, target }),
   /** Every stored "always allow" grant, so it can be seen and taken back. */
   toolGrants: () => invoke<ToolGrant[]>("tool_grants"),
   /** The last decisions the app made on the user's behalf, newest first. */

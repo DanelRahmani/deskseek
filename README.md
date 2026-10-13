@@ -262,9 +262,15 @@ Both sections are functional:
 - Tools: `read_file`, `list_dir`, `glob`, `grep`, `search_history`, `write_file`, `edit_file`,
   `run_command`, `git_status`, `git_diff`, `git_log`, `git_commit`, `git_push`
 - **Every write and every command asks first** — allow once, allow for the session, allow
-  always for that folder, or deny. Reads run freely. The *always* answers live in
-  **Settings → Commands → Always allowed, per folder**, where each one can be taken back — the
-  only decisions that survive a restart are the ones you can see and revoke
+  always for that folder, or deny. Reads run freely. An *always* answer names the **target** it
+  covers rather than the whole tool: the program a command line runs (`cargo`, not
+  `run_command`), the folder a write lands in, the app a desktop click presses in, the site a
+  browser action is about to act on. So the next `cargo` command in that folder runs without a
+  prompt while an `npm` one still asks, and a command that chains (`cd x && …`) gets no target
+  at all: the grant on offer stays the whole tool rather than a prefix that would cover the
+  rest of the line. The grants live in **Settings → Commands → Always allowed, per folder**,
+  each with the thing it covers, where each one can be taken back — the only decisions that
+  survive a restart are the ones you can see and revoke
 - A **path sandbox** refuses anything outside the workspace, including `..` traversal and
   symlink escapes; the API key is stripped from every child process environment
 - **Commands can run in a container** instead of on this machine — see *Where commands run* below

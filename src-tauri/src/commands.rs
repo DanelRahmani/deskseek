@@ -1648,9 +1648,10 @@ pub fn revoke_tool_permission(
     state: State<'_, AppState>,
     workspace: String,
     tool: String,
+    target: String,
 ) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
-    db::revoke_tool(&conn, &workspace, &tool).map_err(|e| e.to_string())
+    db::revoke_tool(&conn, &workspace, &tool, &target).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Serialize)]
@@ -1658,18 +1659,25 @@ pub fn revoke_tool_permission(
 pub struct ToolGrant {
     pub workspace: String,
     pub tool: String,
+    /// What the grant covers — a site, a program, a folder, an app. Empty means
+    /// the whole tool, which is what a grant meant before it could name one.
+    pub target: String,
 }
 
-/// Every stored "always allow" grant: which tool, in which folder. The other
-/// decisions last only as long as the app is running; these are the ones that
-/// survive a restart, and until now nothing showed them.
+/// Every stored "always allow" grant: which tool, in which folder, covering what.
+/// The other decisions last only as long as the app is running; these are the
+/// ones that survive a restart, so they are the ones worth showing.
 #[tauri::command]
 pub fn tool_grants(state: State<'_, AppState>) -> Result<Vec<ToolGrant>, String> {
     let conn = state.db.lock().unwrap();
     let rows = db::all_allowed_tools(&conn).map_err(|e| e.to_string())?;
     Ok(rows
         .into_iter()
-        .map(|(workspace, tool)| ToolGrant { workspace, tool })
+        .map(|(workspace, tool, target)| ToolGrant {
+            workspace,
+            tool,
+            target,
+        })
         .collect())
 }
 

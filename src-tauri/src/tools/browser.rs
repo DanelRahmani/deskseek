@@ -60,6 +60,23 @@ impl Browser {
             session.stop().await;
         }
     }
+
+    /// The URL the browser is on, when it has a page open at all.
+    ///
+    /// Asked only by the approval path, which has to know *where* an action will
+    /// land before it can offer a grant covering exactly that place — the action
+    /// tools take a selector, not a place, so the page is the only thing that
+    /// says. `try_lock` on purpose: a browser busy with another call means no
+    /// answer rather than a prompt that waits for it, and no answer simply means
+    /// the prompt offers the whole tool instead of a site.
+    pub async fn current_url(&self) -> Option<String> {
+        let mut guard = self.session.try_lock().ok()?;
+        let session = guard.as_mut()?;
+        match session.evaluate("location.href").await {
+            Ok(Value::String(url)) => Some(url),
+            _ => None,
+        }
+    }
 }
 
 struct Session {

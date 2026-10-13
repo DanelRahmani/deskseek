@@ -28,6 +28,7 @@ one.
 - The composer's `@` mentions a file from the workspace and `$` a skill, both filled into the box to edit rather than sent
 - The decision log and the spend export to one file in your documents folder — the same rows the panels show, with a call's arguments left out in favour of their digests
 - A chat that has nearly filled the model's context window folds itself into a summary between turns rather than waiting for you to notice, and the note says how many messages went into it
+- A permanent "always allow" now names what it covers — the program, folder, app or site — so allowing `cargo` in a folder no longer allows every command in it, and the grants list shows each one's target
 
 ## 0.4.0 — 2026-10-12
 
