@@ -20,6 +20,7 @@ one.
 - A project's memory can be edited from the panel that shows it — forget one line, or add one, without leaving for Settings → Memory
 - A scheduled task can run every hour (on a chosen minute) or on weekdays only
 - A scheduled task lists its recent runs with what each cost and the chat it ran in, read from the same rows the spend view sums
+- Ask in chat for something to happen on a schedule and the assistant sets it up, after an approval, with no form
 
 ## 0.4.0 — 2026-10-12
 

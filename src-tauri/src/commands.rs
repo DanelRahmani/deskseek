@@ -1891,6 +1891,46 @@ pub fn list_scheduled(state: State<'_, AppState>) -> Result<Vec<db::ScheduledRow
     db::list_scheduled(&conn).map_err(|e| e.to_string())
 }
 
+/// Creates a scheduled task from the three fields that describe a schedule,
+/// computing its first run here.
+///
+/// The one create path: the form's command and the model's `schedule_task` tool
+/// both come through it, so a task made either way gets the same normalising
+/// (`Schedule::parse`) and the same clock. A second copy of this would be a
+/// second answer to "when does it first run".
+#[allow(clippy::too_many_arguments)]
+pub fn create_scheduled_task(
+    state: &AppState,
+    title: &str,
+    prompt: &str,
+    chat_id: Option<&str>,
+    project_id: Option<&str>,
+    freq: &str,
+    time: &str,
+    weekday: i64,
+    nth: i64,
+) -> Result<db::ScheduledRow, String> {
+    if prompt.trim().is_empty() {
+        return Err("A scheduled task needs something to do.".to_string());
+    }
+    let sched = schedule::Schedule::parse(freq, time, weekday, nth);
+    let next = schedule::next_run_at(Local::now(), &sched);
+    let conn = state.db.lock().unwrap();
+    db::create_scheduled(
+        &conn,
+        title,
+        prompt.trim(),
+        chat_id,
+        project_id,
+        sched.freq.id(),
+        &clock(sched.time),
+        sched.weekday as i64,
+        sched.nth as i64,
+        next,
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// Adds a task, computing its first run here. The form sends the three fields
 /// that describe a schedule rather than a timestamp, so "daily at 09:00" is one
 /// description and not two that can disagree.
@@ -1907,25 +1947,17 @@ pub fn create_scheduled(
     weekday: i64,
     nth: i64,
 ) -> Result<db::ScheduledRow, String> {
-    if prompt.trim().is_empty() {
-        return Err("A scheduled task needs something to do.".to_string());
-    }
-    let sched = schedule::Schedule::parse(&freq, &time, weekday, nth);
-    let next = schedule::next_run_at(Local::now(), &sched);
-    let conn = state.db.lock().unwrap();
-    db::create_scheduled(
-        &conn,
+    create_scheduled_task(
+        &state,
         &title,
-        prompt.trim(),
+        &prompt,
         chat_id.as_deref(),
         project_id.as_deref(),
-        sched.freq.id(),
-        &clock(sched.time),
-        sched.weekday as i64,
-        sched.nth as i64,
-        next,
+        &freq,
+        &time,
+        weekday,
+        nth,
     )
-    .map_err(|e| e.to_string())
 }
 
 /// Rewrites a task. A changed time moves its next run: otherwise an edit made

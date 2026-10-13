@@ -28,7 +28,8 @@ pub enum ToolClass {
     /// creating an artifact, which is stored in the database and shown in a
     /// sandboxed panel rather than put on disk anywhere.
     Internal,
-    /// Modifies the workspace; the user approves each call.
+    /// Modifies the workspace, or sets up something that will run later — a
+    /// scheduled task; the user approves each call.
     Write,
     /// Executes something; the user approves each call.
     Command,
@@ -280,6 +281,105 @@ pub fn parse_memory(args: &serde_json::Value) -> Result<MemoryDraft, String> {
         None => crate::memory_files::FALLBACK,
     };
     Ok(MemoryDraft { entries, target })
+}
+
+/// A validated `schedule_task` call: a recurring task as the model described it.
+///
+/// The frequency and the time are carried through as *text*, not as parsed
+/// values, because `schedule::Schedule::parse` is the one place that decides what
+/// a cadence string means. A second interpretation here could disagree with the
+/// one the scheduler uses.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScheduleDraft {
+    pub title: String,
+    pub prompt: String,
+    pub freq: String,
+    pub time: String,
+    /// `0 = Monday`, the scheduler's own convention.
+    pub weekday: i64,
+    pub nth: i64,
+}
+
+/// Validates `schedule_task`.
+///
+/// This reads what a model *wrote*, so it survives every shape one sends: a
+/// number where a string belongs, a day name where a number belongs, a field
+/// missing altogether. The only thing refused is a task with nothing to do —
+/// everything else is coerced toward a sane default, and the caller reports the
+/// schedule it actually created so nothing is silently invented.
+pub fn parse_schedule(args: &serde_json::Value) -> Result<ScheduleDraft, String> {
+    let text = |key: &str| {
+        args.get(key)
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let prompt = text("prompt");
+    if prompt.is_empty() {
+        return Err("schedule_task needs a \"prompt\": what to do when it runs.".to_string());
+    }
+    Ok(ScheduleDraft {
+        title: text("title"),
+        prompt,
+        freq: text("freq"),
+        time: text("time"),
+        weekday: weekday_arg(args.get("weekday")),
+        nth: nth_arg(args.get("nth")),
+    })
+}
+
+/// A weekday as `num_days_from_monday`, from a number *or* a name.
+///
+/// A model sends "Wednesday" about as often as it sends 2, and accepting either
+/// is cheaper than an error it has to guess its way out of. Anything
+/// unrecognised is Monday, the same default `Schedule::parse` uses.
+fn weekday_arg(value: Option<&serde_json::Value>) -> i64 {
+    const NAMES: [&str; 7] = [
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    ];
+    if let Some(number) = value.and_then(serde_json::Value::as_i64) {
+        return number.rem_euclid(7);
+    }
+    let name = value
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    // `wed` and `wednesday` are both common; "0" sent as a string is common too.
+    let by_name = NAMES
+        .iter()
+        .position(|day| *day == name || (day.starts_with(name.as_str()) && name.len() == 3));
+    by_name
+        .map(|at| at as i64)
+        .or_else(|| name.parse::<i64>().ok().map(|n| n.rem_euclid(7)))
+        .unwrap_or(0)
+}
+
+/// `nth` as 1-based, from a number or the word for it. `Schedule::parse` clamps
+/// it, so anything out of range is its problem rather than a second rule here.
+fn nth_arg(value: Option<&serde_json::Value>) -> i64 {
+    const WORDS: [&str; 4] = ["first", "second", "third", "fourth"];
+    if let Some(number) = value.and_then(serde_json::Value::as_i64) {
+        return number;
+    }
+    let word = value
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    WORDS
+        .iter()
+        .position(|w| *w == word)
+        .map(|at| at as i64 + 1)
+        .or_else(|| word.parse::<i64>().ok())
+        .unwrap_or(1)
 }
 
 /// One line of the model's plan. A closed set, so a typo in the tool call is
@@ -543,6 +643,28 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                 ),
             ),
             ToolClass::Internal,
+        ),
+        (
+            Tool::function(
+                "schedule_task",
+                "Set up a recurring task: a prompt that runs itself on a calendar, in its own chat, and then tells the user. Use it when they ask for something to happen on a repeating basis — every morning, weekly, on weekdays. The app asks them to approve it before it exists, and nothing runs now. Say the cadence you set rather than promising a time you did not send.",
+                params(
+                    json!({
+                        "title": {"type": "string", "description": "Short name for the task, e.g. \"Morning brief\""},
+                        "prompt": {"type": "string", "description": "What to do when it runs, as if the user had typed it into a chat"},
+                        "freq": {
+                            "type": "string",
+                            "enum": ["hourly", "daily", "weekdays", "weekly", "monthly"],
+                            "description": "How often it repeats. Defaults to daily."
+                        },
+                        "time": {"type": "string", "description": "Local time of day as \"HH:MM\". An hourly task reads only the minutes."},
+                        "weekday": {"type": "string", "description": "For weekly and monthly: which day, e.g. \"Monday\" or 2 (0 = Monday)."},
+                        "nth": {"type": "integer", "description": "For monthly: which occurrence of that weekday, 1 = first … 4 = fourth."}
+                    }),
+                    &["prompt"],
+                ),
+            ),
+            ToolClass::Write,
         ),
         (
             Tool::function(
@@ -1127,6 +1249,73 @@ mod tests {
         // But a plan is useful in both sections, unlike the git tools.
         assert!(tools_for("chat").iter().any(|(t, _)| t.function.name == "update_tasks"));
         assert!(tools_for("coding").iter().any(|(t, _)| t.function.name == "update_tasks"));
+    }
+
+    #[test]
+    fn scheduling_a_task_asks_first() {
+        // Setting something up to run later is a change the user should see, so
+        // it is the class whose calls are approved. A refused approval therefore
+        // creates nothing: the tool never runs, so no row is written.
+        assert_eq!(class_of("schedule_task"), ToolClass::Write);
+        for section in ["chat", "coding"] {
+            assert!(
+                tools_for(section).iter().any(|(t, _)| t.function.name == "schedule_task"),
+                "schedule_task missing from {section}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_schedule_reader_survives_every_shape_a_model_sends() {
+        // The one thing it refuses: a task with nothing to do. The error names
+        // the field, so the model can correct itself.
+        let error = parse_schedule(&json!({"freq": "daily"})).unwrap_err();
+        assert!(error.contains("prompt"), "{error}");
+        assert!(parse_schedule(&json!({"prompt": "   "})).is_err());
+        assert!(parse_schedule(&json!({"prompt": 42})).is_err());
+        assert!(parse_schedule(&json!({})).is_err());
+
+        // Everything else is coerced, and the raw cadence text is passed through
+        // for `Schedule::parse` to be the only reader of it.
+        let bare = parse_schedule(&json!({"prompt": "Brief me"})).unwrap();
+        assert_eq!(bare.title, "");
+        assert_eq!(bare.freq, "");
+        assert_eq!(bare.time, "");
+        assert_eq!(bare.weekday, 0);
+        assert_eq!(bare.nth, 1);
+
+        // A day as a name, a shortened name, a number, a number as a string, a
+        // negative and an absurd one — all land on Monday..Sunday.
+        for (sent, want) in [
+            (json!("Wednesday"), 2),
+            (json!("mon"), 0),
+            (json!("wed"), 2),
+            (json!("SUNDAY"), 6),
+            (json!(4), 4),
+            (json!("4"), 4),
+            (json!(-3), 4),
+            (json!(99), 1), // 99 % 7
+            (json!("blursday"), 0),
+            (json!(null), 0),
+            (json!({"day": "mon"}), 0),
+        ] {
+            let draft = parse_schedule(&json!({"prompt": "x", "weekday": sent})).unwrap();
+            assert_eq!(draft.weekday, want, "weekday {sent} should be {want}");
+        }
+
+        // `nth` takes a word or a number; out-of-range is left to the clamp in
+        // `Schedule::parse`, so it is not a second rule here.
+        for (sent, want) in [(json!("first"), 1), (json!("fourth"), 4), (json!(3), 3), (json!("nth"), 1), (json!(7), 7)] {
+            let draft = parse_schedule(&json!({"prompt": "x", "nth": sent})).unwrap();
+            assert_eq!(draft.nth, want, "nth {sent} should be {want}");
+        }
+
+        // A number where the text belongs is not a panic, just an empty string.
+        let odd = parse_schedule(&json!({"prompt": "x", "title": 7, "freq": 3, "time": 900}))
+            .unwrap();
+        assert_eq!(odd.title, "");
+        assert_eq!(odd.freq, "");
+        assert_eq!(odd.time, "");
     }
 
     #[test]

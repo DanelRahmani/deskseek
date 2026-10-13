@@ -1275,15 +1275,24 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   follows, not a gap of this item's making. `last_run_at` on the task still says it ran.
 - **Stop**: the panel shows what a task has done and what it has cost.
 
-### 8.7 [S] The model can schedule a task
+### 8.7 [S] The model can schedule a task ✅
 - **Why**: a task can only be created by filling in a form, so the model can never offer one
   mid-conversation. Claude proposes a name, a cadence and the instructions and asks the user to
   confirm; nothing about that needs a new mechanism here, only a tool.
-- **Files**: `tools/mod.rs` (the tool and its risk class: an action, so it asks),
-  `conversation/agent.rs` (a prompt section naming it), `commands.rs`, `src/api.ts`.
-- **Test**: the argument reader over every malformed shape a model can produce, which is exactly the
-  `tasks.ts` lesson: it parses what the model wrote and must therefore survive all of it; and a
-  refused approval creates nothing.
+- **Files**: `tools/mod.rs` (a `ScheduleDraft` and `parse_schedule`, a reader that tolerates a day
+  name, a number sent as a string, and a field missing altogether; and the `schedule_task` tool in
+  the `Write` class, whose doc now says it covers "sets up something that will run later");
+  `commands.rs` (`create_scheduled_task` — the one create path, now shared by the form's command and
+  the tool, so a task made by talking gets the same clock as one made by filling the form in);
+  `conversation/agent.rs` (the dispatch, which reports the cadence it actually ended up with, and a
+  `# Scheduling` prompt section). No `src/api.ts` change: the model reaches this through its tool
+  list, and the Scheduled panel re-reads on open.
+- **Test**: `tools::tests::the_schedule_reader_survives_every_shape_a_model_sends` — a missing,
+  empty or non-string prompt refused by name; a day as a name, a short name, a number, a number
+  sent as a string, a negative and an absurd one all landing in 0..=6; `nth` as a word or a number;
+  and a number where text belongs not panicking. `scheduling_a_task_asks_first` — `class_of`
+  returns `Write` and the tool is offered in both sections, which is what makes a refused approval
+  create nothing: the tool never runs. `cargo test` 341 passed.
 - **Stop**: asking for a recurring task in chat produces one, after an approval, with no form.
 
 ### 8.8 [S] Edit an artifact in place

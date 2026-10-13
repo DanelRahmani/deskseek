@@ -328,6 +328,15 @@ watches this list, so an out-of-date one is worse than none.",
     );
 
     base.push_str(
+        "\n\n# Scheduling\n\n\
+When the user asks for something to happen on a repeating basis — every morning, weekly, on \
+weekdays — call `schedule_task` with the prompt to run and how often. The app asks them to approve \
+it first, and nothing runs now: it runs in its own chat at its own time, so a daily task does not \
+turn this conversation into a log of them. Say the cadence you set, and send the fields the tool \
+asks for rather than a cron string.",
+    );
+
+    base.push_str(
         "\n\n# Writing something to keep\n\n\
 When the answer is a document rather than a reply — a report, a page, a chart, a diagram, a note, \
 or a snippet worth keeping — call `artifact_create` instead of pasting it into the chat. It opens \
@@ -1108,6 +1117,44 @@ async fn run_tool(
             .collect::<Vec<_>>()
             .join("\n");
         return Ok(format!("The user answered:\n{lines}"));
+    }
+
+    // Setting up a recurring task. Handled here rather than by an executor
+    // because it writes this app's own calendar, not the workspace — and it goes
+    // through the very same create path the panel's form uses, so a task made by
+    // talking has the same clock as one made by filling the form in.
+    if name == "schedule_task" {
+        let draft = tools::parse_schedule(args)?;
+        let row = crate::commands::create_scheduled_task(
+            state,
+            &draft.title,
+            &draft.prompt,
+            Some(chat_id),
+            None,
+            &draft.freq,
+            &draft.time,
+            draft.weekday,
+            draft.nth,
+        )?;
+        // Say the cadence it actually ended up with, not the one that was asked
+        // for: a frequency this build does not know falls back to daily, and the
+        // model has to report that rather than the string it sent.
+        let cadence = match row.freq.as_str() {
+            "hourly" => format!("every hour at :{}", row.time.get(3..).unwrap_or("00")),
+            "weekdays" => format!("every weekday at {}", row.time),
+            "weekly" => format!("every week at {}, day {}", row.time, row.weekday),
+            "monthly" => format!(
+                "monthly at {}, on day {} (occurrence {})",
+                row.time, row.weekday, row.nth
+            ),
+            _ => format!("every day at {}", row.time),
+        };
+        return Ok(format!(
+            "The user approved a scheduled task: \"{}\" (id {}), which will run {cadence}. Nothing \
+             has run yet, and nothing runs now — it is in the Scheduled panel, where they can \
+             pause, edit or delete it.",
+            row.title, row.id
+        ));
     }
 
     if name == "save_memory" {
