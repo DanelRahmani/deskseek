@@ -208,8 +208,14 @@ export const api = {
     invoke<ArtifactDetail>("get_artifact", { artifactId, version: version ?? null }),
   saveArtifactVersion: (artifactId: string, content: string) =>
     invoke<ArtifactDetail>("save_artifact_version", { artifactId, content }),
-
-  mcpStatus: () => invoke<McpStatus>("mcp_status"),  mcpServers: () => invoke<McpServer[]>("mcp_servers"),
+  /**
+   * Rewrite one selected passage of an artifact and answer with the replacement
+   * text alone. One model call, not a chat turn; the panel patches it in.
+   */
+  reviseSelection: (input: ReviseRequest) =>
+    invoke<string>("revise_selection", { ...input }),
+  mcpStatus: () => invoke<McpStatus>("mcp_status"),
+  mcpServers: () => invoke<McpServer[]>("mcp_servers"),
   mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),
   mcpReload: () => invoke<McpStatus>("mcp_reload"),
   mcpRestart: (name: string) => invoke<McpStatus>("mcp_restart", { name }),
@@ -326,6 +332,18 @@ export type ScheduledDraft = {
   time: string;
   weekday: number;
   nth: number;
+};
+
+/**
+ * One in-place revision: the selected text, a little of what surrounds it, and
+ * what should happen to it. An alias rather than an interface for the same
+ * reason as `ScheduledDraft` — `invoke` takes an indexable argument.
+ */
+export type ReviseRequest = {
+  before: string;
+  selection: string;
+  after: string;
+  instruction: string;
 };
 
 export function onDelta(handler: (e: DeltaEvent) => void): Promise<UnlistenFn> {

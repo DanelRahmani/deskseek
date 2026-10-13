@@ -6,7 +6,7 @@
  * The frame is the only place an artifact's own markup is trusted, so the
  * assertions here are about the policy, not about the rendering.
  */
-import { frameDoc, htmlDoc, KIND_LABELS, SANDBOX } from "./artifact.ts";
+import { frameDoc, htmlDoc, KIND_LABELS, patchRange, SANDBOX, windowAround } from "./artifact.ts";
 
 function ok(condition: boolean, message: string): void {
   if (!condition) throw new Error(`FAIL: ${message}`);
@@ -46,5 +46,61 @@ for (const kind of ["svg", "mermaid"] as const) {
 for (const kind of ["html", "svg", "mermaid", "chart", "markdown", "code"]) {
   ok(!!KIND_LABELS[kind], `${kind} needs a label`);
 }
+
+// --- editing one sentence in place ------------------------------------------
+
+// The patch takes the selection's *offsets*. The same words appearing twice is
+// the case a search by text gets wrong, so it is the case asserted first.
+const doc = "Alpha Beta gamma. Beta again.";
+const first = doc.indexOf("Beta");
+const second = doc.indexOf("Beta", first + 1);
+ok(first !== second && second >= 0, "the fixture needs the word twice");
+ok(
+  patchRange(doc, first, first + 4, "Delta") === "Alpha Delta gamma. Beta again.",
+  "patching the first of two identical words must touch only that one",
+);
+ok(
+  patchRange(doc, second, second + 4, "Delta") === "Alpha Beta gamma. Delta again.",
+  "patching the second must touch only that one",
+);
+
+// A selection at the start, in the middle and running to the end.
+ok(patchRange(doc, 0, 5, "Omega") === "Omega Beta gamma. Beta again.", "a selection at the start");
+ok(
+  patchRange(doc, first, first + 4, "delta") === "Alpha delta gamma. Beta again.",
+  "a selection in the middle",
+);
+ok(
+  patchRange(doc, second, doc.length, "and done.") === "Alpha Beta gamma. and done.",
+  "a selection running to the end",
+);
+
+// An empty range inserts, an empty replacement deletes.
+ok(patchRange("ab", 1, 1, "X") === "aXb", "an empty selection inserts");
+ok(patchRange("abc", 1, 2, "") === "ac", "an empty replacement deletes");
+
+// Offsets come from the DOM, so a stale or nonsense pair is clamped rather than
+// thrown — and it must land somewhere defined, not somewhere random.
+ok(patchRange("abc", 2, 0, "X") === "Xc", "a reversed range is put the right way round");
+ok(patchRange("abc", -5, 99, "X") === "X", "out of range clamps to the whole string");
+ok(patchRange("abc", Number.NaN, Number.NaN, "X") === "Xabc", "NaN clamps to the start");
+ok(patchRange("abc", 1.7, 2.2, "X") === "aXc", "a fractional offset is truncated");
+
+// What travels to the model: the selection, and only the radius of each side —
+// never the whole document.
+const long = "x".repeat(500) + "SELECTED" + "y".repeat(500);
+const win = windowAround(long, 500, 508, 10);
+ok(win.selection === "SELECTED", "the selection itself travels");
+ok(win.before === "x".repeat(10), `only the window before it: ${win.before.length}`);
+ok(win.after === "y".repeat(10), `only the window after it: ${win.after.length}`);
+// The window is clamped at the ends of the document, so the request is always
+// three strings rather than one that runs off the edge.
+const atStart = windowAround("hi", 0, 2, 10);
+ok(atStart.before === "" && atStart.selection === "hi" && atStart.after === "", "a whole-document selection");
+ok(
+  windowAround(long, -3, 9999, 10).selection.length === long.length,
+  "a stale pair still describes something real",
+);
+
 console.log("artifact.check.ts: all checks passed");
 

@@ -60,3 +60,71 @@ export const KIND_LABELS: Record<string, string> = {
   markdown: "Note",
   code: "Code",
 };
+
+/**
+ * Characters of context sent either side of a selection when revising it, so the
+ * model can see what the sentence is part of without being handed the document.
+ */
+export const REVISE_WINDOW = 240;
+
+/** The three pieces of a revision request. */
+export interface SelectionWindow {
+  before: string;
+  selection: string;
+  after: string;
+}
+
+/**
+ * A selection start/end that is inside `content` and the right way round.
+ *
+ * Offsets come from a DOM selection, which means they arrive from outside this
+ * module and can be stale: the document was replaced, the selection was never
+ * updated, or a number arrived that is not a number. Clamping here is what stops
+ * that from throwing or from patching the wrong place, and it is the reason both
+ * functions below go through this rather than trusting their arguments.
+ */
+function clampRange(content: string, start: number, end: number): [number, number] {
+  const limit = content.length;
+  const inside = (at: number, fallback: number) =>
+    Number.isFinite(at) ? Math.min(Math.max(Math.trunc(at), 0), limit) : fallback;
+  const from = inside(start, 0);
+  const to = inside(end, from);
+  return from <= to ? [from, to] : [to, from];
+}
+
+/**
+ * The selection, plus a little of what surrounds it — never the whole document.
+ *
+ * Only a window travels: the model is rewriting one sentence, and sending the
+ * rest of the document would invite it to rewrite the rest of the document.
+ */
+export function windowAround(
+  content: string,
+  start: number,
+  end: number,
+  radius: number = REVISE_WINDOW,
+): SelectionWindow {
+  const [from, to] = clampRange(content, start, end);
+  return {
+    before: content.slice(Math.max(0, from - radius), from),
+    selection: content.slice(from, to),
+    after: content.slice(to, Math.min(content.length, to + radius)),
+  };
+}
+
+/**
+ * Replaces one range of an artifact's text with new text.
+ *
+ * By offsets rather than by searching for the text: a sentence that appears twice
+ * is exactly the case a search gets wrong, and the selection already knows which
+ * one was meant. The range is clamped the same way `windowAround` clamps it.
+ */
+export function patchRange(
+  content: string,
+  start: number,
+  end: number,
+  replacement: string,
+): string {
+  const [from, to] = clampRange(content, start, end);
+  return content.slice(0, from) + replacement + content.slice(to);
+}

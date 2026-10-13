@@ -1295,18 +1295,27 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   create nothing: the tool never runs. `cargo test` 341 passed.
 - **Stop**: asking for a recurring task in chat produces one, after an approval, with no form.
 
-### 8.8 [S] Edit an artifact in place
+### 8.8 [S] Edit an artifact in place ✅
 - **Why**: the best small idea in the whole teardown. Highlight the sentence you want changed, type
   the change, and it lands where you marked it instead of re-describing the paragraph in chat.
   Claude, ChatGPT and Gemini all ship it, and this repo's artifacts already carry versions, which is
   the half that is expensive to add later.
-- **Files**: `ArtifactPanel.tsx` (a selection, and an edit control on it), `src/lib/artifact.ts` (a
-  patch operation, pure), `conversation/agent.rs` (a revise call that sends the selection, the
-  instruction and a small surrounding window rather than the whole document),
-  `src/lib/artifact.check.ts`.
-- **Test**: `artifact.check.ts` over a selection at the start, in the middle and at the end, and a
-  selection whose text appears twice, which is the case that goes wrong; plus that a revision always
-  adds a version rather than overwriting, the rule the version menu depends on.
+- **Files**: `src/lib/artifact.ts` (`windowAround`, `patchRange`, and the one `clampRange` they both
+  go through — pure, offsets in and text out); `src/lib/artifact.check.ts` (extended, not replaced);
+  `ArtifactPanel.tsx` (a selection in the editor, a *Change it to…* bar, and Rewrite, which asks,
+  patches and saves); `conversation/agent.rs` (`revise_selection` — one non-streaming call, sent the
+  selection and a window of each side rather than the document, plus `unwrap_fence`); `commands.rs`
+  and `src/api.ts` (`revise_selection`, `ReviseRequest`).
+- **Test**: `artifact.check.ts` covers the same word twice patched at each occurrence separately (the
+  case a search by text gets wrong), a selection at the start, in the middle and running to the end,
+  an insert and a delete, and a stale pair (reversed, out of range, `NaN`, fractional) clamped rather
+  than thrown. `conversation::agent::tests::a_revision_reply_that_arrived_fenced_is_unwrapped_before_it_lands_in_the_document`
+  covers the one reply shape that would corrupt the document. "A revision always adds a version" is
+  already pinned by `db::tests::an_artifact_keeps_every_version`, so it is cited rather than copied.
+  `cargo test` 342 passed.
+  One limit said out loud: the offsets are the *editor's*. The rendered preview is a sandboxed frame
+  without `allow-same-origin`, so the app deliberately cannot read a selection made in it — the
+  selection is made in the editor, which also shows the source the patch indexes into.
 - **Stop**: a sentence in an artifact can be changed without a chat turn and without retyping the
   document.
 

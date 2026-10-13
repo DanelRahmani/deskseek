@@ -272,6 +272,7 @@ pub fn run() {
             commands::list_artifacts,
             commands::get_artifact,
             commands::save_artifact_version,
+            commands::revise_selection,
             commands::list_projects,
             commands::create_project,
             commands::rename_project,

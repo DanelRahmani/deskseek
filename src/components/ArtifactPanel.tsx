@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { Icon } from "./Icon";
-import { frameDoc, KIND_LABELS, SANDBOX } from "../lib/artifact";
+import { frameDoc, KIND_LABELS, patchRange, SANDBOX, windowAround } from "../lib/artifact";
 import { chartSvg } from "../lib/chart";
 import type { ArtifactDetail } from "../types";
 import { Markdown } from "./Markdown";
@@ -27,6 +27,11 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The draft's selected range, in the textarea's own offsets. */
+  const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
+  /** What the selected passage should become. */
+  const [instruction, setInstruction] = useState("");
+  const [revising, setRevising] = useState(false);
 
   const isCurrent = version === artifact.current_version;
 
@@ -44,6 +49,8 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
 
   async function selectVersion(next: number) {
     setEditing(false);
+    // The offsets belonged to the version that was on screen; they are stale now.
+    setSelection(null);
     if (next === artifact.current_version) {
       setContent(detail.content);
       setVersion(next);
@@ -85,6 +92,34 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
       setError(String(e));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Ask the model to rewrite just the selected passage, then patch the answer
+   * back in at the offsets it was selected at — so a phrase that appears twice
+   * changes where the user pointed, not the first one it finds.
+   *
+   * The result is *saved*, which appends a version rather than replacing this
+   * one: that is the rule the whole version menu rests on. The selection is
+   * dropped afterwards because the text it described has just moved.
+   */
+  async function revise() {
+    if (!selection || selection.end <= selection.start) return;
+    setRevising(true);
+    setError(null);
+    try {
+      const window = windowAround(draft, selection.start, selection.end);
+      const replacement = await api.reviseSelection({ ...window, instruction });
+      const next = patchRange(draft, selection.start, selection.end, replacement);
+      setDraft(next);
+      setSelection(null);
+      setInstruction("");
+      onChange(await api.saveArtifactVersion(artifact.id, next));
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setRevising(false);
     }
   }
 
@@ -145,6 +180,7 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
                 onClick={() => {
                   setEditing(false);
                   setDraft(content);
+                  setSelection(null);
                 }}
                 className="rounded px-2 py-0.5 text-[11px] text-neutral-400 transition hover:text-neutral-200"
               >
@@ -153,7 +189,13 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
             </>
           ) : (
             <button
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                // Start from what is on screen, whatever a previous edit left in
+                // the draft, so an old selection can never be patched into it.
+                setDraft(content);
+                setSelection(null);
+                setEditing(true);
+              }}
               className="rounded border border-neutral-700 px-2 py-0.5 text-[11px] text-neutral-300 transition hover:bg-neutral-800"
             >
               Edit
@@ -177,10 +219,42 @@ export function ArtifactPanel({ detail, onClose, onChange }: Props) {
         </p>
       )}
 
+      {editing && selection && selection.end > selection.start && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800 bg-neutral-900/60 px-3 py-1.5">
+          <span className="shrink-0 text-[11px] text-neutral-500">
+            {selection.end - selection.start} chars selected
+          </span>
+          <input
+            value={instruction}
+            onChange={(e) => setInstruction(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") void revise();
+            }}
+            placeholder="Change it to…"
+            spellCheck={false}
+            className="min-w-0 flex-1 rounded border border-neutral-800 bg-neutral-950 px-2 py-0.5 text-[11px] text-neutral-200 outline-hidden focus:border-neutral-700"
+          />
+          <button
+            onClick={() => void revise()}
+            disabled={revising || !instruction.trim()}
+            className="shrink-0 rounded bg-sky-700 px-2 py-0.5 text-[11px] text-accent-fg transition hover:bg-sky-600 disabled:opacity-50"
+            title="Rewrite only the selected text, as a new version"
+          >
+            {revising ? "Rewriting…" : "Rewrite selection"}
+          </button>
+        </div>
+      )}
+
       {editing ? (
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onSelect={(e) =>
+            setSelection({
+              start: e.currentTarget.selectionStart,
+              end: e.currentTarget.selectionEnd,
+            })
+          }
           spellCheck={false}
           className="min-h-0 flex-1 resize-none bg-neutral-950 p-3 font-mono text-xs leading-relaxed text-neutral-200 outline-hidden focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-neutral-700"
         />

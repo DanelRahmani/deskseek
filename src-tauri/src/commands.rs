@@ -1081,6 +1081,23 @@ pub fn save_artifact_version(
     db::get_artifact_detail(&conn, &artifact_id, None).map_err(|e| e.to_string())
 }
 
+/// Rewrites one selection of an artifact and answers with the replacement text.
+///
+/// A single non-streaming model call rather than a turn: the user pointed at a
+/// sentence, and the panel patches the answer back in at the offsets they
+/// selected. The *patch* and the *save* stay on the frontend and in
+/// `save_artifact_version` — this only gets the new words.
+#[tauri::command]
+pub async fn revise_selection(
+    state: State<'_, AppState>,
+    before: String,
+    selection: String,
+    after: String,
+    instruction: String,
+) -> Result<String, String> {
+    agent::revise_selection(&state, &before, &selection, &after, &instruction).await
+}
+
 #[tauri::command]
 pub fn get_summary(state: State<'_, AppState>, chat_id: String) -> Result<Option<String>, String> {
     let conn = state.db.lock().unwrap();

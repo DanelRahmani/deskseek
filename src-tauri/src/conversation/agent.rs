@@ -1941,9 +1941,97 @@ pub async fn run(
     Ok(())
 }
 
+/// The system prompt for a single-passage revision.
+///
+/// Kept beside the code that reads its answer, like the summariser's: the reply
+/// becomes the document's new text verbatim, so "reply with only the rewritten
+/// text" is load-bearing rather than polite. Anything else — a preamble, an
+/// explanation, a bullet list — lands in the user's document.
+const REVISE_SYSTEM_PROMPT: &str = "You edit one passage of a document. The user has selected \
+part of it and said how it should change. Reply with ONLY the replacement text: no quotes, no \
+explanation, no commentary, no markdown fence. Match the voice and the formatting of the document \
+around it. If the instruction is unclear, make the smallest sensible change. Keep the same \
+language as the passage unless asked otherwise.";
+
+/// Rewrites one selected passage, in place.
+///
+/// One cheap non-streaming call, not a turn: the user pointed at a sentence in a
+/// document, which is not a conversation and must not become one. The model is
+/// sent the selection and a little of what surrounds it — never the whole
+/// document — so it cannot rewrite the parts nobody pointed at.
+pub async fn revise_selection(
+    state: &AppState,
+    before: &str,
+    selection: &str,
+    after: &str,
+    instruction: &str,
+) -> Result<String, String> {
+    if selection.trim().is_empty() {
+        return Err("Select the text you want changed first.".to_string());
+    }
+    if instruction.trim().is_empty() {
+        return Err("Say what the change should be.".to_string());
+    }
+    let api_key = keychain::get_api_key()?.ok_or("No API key set")?;
+    let settings = state.settings.lock().unwrap().clone();
+    let client = Client::new(state.http.clone(), api_key, settings.base_url.clone());
+
+    // The document around the selection is shown, but marked, so "which part is
+    // mine to change" is unambiguous however the passage is punctuated.
+    let request = format!(
+        "The document reads:\n\n…{before}⟦{selection}⟧{after}…\n\n\
+         Rewrite only the text between ⟦ and ⟧ so that: {instruction}\n\n\
+         Reply with the replacement text alone.",
+        before = before,
+        selection = selection,
+        after = after,
+        instruction = instruction.trim()
+    );
+
+    let raw = client
+        .complete(&settings.chat_model, REVISE_SYSTEM_PROMPT, &request, false)
+        .await
+        .map_err(|e| e.to_string())?;
+    let text = unwrap_fence(&raw);
+    if text.trim().is_empty() {
+        return Err("The model returned nothing, so the document was left alone.".to_string());
+    }
+    Ok(text)
+}
+
+/// Strips a markdown fence from a reply that was asked not to have one.
+///
+/// A fenced answer would otherwise be pasted into the document as three
+/// backticks and a language name. Unwrapping is cheaper than explaining, and it
+/// is the one mistake here that keeps the document plausible-looking while being
+/// wrong.
+fn unwrap_fence(reply: &str) -> String {
+    let trimmed = reply.trim();
+    if !trimmed.starts_with("```") {
+        return trimmed.to_string();
+    }
+    let rest = trimmed.trim_start_matches('`');
+    // Drop the language tag that follows the opening fence, if any.
+    let body = rest.split_once('\n').map(|(_, rest)| rest).unwrap_or(rest);
+    body.trim_end().trim_end_matches("```").trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_revision_reply_that_arrived_fenced_is_unwrapped_before_it_lands_in_the_document() {
+        // The model was asked for bare text. A fence pasted in verbatim would put
+        // three backticks and a language name in the middle of someone's document.
+        assert_eq!(unwrap_fence("shorter text"), "shorter text");
+        assert_eq!(unwrap_fence("  shorter text\n"), "shorter text");
+        assert_eq!(unwrap_fence("```\nshorter text\n```"), "shorter text");
+        assert_eq!(unwrap_fence("```html\n<p>hi</p>\n```"), "<p>hi</p>");
+        // A fence that is not a fence is left exactly as it came.
+        assert_eq!(unwrap_fence("a `code` word"), "a `code` word");
+        assert_eq!(unwrap_fence(""), "");
+    }
 
     #[test]
     fn a_chat_folder_is_named_after_the_chat_and_still_unique() {
