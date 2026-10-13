@@ -32,6 +32,10 @@ const ICONS: Record<string, string> = {
   browser_click: "🖱",
   browser_type: "⌨",
   browser_screenshot: "📷",
+  browser_console: "🐞",
+  browser_network: "🔌",
+  browser_tabs: "🗂",
+  browser_tab: "🗂",
   ui_snapshot: "🖥",
   ui_click: "🖱",
   ui_type: "⌨",
@@ -64,6 +68,11 @@ function describe(run: ToolRun): string {
     case "browser_click":
     case "browser_type":
       return pick("selector");
+    case "browser_tab": {
+      // The index is a number, which `pick` deliberately ignores.
+      const index = typeof args.index === "number" ? ` ${args.index}` : "";
+      return `${pick("action") || "switch"}${index}`;
+    }
     case "ui_snapshot":
       return pick("window") || "the focused window";
     case "ui_click":

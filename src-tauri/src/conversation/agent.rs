@@ -427,7 +427,14 @@ structured data and for checking the DOM.\n\
 read the page back afterwards, so you can see what your action did. If a selector matches \
 nothing the result lists the clickable elements that are really on the page.\n\
 - `browser_screenshot` — show the user a picture of the page. You cannot see it yourself; use \
-`browser_extract` to read what is there.\n\n\
+`browser_extract` to read what is there.\n\
+- `browser_console` — what the page has logged since it was opened: `console` output, errors, \
+deprecations and failed requests. When a page is broken, this is usually the page saying why.\n\
+- `browser_network` — every request the page made, with its status or the reason it failed. Use it \
+when something the page needed did not load; the request that 404s is often the whole answer.\n\
+- `browser_tabs` and `browser_tab` — list the open tabs, switch to another, or close one. \
+`browser_open` with `new_tab` opens a second one instead of replacing the page you are on, which is \
+how you compare two pages or follow a link without losing your place.\n\n\
 You are acting as the user on sites neither of you controls, so every one of these is approved \
 individually unless this chat is in skip mode — say what you are about to do before you do it. \
 Never click a control that spends money, sends a message, or deletes something without asking \

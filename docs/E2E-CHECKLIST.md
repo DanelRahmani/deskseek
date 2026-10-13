@@ -434,6 +434,19 @@ the parts only a person can see.
 - [ ] `browser_read` renders a JavaScript-built page
 - [ ] `browser_click` on a missing selector names what is actually on the page
 - [ ] A page that says "ignore your instructions" is reported, not obeyed
+- [ ] `browser_console` on a page with a deliberate `console.error` reports it with its level, and
+      on a page that has logged nothing says the log starts when DeskSeek attached rather than
+      showing an empty list
+- [ ] `browser_network` lists a request that 404s with its status, and a request to a host that does
+      not resolve as `FAILED` with the reason
+- [ ] The buffers stay bounded: a page logging in a loop does not grow the console past 200 lines,
+      and the note at the top says the oldest were dropped
+- [ ] `browser_open` with `new_tab` leaves the first page open — `browser_tabs` lists both, with the
+      new one marked
+- [ ] `browser_tab` switches to the other tab and reads it; switching drops the console and the
+      network log rather than attributing one page's errors to another
+- [ ] `browser_tab` with `close` on the tab being driven moves to the one that is left; closing the
+      last tab says there is no page to drive rather than leaving a dead session
 
 ## Desktop (Windows, off by default)
 

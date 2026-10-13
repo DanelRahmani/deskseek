@@ -10,10 +10,12 @@ the tree's roles and its keys are one edit to the same recursion. **Phase 8
 below, and the analysis behind them (what Claude, ChatGPT and Gemini each do, and
 which of it is worth having here) is
 [`ReverseEngineering.md`](ReverseEngineering.md). **Phase 9 (9.1–9.6)** is done and
-committed too, still local and unreleased with Phase 8's — the two phases are twenty
-commits sitting on top of `origin/main`, and nothing in either has been in a real
-window yet. The next release is **0.5.0**, and `CHANGELOG.md`'s top section is what
-its tag will print.
+committed too, still local and unreleased with Phase 8's, and so is **Phase 10 (10.1, 10.2,
+10.4 and 9.2)** — three phases and twenty-five commits sitting on top of `origin/main`, and
+nothing in any of them has been in a real window yet. Phase 10's other archive item, **9.4**,
+is deliberately not here: it is "V1 once 6.3 exists", and 6.3 — `recorder.rs`, reached through
+6.2's plugin bundles — does not. The next release is **0.5.0**, and `CHANGELOG.md`'s top section
+is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -23,7 +25,10 @@ added seven more of the same kind: a fold's note, an `Always allow cargo` that t
 does not ask again, a chat set to *No network* refusing a fetch, a delete still
 prompting in *Skip*, the *By what spent it* rows, and an *Auto* run whose reviewer
 cannot be reached. Only a window can confirm them; none is reachable from
-`cargo test`.
+`cargo test`. Phase 10 added ten more, and they are the least reachable of the lot:
+a global chord pressed from inside another application, a window that is
+photographed, a tray whose left click brings the window back, and a browser whose
+console and network log only exist while a real page is running.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
@@ -1765,26 +1770,42 @@ line here.
   exists before it hides anything — so there, closing the window quits the way it always did, rather
   than leaving a process nobody can reach.
 
-### 9.2 [S] The browser's console, network and tabs
+### 9.2 [S] The browser's console, network and tabs ✅
 - **Why**: Claude in Chrome reads console errors, network requests and DOM state, which is what
   makes it useful for debugging a web app — and it is the archive's named prerequisite for every
-  later browser feature. CDP already offers all three; the browser session simply throws its events
-  away today.
-- **Files**: `src-tauri/src/tools/browser.rs` (the event collector, the three new tools and the
-  tab-aware `browser_open`), `tools/mod.rs` (the three tool records and their classes),
-  `conversation/agent.rs` (a prompt line saying they exist), `ToolStepGroup.tsx` (their labels),
-  `README.md`.
-- **Shape**: `Log.enable` and `Network.enable` are asked for once when the session starts, and the
-  session's own pump files the events it used to skip into two bounded ring buffers — bounded
-  because a network log is unbounded by nature. `browser_console` and `browser_network` are reads;
-  `browser_tabs` lists the open pages, and `browser_open` gains `new_tab`, which opens one and
-  attaches to it. Switching or closing a tab is a change to what the app is looking at, so
-  `browser_tab` is `Computer`.
-- **Test**: the shape half is pure and tested — a console entry renders with its level and text and
-  a payload it cannot print still renders; a request and its response join into one line with a
-  status; the ring buffer keeps the newest and drops the oldest; and a page-list is rendered with
-  the current tab marked.
-- **Stop**: a broken page can be explained from what it logged, not guessed at.
+  later browser feature. CDP already offers all three; the browser session simply threw its events
+  away.
+- **Files**: `src-tauri/src/tools/browser.rs` (`ConsoleEntry`, `NetEntry` and the two bounded ring
+  buffers on the `Session`; the pump now files events instead of skipping them; `collect` and the
+  four `record_*` functions; `render_console`/`render_network`/`render_tabs`; `list_pages`,
+  `wait_for_new_tab`, `close_target`, `attach` and `switch_to`; the four new tools and the
+  tab-aware `browser_open`); `tools/mod.rs` (four tool records, three `Read` and `browser_tab`
+  `Computer`, and `new_tab` on `browser_open`); `conversation/agent.rs` (four prompt lines);
+  `src/components/ToolCallCard.tsx` (icons and descriptions); `README.md`.
+- **Test**: four new tests in `browser.rs`, all over the pure half — `a_console_entry_keeps_its_level_and_text`
+  (a message keeps its level and source; a missing level falls back to `log` rather than rendering
+  as a blank; a shape with no text is dropped rather than becoming an empty line),
+  `a_request_and_its_response_become_one_line` (a request in flight says `pending`; the response
+  joins it instead of adding a row; a response for a request we never saw is dropped; a failure
+  replaces the status), `the_buffers_keep_the_newest_and_drop_the_oldest` (305 requests leave 300,
+  and the five that went are the five oldest), and `a_page_list_marks_the_one_being_driven` (exactly
+  one tab is marked, an untitled one still reads, and an empty list says so). The class tests in
+  `tools/mod.rs` grew the four names: the three reads are offered in `Plan` mode and the acting one
+  is not. Falsified: dropping the response join (making `record_response` return immediately) fails
+  `a_request_and_its_response_become_one_line` on the row count, and restoring passes.
+  `cargo test` 369 passed. Four things said out loud: the plan named `ToolStepGroup.tsx` and the
+  card it meant is `ToolCallCard.tsx`; tabs are done by **re-attaching** the page socket and reading
+  the tab list over the debugging port's own HTTP endpoints, rather than by opening a second,
+  browser-level CDP connection — `window.open` creates a tab from the page itself, and one socket is
+  one page; `Runtime.consoleAPICalled` is deliberately **not** enabled, because `Log` already
+  reports the same messages and a log with every line twice is worse than one with every line once;
+  and switching tabs **drops** the console and the network buffer, because they described the page
+  you left and keeping them would attribute one page's errors to another. The capture itself needs a
+  real browser, so the end-to-end half is `it_drives_a_real_browser_end_to_end` plus the checklist.
+- **Stop**: a broken page can be explained from what it logged, not guessed at. One limit named: the
+  log starts when DeskSeek attaches — Chrome reports events as they happen and does not replay what
+  a page logged before — so `browser_console` says that in words rather than showing an empty list
+  that reads like "nothing went wrong".
 
 ---
 

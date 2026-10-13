@@ -16,6 +16,7 @@
 //! driving the DOM is both simpler and more reliable than synthesising mouse
 //! coordinates, and it works identically in headless mode.
 
+use std::collections::VecDeque;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -45,6 +46,39 @@ const CALL_TIMEOUT_SECS: u64 = 15;
 /// How long a navigation may take before we read whatever is there.
 const READY_TIMEOUT_SECS: u64 = 20;
 const VIEWPORT: &str = "1280,900";
+
+/// How much of the console is kept. A page that logs in a loop would otherwise
+/// grow this for ever, and a log is only ever read from the end.
+const MAX_CONSOLE: usize = 200;
+/// How many requests are kept. A network log is unbounded by nature — a page
+/// makes thousands — which is the whole reason this is a ring buffer and not a
+/// list.
+const MAX_NETWORK: usize = 300;
+
+/// One line the page logged, as CDP's `Log` domain describes it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConsoleEntry {
+    /// `error` | `warning` | `info` | `verbose`.
+    level: String,
+    /// `javascript` | `network` | `deprecation` | … — where it came from.
+    source: String,
+    text: String,
+}
+
+/// One request the page made, joined with whatever came back for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NetEntry {
+    id: String,
+    method: String,
+    url: String,
+    /// CDP's resource type: `XHR`, `Document`, `Script`, `Image`…
+    kind: String,
+    /// The status, once a response arrived. `None` while it is in flight.
+    status: Option<i64>,
+    /// Set when the request failed outright — a DNS failure, a refused
+    /// connection, a cancelled navigation.
+    failed: Option<String>,
+}
 
 /// The longest-lived piece of browser state: one lazily-started session, shared
 /// by every chat. A second concurrent browser would fight over the profile
@@ -83,6 +117,16 @@ struct Session {
     child: Child,
     ws: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     next_id: i64,
+    /// The debugging port, kept so the page list can be read over HTTP — the one
+    /// thing the WebSocket cannot tell us, because it is attached to one page.
+    port: u16,
+    /// Which of those pages we are driving. Compared by id rather than by URL,
+    /// because two tabs can legitimately be on the same address.
+    target_id: String,
+    /// Where we are driving, and what the page logged and fetched while we were.
+    /// Bounded ring buffers rather than lists: both grow without limit by nature.
+    console: VecDeque<ConsoleEntry>,
+    network: VecDeque<NetEntry>,
 }
 
 impl Session {
@@ -128,16 +172,51 @@ impl Session {
             .map_err(|e| format!("could not start {}: {e}", exe.display()))?;
 
         let port = wait_for_port(&port_file).await?;
-        let target = first_page(port).await?;
-        let (ws, _) = tokio_tungstenite::connect_async(target.as_str())
-            .await
-            .map_err(|e| format!("could not attach to the browser: {e}"))?;
+        let page = first_page(port).await?;
+        let ws = attach(&page.ws_url).await?;
 
-        Ok(Self {
+        let mut session = Self {
             child,
             ws,
             next_id: 1,
-        })
+            port,
+            target_id: page.id,
+            console: VecDeque::new(),
+            network: VecDeque::new(),
+        };
+        // A failure here costs the console and the network views and nothing
+        // else, so it is not worth failing a session over: the page tools work
+        // either way.
+        session.watch_diagnostics().await;
+        Ok(session)
+    }
+
+    /// Ask for the two event streams this session collects.
+    ///
+    /// `Log` covers console output *and* the browser's own complaints — a failed
+    /// request, a deprecation, a refused resource — and `Network` covers requests.
+    /// `Runtime.consoleAPICalled` deliberately stays off: it duplicates what
+    /// `Log` already reports, and a log with every line twice is worse than one
+    /// with every line once.
+    async fn watch_diagnostics(&mut self) {
+        let _ = self.call("Log.enable", json!({})).await;
+        let _ = self.call("Network.enable", json!({})).await;
+    }
+
+    /// Stop driving one page and start driving another.
+    ///
+    /// The tab list, the console and the network log are dropped with the old
+    /// connection on purpose: they describe a *page*, and a tab switch that kept
+    /// them would attribute one page's errors to another.
+    async fn switch_to(&mut self, ws_url: &str, target_id: &str) -> Result<(), String> {
+        let ws = attach(ws_url).await?;
+        let mut previous = std::mem::replace(&mut self.ws, ws);
+        let _ = previous.close(None).await;
+        self.target_id = target_id.to_string();
+        self.console.clear();
+        self.network.clear();
+        self.watch_diagnostics().await;
+        Ok(())
     }
 
     async fn stop(mut self) {
@@ -145,8 +224,10 @@ impl Session {
         let _ = self.child.kill().await;
     }
 
-    /// One CDP command. Events (messages with no matching `id`) are skipped;
-    /// the caller's mutex guarantees only one command is ever in flight.
+    /// One CDP command. Anything that arrives without a matching `id` is an
+    /// event rather than an answer, and is filed into the console or network
+    /// buffer on its way past; the caller's mutex guarantees only one command is
+    /// ever in flight.
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id;
         self.next_id += 1;
@@ -158,6 +239,11 @@ impl Session {
             .map_err(|e| format!("the browser connection was lost: {e}"))?;
 
         let ws = &mut self.ws;
+        // Borrowed apart from `ws` so the pump can keep them while it owns the
+        // socket: everything that arrives without our `id` on it is an event, and
+        // these two buffers are what the events are for.
+        let console = &mut self.console;
+        let network = &mut self.network;
         let pump = async move {
             while let Some(frame) = ws.next().await {
                 let frame = match frame {
@@ -174,6 +260,9 @@ impl Session {
                     continue;
                 };
                 if value.get("id").and_then(Value::as_i64) != Some(id) {
+                    if let Some(method) = value.get("method").and_then(Value::as_str) {
+                        collect(method, value.get("params").unwrap_or(&Value::Null), console, network);
+                    }
                     continue;
                 }
                 if let Some(error) = value.get("error") {
@@ -317,39 +406,100 @@ async fn wait_for_port(port_file: &Path) -> Result<u16, String> {
     )
 }
 
-#[derive(Deserialize)]
+/// One page the browser has open, as its own `/json/list` describes it.
+#[derive(Debug, Clone, Deserialize)]
 struct Target {
     #[serde(rename = "type")]
     kind: String,
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    url: String,
     #[serde(rename = "webSocketDebuggerUrl", default)]
     ws_url: String,
 }
 
-/// The page target's debugger socket. The tab may not exist for a moment after
-/// launch, so this retries rather than failing.
-async fn first_page(port: u16) -> Result<String, String> {
-    // Localhost must never be reached through the user's proxy.
-    let http = reqwest::Client::builder()
+/// A client for the debugging *port*.
+///
+/// Localhost must never be reached through the user's proxy, which is the whole
+/// reason this is built rather than using `state.http`.
+fn loopback() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(5))
         .build()
-        .map_err(|e| e.to_string())?;
-    let list_url = format!("http://127.0.0.1:{port}/json/list");
+        .map_err(|e| e.to_string())
+}
 
+/// Every page the browser has open, in the order Chrome lists them.
+async fn list_pages(port: u16) -> Result<Vec<Target>, String> {
+    let http = loopback()?;
+    let response = http
+        .get(format!("http://127.0.0.1:{port}/json/list"))
+        .send()
+        .await
+        .map_err(|e| format!("could not ask the browser for its pages: {e}"))?;
+    let targets = response
+        .json::<Vec<Target>>()
+        .await
+        .map_err(|e| format!("the browser's page list could not be read: {e}"))?;
+    Ok(targets
+        .into_iter()
+        .filter(|target| target.kind == "page" && !target.ws_url.is_empty())
+        .collect())
+}
+
+/// The first page target. It may not exist for a moment after launch, so this
+/// retries rather than failing.
+async fn first_page(port: u16) -> Result<Target, String> {
     for _ in 0..20 {
-        if let Ok(response) = http.get(&list_url).send().await {
-            if let Ok(targets) = response.json::<Vec<Target>>().await {
-                if let Some(target) = targets
-                    .into_iter()
-                    .find(|t| t.kind == "page" && !t.ws_url.is_empty())
-                {
-                    return Ok(target.ws_url);
-                }
+        if let Ok(pages) = list_pages(port).await {
+            if let Some(page) = pages.into_iter().next() {
+                return Ok(page);
             }
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
     Err("the browser opened no page to drive".to_string())
+}
+
+/// The tab a `window.open` just made.
+///
+/// Polled rather than reported: `window.open` returns as soon as the target
+/// exists in the browser's own bookkeeping, and the page list is the only place
+/// that says so.
+async fn wait_for_new_tab(port: u16, before: &[String]) -> Result<Target, String> {
+    for _ in 0..20 {
+        if let Ok(pages) = list_pages(port).await {
+            if let Some(page) = pages.into_iter().find(|page| !before.contains(&page.id)) {
+                return Ok(page);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    Err("the new tab never appeared in the browser's page list".to_string())
+}
+
+/// Close one tab, over the same debugging port.
+async fn close_target(port: u16, id: &str) -> Result<(), String> {
+    loopback()?
+        .get(format!("http://127.0.0.1:{port}/json/close/{id}"))
+        .send()
+        .await
+        .map_err(|e| format!("could not close that tab: {e}"))?;
+    Ok(())
+}
+
+/// The debugger socket for one page target.
+async fn attach(
+    ws_url: &str,
+) -> Result<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>, String> {
+    let (ws, _) = tokio_tungstenite::connect_async(ws_url)
+        .await
+        .map_err(|e| format!("could not attach to the browser: {e}"))?;
+    Ok(ws)
 }
 
 /// What a page reports about itself.
@@ -389,6 +539,171 @@ fn render_page(page: &Page) -> String {
         if text.chars().count() > MAX_PAGE_CHARS {
             out.push_str("\n\n(page text truncated)");
         }
+    }
+    truncate(out)
+}
+
+/// File one CDP event into the buffer it belongs in.
+///
+/// A free function because the pump already owns the socket: this takes the two
+/// buffers it needs and nothing else.
+fn collect(
+    method: &str,
+    params: &Value,
+    console: &mut VecDeque<ConsoleEntry>,
+    network: &mut VecDeque<NetEntry>,
+) {
+    match method {
+        "Log.entryAdded" => record_console(console, params),
+        "Network.requestWillBeSent" => record_request(network, params),
+        "Network.responseReceived" => record_response(network, params),
+        "Network.loadingFailed" => record_failure(network, params),
+        _ => {}
+    }
+}
+
+/// Keep the newest `cap` and drop the rest.
+fn keep_newest<T>(buffer: &mut VecDeque<T>, cap: usize) {
+    while buffer.len() > cap {
+        buffer.pop_front();
+    }
+}
+
+fn field_or(value: &Value, key: &str, fallback: &str) -> String {
+    let got = field(value, key);
+    if got.is_empty() {
+        fallback.to_string()
+    } else {
+        got
+    }
+}
+
+/// One `Log.entryAdded`.
+///
+/// Nothing here is trusted: this runs inside the pump every other browser call
+/// depends on, so a shape it does not recognise is dropped rather than allowed
+/// to take a session down.
+fn record_console(buffer: &mut VecDeque<ConsoleEntry>, params: &Value) {
+    let entry = params.get("entry").unwrap_or(&Value::Null);
+    let text = entry.get("text").and_then(Value::as_str).unwrap_or("").trim();
+    // `Log` fills `text` for every entry it reports — a console message, a failed
+    // request, a deprecation. A line with none is a shape we do not know.
+    if text.is_empty() {
+        return;
+    }
+    buffer.push_back(ConsoleEntry {
+        level: field_or(entry, "level", "log"),
+        source: field_or(entry, "source", "javascript"),
+        text: text.to_string(),
+    });
+    keep_newest(buffer, MAX_CONSOLE);
+}
+
+/// One `Network.requestWillBeSent`.
+fn record_request(buffer: &mut VecDeque<NetEntry>, params: &Value) {
+    let id = field(params, "requestId");
+    if id.is_empty() {
+        return;
+    }
+    let request = params.get("request").unwrap_or(&Value::Null);
+    buffer.push_back(NetEntry {
+        id,
+        method: field_or(request, "method", "GET"),
+        url: field(request, "url"),
+        kind: field_or(params, "type", "Other"),
+        status: None,
+        failed: None,
+    });
+    keep_newest(buffer, MAX_NETWORK);
+}
+
+/// The response for a request already recorded.
+///
+/// A response whose request is not in the buffer is dropped rather than appended:
+/// it happened before `Network.enable`, and a line with no method and no address
+/// is not a request anybody can act on.
+fn record_response(buffer: &mut VecDeque<NetEntry>, params: &Value) {
+    let id = field(params, "requestId");
+    let response = params.get("response").unwrap_or(&Value::Null);
+    let status = response.get("status").and_then(Value::as_i64);
+    let kind = field(params, "type");
+    for entry in buffer.iter_mut().rev() {
+        if entry.id == id {
+            entry.status = status;
+            if !kind.is_empty() {
+                entry.kind = kind;
+            }
+            return;
+        }
+    }
+}
+
+/// `Network.loadingFailed` — a request that never came back.
+fn record_failure(buffer: &mut VecDeque<NetEntry>, params: &Value) {
+    let id = field(params, "requestId");
+    let reason = field_or(params, "errorText", "the request failed");
+    for entry in buffer.iter_mut().rev() {
+        if entry.id == id {
+            entry.failed = Some(reason);
+            return;
+        }
+    }
+}
+
+/// The console, oldest first, with a note when the start has been dropped.
+fn render_console(console: &VecDeque<ConsoleEntry>) -> String {
+    if console.is_empty() {
+        return "The page has logged nothing since it was opened — and anything it logged before \
+                that is gone, because the log starts when DeskSeek attaches. Open the page again \
+                to watch it from the beginning."
+            .to_string();
+    }
+    let mut out = String::new();
+    if console.len() >= MAX_CONSOLE {
+        out.push_str(&format!("(the oldest lines have been dropped; these are the last {MAX_CONSOLE})\n"));
+    }
+    for entry in console {
+        out.push_str(&format!("[{}] {}: {}\n", entry.level, entry.source, entry.text));
+    }
+    truncate(out)
+}
+
+/// The requests, oldest first, each with whatever came back for it.
+fn render_network(network: &VecDeque<NetEntry>) -> String {
+    if network.is_empty() {
+        return "The page has made no requests since it was opened.".to_string();
+    }
+    let mut out = String::new();
+    if network.len() >= MAX_NETWORK {
+        out.push_str(&format!(
+            "(the oldest requests have been dropped; these are the last {MAX_NETWORK})\n"
+        ));
+    }
+    for entry in network {
+        let outcome = match (&entry.failed, entry.status) {
+            (Some(reason), _) => format!("FAILED ({reason})"),
+            (None, Some(status)) => status.to_string(),
+            (None, None) => "pending".to_string(),
+        };
+        out.push_str(&format!(
+            "{}  {} {}  [{}]\n",
+            outcome, entry.method, entry.url, entry.kind
+        ));
+    }
+    truncate(out)
+}
+
+/// The open tabs, with the one being driven marked.
+fn render_tabs(pages: &[Target], current: &str) -> String {
+    if pages.is_empty() {
+        return "The browser has no page open.".to_string();
+    }
+    let mut out = String::new();
+    for (index, page) in pages.iter().enumerate() {
+        let here = if page.id == current { "→" } else { " " };
+        let title = page.title.trim();
+        let title = if title.is_empty() { "(untitled)" } else { title };
+        out.push_str(&format!("{here} {index}: {title}\n     {}\n", page.url.trim()));
     }
     truncate(out)
 }
@@ -576,9 +891,89 @@ async fn dispatch(
     match name {
         "browser_open" => {
             let url = browse::normalise_url(require(args, "url")?);
-            session.navigate(&url, cancel).await?;
+            let new_tab = args.get("new_tab").and_then(Value::as_bool).unwrap_or(false);
+            if new_tab {
+                // `window.open` rather than `Target.createTarget`: the latter is a
+                // browser-level command and this connection is attached to a
+                // page, while a popup is something the page itself can do.
+                let before: Vec<String> =
+                    list_pages(session.port).await?.into_iter().map(|page| page.id).collect();
+                let expression = format!(
+                    "window.open({}, \"_blank\") !== null",
+                    args_literal(&Value::String(url.clone()))
+                );
+                session.evaluate(&expression).await?;
+                let opened = wait_for_new_tab(session.port, &before).await?;
+                session.switch_to(&opened.ws_url, &opened.id).await?;
+            } else {
+                session.navigate(&url, cancel).await?;
+            }
+            session.wait_ready(cancel).await?;
             Ok(render_page(&session.read_page().await?))
         }
+        "browser_tabs" => {
+            let pages = list_pages(session.port).await?;
+            Ok(render_tabs(&pages, &session.target_id))
+        }
+        "browser_tab" => {
+            let action = args
+                .get("action")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("switch");
+            let index = args
+                .get("index")
+                .and_then(|value| match value {
+                    // A model that quotes the number is not making a different
+                    // request, so both spellings are read rather than one being
+                    // silently treated as tab 0.
+                    Value::String(text) => text.trim().parse::<u64>().ok(),
+                    other => other.as_u64(),
+                })
+                .ok_or("browser_tab needs the tab's `index`, exactly as browser_tabs listed it")?
+                as usize;
+            let pages = list_pages(session.port).await?;
+            let page = pages.get(index).cloned().ok_or_else(|| {
+                format!("there is no tab {index} — browser_tabs lists what is open")
+            })?;
+            let title = if page.title.trim().is_empty() {
+                page.url.clone()
+            } else {
+                page.title.clone()
+            };
+
+            if action == "close" {
+                close_target(session.port, &page.id).await?;
+                if page.id == session.target_id {
+                    // We were driving that one, so the socket is now talking to
+                    // nothing. Move to whatever is left rather than leaving the
+                    // session attached to a closed page.
+                    match list_pages(session.port).await?.into_iter().next() {
+                        Some(next) => session.switch_to(&next.ws_url, &next.id).await?,
+                        None => {
+                            return Err(
+                                "that was the last tab, so there is no page left to drive — use \
+                                 browser_open to open one"
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+                return Ok(format!("Closed \"{title}\"."));
+            }
+
+            if page.id == session.target_id {
+                return Ok(format!("Already driving \"{title}\"."));
+            }
+            session.switch_to(&page.ws_url, &page.id).await?;
+            session.wait_ready(cancel).await?;
+            Ok(format!(
+                "Switched to \"{title}\".\n\n{}",
+                render_page(&session.read_page().await?)
+            ))
+        }
+        "browser_console" => Ok(render_console(&session.console)),
+        "browser_network" => Ok(render_network(&session.network)),
         "browser_extract" => Ok(render_page(&session.read_page().await?)),
         "browser_eval" => {
             let expression = require(args, "expression")?;
@@ -637,6 +1032,112 @@ mod tests {
             .unwrap();
         let rendered = render_page(&page);
         assert!(rendered.contains("no readable text"), "got: {rendered}");
+    }
+
+    #[test]
+    fn a_console_entry_keeps_its_level_and_text() {
+        let mut console = VecDeque::new();
+        record_console(
+            &mut console,
+            &json!({
+                "entry": { "level": "error", "source": "network", "text": "Failed to load /api/x" }
+            }),
+        );
+        record_console(
+            &mut console,
+            &json!({ "entry": { "text": "hello" } }),
+        );
+        // A shape with no text is not a line: it would render as an empty one.
+        record_console(&mut console, &json!({ "entry": { "level": "error" } }));
+        record_console(&mut console, &json!({}));
+
+        assert_eq!(console.len(), 2);
+        let rendered = render_console(&console);
+        assert!(rendered.contains("[error] network: Failed to load /api/x"), "got: {rendered}");
+        // A missing level and source fall back rather than rendering as blanks.
+        assert!(rendered.contains("[log] javascript: hello"), "got: {rendered}");
+    }
+
+    #[test]
+    fn a_request_and_its_response_become_one_line() {
+        let mut network = VecDeque::new();
+        record_request(
+            &mut network,
+            &json!({
+                "requestId": "42",
+                "type": "XHR",
+                "request": { "method": "POST", "url": "https://api.test/v1/items" }
+            }),
+        );
+        // In flight: no status yet, and it says so rather than looking like a 0.
+        assert!(render_network(&network).contains("pending"), "got: {}", render_network(&network));
+
+        record_response(
+            &mut network,
+            &json!({ "requestId": "42", "type": "XHR", "response": { "status": 404 } }),
+        );
+        assert_eq!(network.len(), 1, "the response must join the request, not add a row");
+        let rendered = render_network(&network);
+        assert!(rendered.contains("404  POST https://api.test/v1/items  [XHR]"), "got: {rendered}");
+
+        // A response for a request we never saw is dropped rather than appended
+        // as a row with no method and no address.
+        record_response(&mut network, &json!({ "requestId": "nope", "response": { "status": 200 } }));
+        assert_eq!(network.len(), 1);
+
+        // A failure replaces the status, because "it never came back" is the fact.
+        record_failure(&mut network, &json!({ "requestId": "42", "errorText": "net::ERR_FAILED" }));
+        let rendered = render_network(&network);
+        assert!(rendered.contains("FAILED (net::ERR_FAILED)"), "got: {rendered}");
+    }
+
+    #[test]
+    fn the_buffers_keep_the_newest_and_drop_the_oldest() {
+        let mut network = VecDeque::new();
+        for n in 0..MAX_NETWORK + 5 {
+            record_request(
+                &mut network,
+                &json!({
+                    "requestId": format!("r{n}"),
+                    "type": "XHR",
+                    "request": { "method": "GET", "url": format!("https://api.test/{n}") }
+                }),
+            );
+        }
+        assert_eq!(network.len(), MAX_NETWORK, "an unbounded network log is the whole problem");
+        // The five oldest are the ones that went.
+        assert_eq!(network.front().map(|entry| entry.id.as_str()), Some("r5"));
+        assert!(render_network(&network).contains("oldest requests have been dropped"));
+    }
+
+    #[test]
+    fn a_page_list_marks_the_one_being_driven() {
+        let pages = vec![
+            Target {
+                kind: "page".to_string(),
+                id: "A".to_string(),
+                title: "Notepad".to_string(),
+                url: "https://a.test/".to_string(),
+                ws_url: "ws://127.0.0.1:9/devtools/page/A".to_string(),
+            },
+            Target {
+                kind: "page".to_string(),
+                id: "B".to_string(),
+                title: "  ".to_string(),
+                url: "https://b.test/".to_string(),
+                ws_url: "ws://127.0.0.1:9/devtools/page/B".to_string(),
+            },
+        ];
+        let rendered = render_tabs(&pages, "B");
+        let marked: Vec<&str> = rendered
+            .lines()
+            .filter(|line| line.starts_with('→'))
+            .collect();
+        assert_eq!(marked.len(), 1, "exactly one tab is the current one: {rendered}");
+        assert!(marked[0].contains("1: (untitled)"), "got: {rendered}");
+        assert!(rendered.contains("0: Notepad"), "got: {rendered}");
+        // With nothing open there is no list to misread.
+        assert!(render_tabs(&[], "A").contains("no page open"));
     }
 
     #[test]

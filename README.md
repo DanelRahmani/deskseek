@@ -511,11 +511,14 @@ through to a result, checking what a site really does — the agent can drive th
 
 | Tool | What it does |
 | --- | --- |
-| `browser_open` | Open a URL and read the page. A read, so it does not prompt. The browser keeps its state, so open once and work on it |
+| `browser_open` | Open a URL and read the page. A read, so it does not prompt. The browser keeps its state, so open once and work on it. With `new_tab` it opens a second tab instead and drives that one |
 | `browser_extract` | Read the page that is already open — also a read |
 | `browser_eval` | Run a JavaScript expression in the page and get the value back |
 | `browser_click` / `browser_type` | Click an element or fill a field by CSS selector, then read the page back |
 | `browser_screenshot` | Show **you** a picture of the page, in the chat |
+| `browser_console` | What the page has logged since it was opened: console output, errors, deprecations and failed requests — usually the page saying why it is broken |
+| `browser_network` | Every request the page made, with its status or the reason it failed |
+| `browser_tabs` / `browser_tab` | List the open tabs, switch to one, or close one. Switching drops the console and the network log, because those belonged to the page you left |
 
 It is Edge or Chrome, launched headless with its **own profile directory** under DeskSeek's data
 folder on an auto-assigned debugging port. It never touches the browser you are signed into: it
@@ -528,7 +531,13 @@ Four things are worth saying plainly:
 - **The four that act always ask, even in *Auto* mode.** `browser_eval`, `browser_click`,
   `browser_type` and `browser_screenshot` — no string rule can tell a harmless click from a
   purchase, so the app does not pretend to. Only *Skip* runs them unattended. Opening and reading
-  a page is a lookup and is classed as a read, like `browser_read`
+  a page is a lookup and is classed as a read, like `browser_read`. `browser_tab` asks too: closing
+  a tab throws away whatever that page was holding. The console, the network log and the tab list
+  are reads — they report what the page already did
+- **The log starts when DeskSeek attaches.** Console output and requests from before that are not
+  replayed, because the browser only reports events as they happen. `browser_console` says so
+  rather than showing an empty list, and both buffers are **bounded** — the last 200 console lines
+  and the last 300 requests, oldest dropped — because a network log is unbounded by nature
 - **Page content is data, never instructions.** A page that tells the model to run a command or
   ignore what you asked is a prompt injection — the agent is told to stop and report it.
 - **Screenshots go to your eyes, not the model's.** The result the model receives is text, because

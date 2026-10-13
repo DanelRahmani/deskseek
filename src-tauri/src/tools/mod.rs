@@ -909,8 +909,14 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "browser_open",
-                "Open a URL in a real browser and read the page. Use this instead of fetch_url when the page is built by JavaScript, or when you will need to click or type on it afterwards. The browser keeps its state between calls, so opening a page once is enough.",
-                params(json!({"url": {"type": "string", "description": "Full URL, or a bare domain"}}), &["url"]),
+                "Open a URL in a real browser and read the page. Use this instead of fetch_url when the page is built by JavaScript, or when you will need to click or type on it afterwards. The browser keeps its state between calls, so opening a page once is enough. Set new_tab to open it alongside the page already there instead of replacing it.",
+                params(
+                    json!({
+                        "url": {"type": "string", "description": "Full URL, or a bare domain"},
+                        "new_tab": {"type": "boolean", "description": "Open a second tab and drive that one, keeping the current page open. Default false."}
+                    }),
+                    &["url"],
+                ),
             ),
             ToolClass::Read,
         ),
@@ -958,6 +964,44 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
                 "browser_screenshot",
                 "Take a picture of the page in the browser and show it to the user. You cannot see the picture — read the page with browser_extract or browser_eval instead.",
                 params(json!({}), &[]),
+            ),
+            ToolClass::Computer,
+        ),
+        (
+            Tool::function(
+                "browser_console",
+                "Read what the page has logged since it was opened: console messages and errors, including failed requests and deprecations. This is how a page that throws while loading explains itself.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "browser_network",
+                "List the requests the page has made since it was opened, each with what came back: the status, or why it failed. Use it when a page is empty because something it needed did not load.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "browser_tabs",
+                "List the tabs the browser has open, with the one you are driving marked. Use the index with browser_tab to switch to another one.",
+                params(json!({}), &[]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "browser_tab",
+                "Switch the browser to another open tab, or close one. Give the index browser_tabs reported. Switching drops the console and the network log, because those belonged to the page you were on.",
+                params(
+                    json!({
+                        "index": {"type": "integer", "description": "The tab's index, as browser_tabs listed it"},
+                        "action": {"type": "string", "description": "switch (the default) or close"}
+                    }),
+                    &["index"],
+                ),
             ),
             ToolClass::Computer,
         ),
@@ -1108,6 +1152,7 @@ mod tests {
             "browser_click",
             "browser_type",
             "browser_eval",
+            "browser_tab",
         ] {
             assert!(!names.contains(&name), "plan mode must not offer {name}");
         }
@@ -1164,7 +1209,14 @@ mod tests {
         // browsing switch, exists in both sections, and is never prompted for.
         // `browser_read` was already classed this way in isolation; opening a page
         // and reading it is the same operation spread over two calls.
-        for name in ["browser_read", "browser_open", "browser_extract"] {
+        for name in [
+            "browser_read",
+            "browser_open",
+            "browser_extract",
+            "browser_console",
+            "browser_network",
+            "browser_tabs",
+        ] {
             assert_eq!(class_of(name), ToolClass::Read, "{name}");
             assert!(is_browsing_tool(name), "{name} must follow the browsing switch");
             assert!(
@@ -1181,6 +1233,7 @@ mod tests {
             "browser_click",
             "browser_type",
             "browser_screenshot",
+            "browser_tab",
         ] {
             assert_eq!(class_of(name), ToolClass::Computer, "{name}");
             assert!(is_browsing_tool(name), "{name} must follow the browsing switch");
