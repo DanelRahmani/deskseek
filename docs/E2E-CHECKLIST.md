@@ -195,6 +195,9 @@ nothing, or throws.
       orange slice, and the legend's percentages match
 - [ ] A window with only one kind of chat draws one pie, and a section with no tokens still
       draws (as a ring) rather than breaking the panel
+- [ ] *Export the decision log and the spend* in the palette writes one JSON file to the documents
+      folder, the notice names it, and opening it shows the decisions **Settings → Commands** lists
+      and the figures the panel is showing — with no command or file contents in it, only digests
 
 ## Scheduling and notifications
 

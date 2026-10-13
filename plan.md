@@ -6,10 +6,10 @@ Phase 3 (3.1–3.6). **Phase 4** (4.1–4.4) and **Phases 5–6** (5.1–5.4, 6.
 done and committed as `7eb16c2`, still local; 5.2's file tree keys landed with 5.3,
 because the tree's roles and its keys are one edit to the same recursion. **Phase 7
 is on the working tree, uncommitted.** The next release is **0.4.0**, and
-`CHANGELOG.md`'s top section is what its tag will print. **Phase 8 is planned and
-not started**: its items are below, and the analysis behind them (what Claude,
-ChatGPT and Gemini each do, and which of it is worth having here) is
-[`ReverseEngineering.md`](ReverseEngineering.md).
+`CHANGELOG.md`'s top section is what its tag will print. **Phase 8 (8.1–8.13) is done
+and committed, still local, and unreleased**: its items are below, and the analysis
+behind them (what Claude, ChatGPT and Gemini each do, and which of it is worth having
+here) is [`ReverseEngineering.md`](ReverseEngineering.md).
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -1362,7 +1362,7 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   empty, which is what stops a row of zero-height bars being drawn. `cargo test` 345 passed.
 - **Stop**: a week's shape is readable, and its numbers agree with the spend view.
 
-### 8.11 [S] ✅ A notification that takes you to the thing
+### 8.11 [S] A notification that takes you to the thing ✅
 - **Why**: a toast that says a task finished and cannot open it is half a feature. The hard half is
   already done, because the park queue can be answered from the Scheduled panel.
 - **Files**: `notify.rs` (`ping` records a target when it raises a toast — `EVENT_NOTIFY_OPEN`,
@@ -1379,7 +1379,7 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   upgrade path, and the ceiling is named in a `ponytail:` note on `route_to_open`.
 - **Stop**: clicking a finish opens the conversation that finished.
 
-### 8.12 [S] ✅ `@` and `$` in the composer
+### 8.12 [S] `@` and `$` in the composer ✅
 - **Why**: the composer already parses `/` commands and `/p:<id>` prompts, so the parser exists.
   ChatGPT's quick controls use `@` for context and `$` for a skill, and this is the same small
   feature reached from the same keystroke.
@@ -1399,14 +1399,22 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
   `cargo test` 346 passed.
 - **Stop**: a file or a skill can be referenced from the composer without leaving the keyboard.
 
-### 8.13 [S] The log and the spend leave the app
+### 8.13 [S] The log and the spend leave the app ✅
 - **Why**: the decision log (3.5) and the run history exist so that a person can look something up,
   but only from inside the app. An export is a file that gets mailed around, so the rule from 3.5
   holds and is now load-bearing: arguments are stored as a digest, never as themselves.
-- **Files**: `commands.rs` (an export command), `store/db.rs` (the read paths exist), `src/api.ts`,
-  the palette in `src/lib/commands.ts`, where *Maintain the database* already lives.
-- **Test**: the exported rows equal what the panel shows for the same window, and no row carries a
-  tool's arguments, only its digest.
+- **Files**: `store/db.rs` (`Audit`, `AUDIT_VERSION`, `audit` — it assembles the *same two reads the
+  panels make* rather than querying again); `commands.rs` (`export_audit`, which writes the JSON to
+  the documents folder and returns the path, and `spend_window`, lifted out of `spend_report` and
+  `recap` so a third caller cannot pick a third window); `lib.rs`; `src/api.ts`; `src/lib/commands.ts`
+  (the palette entry beside *Maintain the database*); `App.tsx` (the notice naming the file);
+  `SpendPanel.tsx` (`DEFAULT_SPEND_DAYS`, so "the panel's window" is one number, not two).
+- **Test**: `db::tests::the_exported_audit_is_what_the_panels_show_and_carries_no_arguments` — the
+  exported decisions and spend equal `recent_decisions`/`spend_report` for the same window; the
+  window is honoured (one turn of two is in it); the digest of a call whose arguments held a secret
+  is in the file and the secret is not; a call with no arguments has an empty digest rather than a
+  missing key; and the keys are camelCase, which is what the format was written in. Falsified:
+  making the export its own decision query with a different cap fails it. `cargo test` 347 passed.
 - **Stop**: what was allowed, and what it cost, can be exported to a file.
 
 ---

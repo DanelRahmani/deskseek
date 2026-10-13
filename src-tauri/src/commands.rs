@@ -1704,6 +1704,16 @@ const DEFAULT_SPEND_DAYS: u32 = 30;
 /// chat ever used is not one.
 const SPEND_CHAT_LIMIT: usize = 10;
 
+/// The start of the window a `days` argument means, capped.
+///
+/// Shared rather than spelled out per command, so the spend panel, the recap and
+/// the export cannot end up looking at three different windows — a third copy of
+/// the same two lines is exactly how that happens.
+fn spend_window(days: Option<u32>) -> i64 {
+    let days = days.unwrap_or(DEFAULT_SPEND_DAYS).clamp(1, MAX_SPEND_DAYS);
+    db::now_ts() - i64::from(days) * 86_400
+}
+
 /// What the last `days` of turns cost, grouped by day, model and chat.
 ///
 /// One command, one round trip: the panel opens and is complete.
@@ -1712,8 +1722,7 @@ pub fn spend_report(
     state: State<'_, AppState>,
     days: Option<u32>,
 ) -> Result<db::SpendReport, String> {
-    let days = days.unwrap_or(DEFAULT_SPEND_DAYS).clamp(1, MAX_SPEND_DAYS);
-    let since = db::now_ts() - i64::from(days) * 86_400;
+    let since = spend_window(days);
     let conn = state.db.lock().unwrap();
     db::spend_report(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
 }
@@ -1725,10 +1734,34 @@ pub fn spend_report(
 /// the two panels cannot be looking at two different windows.
 #[tauri::command]
 pub fn recap(state: State<'_, AppState>, days: Option<u32>) -> Result<db::Recap, String> {
-    let days = days.unwrap_or(DEFAULT_SPEND_DAYS).clamp(1, MAX_SPEND_DAYS);
-    let since = db::now_ts() - i64::from(days) * 86_400;
+    let since = spend_window(days);
     let conn = state.db.lock().unwrap();
     db::recap(&conn, since, SPEND_CHAT_LIMIT).map_err(|e| e.to_string())
+}
+
+/// The decision log and the bill, written to one file in the documents folder.
+///
+/// Returns the path, as the backup does, so the notice can name the file. The
+/// window is the spend panel's own, and the decisions are the ones the settings
+/// panel lists: the file says what the screens say, by calling the same reads.
+///
+/// The arguments of a call are not in it. An approval can cover a command
+/// carrying a credential, which is why the log holds a digest in the first place
+/// — and a file that gets mailed around is the last place to undo that.
+#[tauri::command]
+pub fn export_audit(state: State<'_, AppState>, days: Option<u32>) -> Result<String, String> {
+    let export = {
+        let conn = state.db.lock().unwrap();
+        db::audit(&conn, spend_window(days), RECENT_DECISIONS_LIMIT, SPEND_CHAT_LIMIT)
+            .map_err(|e| e.to_string())?
+    };
+    let json = serde_json::to_string_pretty(&export).map_err(|e| e.to_string())?;
+    let dir = documents_dir_path(&state);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let path = crate::tools::docs::free_path(&dir, &format!("deskseek-audit-{stamp}"), "json");
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
 }
 
 // --------------------------------------------------------------- maintenance

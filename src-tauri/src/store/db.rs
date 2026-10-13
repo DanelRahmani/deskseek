@@ -2651,6 +2651,58 @@ pub fn spend_report(conn: &Connection, since: i64, chat_limit: usize) -> rusqlit
     })
 }
 
+// ----------------------------------------------------------- the audit export
+
+/// The version of the exported file, from its first release.
+///
+/// A file outlives the code that wrote it, so it says which shape it is in — the
+/// same rule the chat bundle follows.
+pub const AUDIT_VERSION: u32 = 1;
+
+/// What leaves the app: the decisions and the bill, in one file.
+///
+/// Both halves are the *same reads the panels make*, not a second pair of
+/// queries. An export that can disagree with the screen it exports is a
+/// liability, and the equality is what the test asserts rather than promises.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Audit {
+    pub version: u32,
+    pub exported_at: i64,
+    /// The window the spend covers, so a reader of the file knows.
+    pub since: i64,
+    /// Newest first, capped exactly like the panel's list — see the ceiling on
+    /// `decision_limit` below.
+    pub decisions: Vec<ApprovalRecord>,
+    pub spend: SpendReport,
+}
+
+/// Assemble the export for one window.
+///
+/// `args_digest` is all this carries of a call's arguments, because the log
+/// carries nothing else: an approval can cover a command holding a secret, and
+/// this is a file that gets mailed around.
+///
+/// ponytail: `decision_limit` is the panel's own cap, so the file is the panel's
+/// view of the log rather than a dump of the table. A person who wants every row
+/// ever written wants `sqlite3` or a paging UI, not a JSON file to read — the
+/// upgrade path if that changes is a `since` on the decisions query and a page in
+/// the panel to match it.
+pub fn audit(
+    conn: &Connection,
+    since: i64,
+    decision_limit: usize,
+    chat_limit: usize,
+) -> rusqlite::Result<Audit> {
+    Ok(Audit {
+        version: AUDIT_VERSION,
+        exported_at: now_ts(),
+        since,
+        decisions: recent_decisions(conn, decision_limit)?,
+        spend: spend_report(conn, since, chat_limit)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4070,6 +4122,71 @@ mod tests {
         let empty = recap(&conn, now_ts() + 86_400, 10).unwrap();
         assert_eq!(empty.turns, 0);
         assert!(empty.days.is_empty() && empty.hours.is_empty() && empty.chats.is_empty());
+    }
+
+    #[test]
+    fn the_exported_audit_is_what_the_panels_show_and_carries_no_arguments() {
+        let conn = mem();
+        let chat = create_chat(&conn, "chat", None, "m", true, "high", "manual").unwrap();
+        record_turn_usage(&conn, &chat.id, "r1", &round("m", 100, 20, 0.5), None).unwrap();
+        // One turn in the window and one before it, so the equality below is
+        // about the window as well as about the rows.
+        record_turn_usage(&conn, &chat.id, "r0", &round("m", 10, 10, 9.0), None).unwrap();
+        conn.execute("UPDATE turn_usage SET created_at = 100 WHERE run_id = 'r0'", [])
+            .unwrap();
+
+        // A decision whose arguments held a secret. Only the digest is written
+        // down, which is the rule this file has to keep as it leaves the machine:
+        // an approval can cover a command carrying a credential.
+        let secret = serde_json::json!({ "command": "deploy --token hunter2" });
+        let digest = crate::approvals::args_digest(&secret);
+        log_decision(&conn, &chat.id, "run_command", ALLOWED, "once", &digest, "/work").unwrap();
+        log_decision(&conn, &chat.id, "write_file", DENIED, "denied", "", "/work").unwrap();
+
+        let since = now_ts() - 86_400;
+        let export = audit(&conn, since, 100, 10).unwrap();
+
+        // The export *is* the panels' reads rather than a second query that could
+        // drift from them. Asserted anyway: that equality is the item's whole
+        // guarantee, and a later rewrite could quietly break it.
+        assert_eq!(
+            serde_json::to_value(&export.decisions).unwrap(),
+            serde_json::to_value(recent_decisions(&conn, 100).unwrap()).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&export.spend).unwrap(),
+            serde_json::to_value(spend_report(&conn, since, 10).unwrap()).unwrap()
+        );
+        // The window is the caller's: the spend covers one turn, not two.
+        assert_eq!(export.since, since);
+        assert_eq!(export.spend.turns, 1);
+
+        let text = serde_json::to_string_pretty(&export).unwrap();
+        assert!(text.contains("run_command") && text.contains("write_file"));
+        assert!(text.contains(&digest), "the digest is what the log holds");
+        assert!(!text.contains("hunter2"), "an argument got into the export");
+        assert!(!text.contains("deploy"), "an argument got into the export");
+        assert_eq!(export.version, AUDIT_VERSION);
+        // The call with arguments has a digest; the one without has none, and
+        // neither has the arguments themselves.
+        let digests: Vec<&str> = export
+            .decisions
+            .iter()
+            .map(|row| row.args_digest.as_str())
+            .collect();
+        assert!(digests.contains(&digest.as_str()));
+        assert!(digests.iter().any(|d| d.is_empty()));
+
+        // The file is read by a person now and by whatever reads this format
+        // later, so the keys have to be the camelCase ones it will look for.
+        let shape = serde_json::to_value(&export).unwrap();
+        assert_eq!(shape["exportedAt"], serde_json::json!(export.exported_at));
+        assert!(shape["decisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["argsDigest"].is_string()));
+        assert_camel_case_keys(&shape, "audit");
     }
 
     #[test]

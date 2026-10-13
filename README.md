@@ -725,6 +725,15 @@ so a run from a year ago that is still the newest in its chat is still there. A 
 rewrites the whole file — only runs when a prune freed a few hundred rows, so an ordinary launch
 does not pay for it.
 
+**Taking the record with you**
+
+*Export the decision log and the spend* in the palette writes one JSON file to your documents
+folder: the same decisions **Settings → Commands** lists, and the same bill the spend panel shows
+for the same window — the export calls those reads rather than querying again, so the file cannot
+disagree with the screen. A call's **arguments are not in it**, only the digest the log itself
+keeps, because an approval can cover a command carrying a credential and a file that gets mailed
+around is the last place to undo that.
+
 ## First run
 
 On first launch DeskSeek shows a short setup screen — reopen it any time with `/setup`. It

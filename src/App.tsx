@@ -48,7 +48,7 @@ import { ProjectsPanel } from "./components/ProjectsPanel";
 import { answerFrom } from "./components/QuestionPrompt";
 import { ArtifactsGallery } from "./components/ArtifactsGallery";
 import { ScheduledPanel } from "./components/ScheduledPanel";
-import { SpendPanel } from "./components/SpendPanel";
+import { DEFAULT_SPEND_DAYS, SpendPanel } from "./components/SpendPanel";
 import { SetupPanel } from "./components/SetupPanel";
 import { FilesPanel } from "./components/FilesPanel";
 import { ArtifactPanel } from "./components/ArtifactPanel";
@@ -1382,6 +1382,18 @@ export default function App() {
     }
   }, []);
 
+  // What was allowed and what it cost, as one file. The window is the spend
+  // panel's, so the file and the screen say the same thing.
+  const exportAudit = useCallback(async () => {
+    try {
+      const path = await api.exportAudit(DEFAULT_SPEND_DAYS);
+      const name = path.split(/[\\/]/).pop() ?? path;
+      setNotice(`Exported the decision log and the spend to ${name} in your documents folder.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, []);
+
   // The sidebar's search box is a full-text lookup over every message. The box
   // state lives in the Sidebar, so this debounces the keystrokes and owns the
   // results. A search is ranked by relevance, not by recency, so a common word
@@ -1511,6 +1523,9 @@ export default function App() {
         case "maintain":
           void maintainDb();
           return;
+        case "export-audit":
+          void exportAudit();
+          return;
         case "export":
           if (activeIdRef.current) void exportChat(activeIdRef.current);
           return;
@@ -1540,6 +1555,7 @@ export default function App() {
     [
       backupProfile,
       chatsById,
+      exportAudit,
       exportChat,
       maintainDb,
       newChat,

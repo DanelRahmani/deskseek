@@ -311,6 +311,11 @@ export const api = {
   spendReport: (days: number) => invoke<SpendReport>("spend_report", { days }),
   /** The same window's shape: days, hours and conversations. */
   recap: (days: number) => invoke<Recap>("recap", { days }),
+  /**
+   * The decision log and the bill as one JSON file in the documents folder.
+   * Returns the path it wrote, so the notice can name the file.
+   */
+  exportAudit: (days: number) => invoke<string>("export_audit", { days }),
 
   /** Saved prompts: one markdown file each, in a folder of their own. */
   listPrompts: () => invoke<PromptView[]>("list_prompts"),

@@ -370,6 +370,7 @@ pub fn run() {
             commands::spend_report,
             commands::recap,
             commands::maintain_db,
+            commands::export_audit,
             commands::send_message,
             commands::stop_chat,
             commands::running_chats,

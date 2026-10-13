@@ -26,6 +26,7 @@ one.
 - The spend panel gained *The shape of it*: turns per day drawn as a chart, the busiest day and the peak hour, from the same rows as the bill
 - Clicking a notification opens the conversation it was about
 - The composer's `@` mentions a file from the workspace and `$` a skill, both filled into the box to edit rather than sent
+- The decision log and the spend export to one file in your documents folder — the same rows the panels show, with a call's arguments left out in favour of their digests
 
 ## 0.4.0 — 2026-10-12
 

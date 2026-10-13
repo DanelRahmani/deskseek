@@ -37,6 +37,7 @@ export function buildPalette(
     { id: "backup", label: "Back up the whole profile", hint: "Action" },
     { id: "restore", label: "Restore a backup over this profile…", hint: "Action" },
     { id: "maintain", label: "Maintain the database", hint: "Action" },
+    { id: "export-audit", label: "Export the decision log and the spend", hint: "Action" },
     { id: "import-chat", label: "Import a conversation from JSON…", hint: "Action" },
   ];
   // Exporting needs something to export; undoing needs something to undo, which

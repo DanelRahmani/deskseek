@@ -14,6 +14,12 @@ interface Props {
 /** The windows worth asking for. Days, not dates — the panel is a glance. */
 const RANGES = [7, 30, 90];
 
+/**
+ * The window the panel opens on, and so the one anything outside it should
+ * cover when it says "the same window the spend shows".
+ */
+export const DEFAULT_SPEND_DAYS = 30;
+
 /** `$0.0040` is noise; `$0.004` is the number. Cents once it is worth cents. */
 export function money(usd: number): string {
   if (usd === 0) return "$0";
@@ -136,7 +142,7 @@ function RecapChart({ recap }: { recap: Recap }) {
  * conversations at the top, not every chat ever opened.
  */
 export function SpendPanel({ onClose, onOpenChat }: Props) {
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(DEFAULT_SPEND_DAYS);
   const [report, setReport] = useState<SpendReport | null>(null);
   const [recap, setRecap] = useState<Recap | null>(null);
   const [error, setError] = useState<string | null>(null);

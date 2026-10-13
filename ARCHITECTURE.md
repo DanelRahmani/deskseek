@@ -97,6 +97,7 @@ Changing behaviour in this app is usually changing one of these.
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |
 | The workspace watcher, and its refcounted roots | `fs_watch.rs` |
 | What a backup carries, and what it deliberately leaves out | `backup.rs` |
+| What the decision-and-spend export carries: the panels' own reads, digests and never arguments | `store/db.rs` |
 
 The frontend has the same shape: a small pure module per rule, each with a
 `*.check.ts` beside it that `npm run check` runs (the README lists what each one
