@@ -24,6 +24,18 @@ pub struct Doc {
     pub body: String,
 }
 
+/// Whether an id is a single, safe path component: the one guard every store
+/// that joins a name to its folder needs before it touches disk.
+///
+/// Empty, a separator or a `..` is a path, not a name, and would climb out of
+/// the folder. A prefix is *not* what protects us — a store with no prefix is
+/// exactly the case a prefix-based check gets wrong — so the rule stands on its
+/// own here, and `file_for` below asks it too. A second copy of a path guard is
+/// how path guards rot.
+pub fn safe_component(id: &str) -> bool {
+    !id.is_empty() && !id.contains(['/', '\\']) && !id.contains("..")
+}
+
 /// The three things the folders disagree on, and everything else they share.
 pub struct Store {
     /// Prepended to every id. Empty for a folder whose ids need no prefix.
@@ -64,7 +76,7 @@ impl Store {
     /// separator or a `..` is a path, not a name, and would walk out of the
     /// folder.
     pub(crate) fn file_for(&self, dir: &Path, id: &str) -> Option<PathBuf> {
-        if !self.is_id(id) || id.contains(['/', '\\']) || id.contains("..") {
+        if !self.is_id(id) || !safe_component(id) {
             return None;
         }
         Some(dir.join(format!("{id}.md")))
@@ -194,6 +206,24 @@ mod tests {
         }
         assert!(BARE.file_for(dir, "review-a-diff").is_some());
         assert!(!BARE.is_id(""));
+    }
+
+    #[test]
+    fn the_safe_component_guard_is_the_same_for_a_prefixed_store() {
+        // The same strings the bare store refuses, a prefixed store must refuse
+        // too: the prefix is a namespace, never the safety. This is the guard
+        // the skills importer calls as well, so a change here is a change there.
+        const PREFIXED: Store = Store::new("design-", "design system", "design");
+        let dir = Path::new("/design");
+        for bad in ["../secret", "design-a/b", "design-a\\b", "design-..", ""] {
+            assert!(!safe_component(bad), "{bad} is not a single component");
+            assert!(PREFIXED.file_for(dir, bad).is_none(), "{bad} must not resolve");
+        }
+        assert!(safe_component("review-a-diff"));
+        assert!(PREFIXED.file_for(dir, "design-house-style").is_some());
+        // The prefix check and the component check are different questions: an
+        // id can pass one and fail the other, which is why both are asked.
+        assert!(PREFIXED.is_id("design-..") && !safe_component("design-.."));
     }
 
     #[test]

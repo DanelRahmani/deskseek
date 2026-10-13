@@ -44,6 +44,7 @@ import type {
   SectionKind,
   Settings,
   ShotEvent,
+  SkillImport,
   SkillView,
   SpendReport,
   ToolGrant,
@@ -147,6 +148,14 @@ export const api = {
   installSkillText: (text: string) => invoke<string>("install_skill_text", { text }),
   /** Put back any bundled example the user is missing; returns what it added. */
   installExamples: () => invoke<string[]>("install_examples"),
+  /**
+   * Import the `SKILL.md` folders in a folder the user picked: one skill
+   * directory, or a folder of them. A name already installed is skipped, not
+   * replaced, and the report names both lists.
+   */
+  importSkills: (path: string) => invoke<SkillImport>("import_skills", { path }),
+  /** Write every skill out as `<id>/SKILL.md`; returns the ids written. */
+  exportSkills: (path: string) => invoke<string[]>("export_skills", { path }),
   deleteSkill: (id: string) => invoke<void>("delete_skill", { id }),
 
   respondApproval: (requestId: string, decision: string) =>

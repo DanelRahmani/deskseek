@@ -5,7 +5,7 @@
 //! skill is a reusable instruction, which keeps the trust surface tiny.
 
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -254,6 +254,118 @@ pub fn write_missing_examples(root: &Path) -> io::Result<Vec<String>> {
     Ok(added)
 }
 
+// ------------------------------------------------------------ import / export
+//
+// `skills/<id>/SKILL.md` is not a DeskSeek format — it is the open one, the
+// layout Anthropic publishes as Agent Skills and Google builds its own skills
+// on. So the way in and the way out are both a byte copy of the *folder*, not a
+// re-write through `compose`: a skill that arrived with frontmatter this build
+// does not read, or with a reference file beside its instructions, has to come
+// back out exactly as it went in. That is the whole interop promise.
+
+/// The outcome of importing a folder: what landed, and what was left alone
+/// because a skill of that name is already here. Two lists rather than a count,
+/// so the panel can say which.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillImport {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Copies a directory tree, files byte for byte.
+///
+/// ponytail: a symlink inside a skill folder is followed by `fs::copy`, so it
+/// would copy the linked file's bytes rather than the link. That is a
+/// deliberate ceiling — the user picked this folder themselves, and a skill that
+/// carries a symlink out of its own tree is not a case worth code until it
+/// happens.
+fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
+/// The skill directories inside a folder the user pointed at.
+///
+/// A folder that *is* a skill — it holds a `SKILL.md` — is one skill; otherwise
+/// each subdirectory that holds one is a skill. Anything else is a stray file
+/// and is skipped, because a `.txt` beside a skill is not a skill.
+pub fn skill_dirs(folder: &Path) -> Vec<PathBuf> {
+    if folder.join("SKILL.md").is_file() {
+        return vec![folder.to_path_buf()];
+    }
+    let mut out = Vec::new();
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return out;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().map(|t| t.is_dir()).unwrap_or(false)
+            && entry.path().join("SKILL.md").is_file()
+        {
+            out.push(entry.path());
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Import every skill in a folder into the store.
+///
+/// The folder name is the id, because that is the open standard's rule and the
+/// only reason an export reproduces the same folder. It is checked with the one
+/// path guard this repo has (`store::files::safe_component`), not a second copy
+/// of it. A name already installed is *skipped* rather than overwritten:
+/// importing twice must never replace a skill the user may have edited, and the
+/// caller gets `skipped` so it can say so.
+pub fn import_folder(folder: &Path, root: &Path) -> Result<SkillImport, String> {
+    let mut out = SkillImport::default();
+    for source in skill_dirs(folder) {
+        let name = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        if !crate::store::files::safe_component(&name) {
+            return Err(format!("{name:?} is not a usable skill name."));
+        }
+        let dir = root.join(&name);
+        if dir.exists() {
+            out.skipped.push(name);
+            continue;
+        }
+        std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+        copy_dir(&source, &dir).map_err(|e| e.to_string())?;
+        out.imported.push(name);
+    }
+    Ok(out)
+}
+
+/// Copy every skill in the store into `dest`, one `<id>/SKILL.md` each — the
+/// folder shape Claude, Gemini and this app all read.
+pub fn export_all(dest: &Path, root: &Path) -> Result<Vec<String>, String> {
+    // Exporting into the store would read and write the same folders at once.
+    if dest == root {
+        return Err("Pick a folder other than the skills folder.".to_string());
+    }
+    std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let mut out = Vec::new();
+    for skill in discover(root) {
+        copy_dir(&root.join(&skill.id), &dest.join(&skill.id))
+            .map_err(|e| format!("{}: {e}", skill.id))?;
+        out.push(skill.id);
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -446,5 +558,100 @@ mod tests {
         // A `SKILL.md` with no folder to borrow a name from still gets a usable
         // id rather than an empty one.
         assert_eq!(id_for(Path::new("SKILL.md"), "no frontmatter"), "skill");
+    }
+
+    #[test]
+    fn a_skill_folder_round_trips_through_export_and_import_unchanged() {
+        let base = std::env::temp_dir().join(format!("deskseek-interop-{}", uuid::Uuid::new_v4()));
+        let arrived = base.join("from-claude").join("concise");
+        std::fs::create_dir_all(arrived.join("references")).unwrap();
+        // Frontmatter this build does not read — `license`, `allowed-tools` —
+        // and a file beside SKILL.md: both have to survive a trip through the
+        // store byte for byte, which is the interop promise.
+        let body = "---\nname: Concise\nlicense: MIT\nallowed-tools: Read, Grep\n---\nBe terse.\n";
+        std::fs::write(arrived.join("SKILL.md"), body).unwrap();
+        std::fs::write(arrived.join("references").join("style.md"), "no filler\n").unwrap();
+
+        let store = base.join("skills");
+        let report = import_folder(&base.join("from-claude"), &store).unwrap();
+        assert_eq!(report.imported, vec!["concise".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(store.join("concise").join("SKILL.md")).unwrap(),
+            body,
+            "unknown frontmatter is preserved verbatim"
+        );
+        assert_eq!(
+            std::fs::read_to_string(store.join("concise").join("references").join("style.md"))
+                .unwrap(),
+            "no filler\n",
+            "a file beside the instructions comes with it"
+        );
+        // And the store reads it as a normal skill.
+        let parsed = discover(&store).into_iter().find(|s| s.id == "concise").unwrap();
+        assert_eq!(parsed.name, "Concise");
+
+        // Back out again, into the folder shape another tool reads unchanged.
+        let out = base.join("exported");
+        assert_eq!(export_all(&out, &store).unwrap(), vec!["concise".to_string()]);
+        assert_eq!(std::fs::read_to_string(out.join("concise").join("SKILL.md")).unwrap(), body);
+        assert!(out.join("concise").join("references").join("style.md").is_file());
+
+        // Importing the same folder twice is a skip, not an overwrite.
+        let again = import_folder(&base.join("from-claude"), &store).unwrap();
+        assert!(again.imported.is_empty());
+        assert_eq!(again.skipped, vec!["concise".to_string()]);
+        assert_eq!(
+            std::fs::read_to_string(store.join("concise").join("SKILL.md")).unwrap(),
+            body,
+            "the second import left the first one's bytes alone"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_stray_file_beside_a_skill_is_not_a_skill() {
+        let base = std::env::temp_dir().join(format!("deskseek-stray-{}", uuid::Uuid::new_v4()));
+        let folder = base.join("dropped");
+        std::fs::create_dir_all(folder.join("real")).unwrap();
+        std::fs::write(folder.join("notes.txt"), "just notes").unwrap();
+        std::fs::write(folder.join("README.md"), "# not a skill").unwrap();
+        std::fs::write(folder.join("real").join("SKILL.md"), "---\nname: Real\n---\nBody.").unwrap();
+
+        let store = base.join("skills");
+        let report = import_folder(&folder, &store).unwrap();
+        assert_eq!(report.imported, vec!["real".to_string()]);
+        assert!(!store.join("notes.txt").exists());
+        assert!(!store.join("README.md").exists());
+        assert_eq!(discover(&store).len(), 1);
+
+        // A folder holding only stray files imports nothing at all.
+        let only_stray = base.join("only-stray");
+        std::fs::create_dir_all(&only_stray).unwrap();
+        std::fs::write(only_stray.join("notes.txt"), "x").unwrap();
+        assert!(import_folder(&only_stray, &store).unwrap().imported.is_empty());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_importer_uses_the_one_path_guard() {
+        // The guard lives in store/files.rs; the importer asks it rather than
+        // keeping a second copy. A folder named with `..` is what it refuses —
+        // and a bare store is exactly the case a prefix check would get wrong.
+        for bad in ["../secret", "a/b", "a\\b", "..", ""] {
+            assert!(!crate::store::files::safe_component(bad), "{bad} is not a component");
+        }
+        assert!(crate::store::files::safe_component("concise"));
+
+        let base = std::env::temp_dir().join(format!("deskseek-guard-{}", uuid::Uuid::new_v4()));
+        let weird = base.join("a..b");
+        std::fs::create_dir_all(&weird).unwrap();
+        std::fs::write(weird.join("SKILL.md"), "body").unwrap();
+        assert!(
+            import_folder(&weird, &base.join("skills")).is_err(),
+            "a name carrying `..` must not be imported"
+        );
+        // Exporting the store into itself is refused, not an infinite copy.
+        assert!(export_all(&base, &base).is_err());
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -94,6 +94,60 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
     }
   };
 
+  /** Import a folder of `SKILL.md` directories — the open Agent Skills shape. */
+  const importFolder = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const folder = await open({
+        directory: true,
+        multiple: false,
+        title: "Pick a folder of skills",
+      });
+      if (typeof folder !== "string") return;
+      setBusy(true);
+      const report = await api.importSkills(folder);
+      await reload();
+      const parts: string[] = [];
+      if (report.imported.length) parts.push(`Imported ${report.imported.join(", ")}.`);
+      if (report.skipped.length) {
+        parts.push(`Left ${report.skipped.join(", ")} alone — already here.`);
+      }
+      setStatus(parts.join(" ") || "No skills found in that folder.");
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Write the whole library out as `<id>/SKILL.md` for another tool or machine. */
+  const exportAll = async () => {
+    if (skills.length === 0) {
+      setStatus("There is nothing to export yet.");
+      return;
+    }
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const folder = await open({
+        directory: true,
+        multiple: false,
+        title: "Choose a folder to export into",
+      });
+      if (typeof folder !== "string") return;
+      setBusy(true);
+      const ids = await api.exportSkills(folder);
+      setStatus(
+        ids.length === 0
+          ? "There was nothing to export."
+          : `Exported ${ids.length} skill${ids.length === 1 ? "" : "s"}: ${ids.join(", ")}.`,
+      );
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const removeSkill = async (skill: SkillView) => {
     setBusy(true);
     try {
@@ -171,7 +225,9 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
         <p className="text-[13px] leading-relaxed text-neutral-500">
           A skill is an instruction file that joins this chat's system prompt while it is switched
           on. Each one is a folder under <span className="font-mono">skills/&lt;name&gt;/SKILL.md</span>, so
-          they are yours to edit or copy between machines.
+          they are yours to edit or copy between machines. That folder shape is the open Agent Skills
+          one — <em>Import folder…</em> takes a skill written elsewhere unchanged, and{" "}
+          <em>Export all…</em> writes the library back out for Claude, Gemini or another machine.
         </p>
         <p className="text-xs leading-relaxed text-neutral-500">
           The assistant can also reach these by itself: the whole list is always in its prompt, so
@@ -226,6 +282,20 @@ export function SkillsPanel({ chatId, onAsk, onClose, embedded = false }: Props)
             className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
           >
             Add from file…
+          </button>
+          <button
+            onClick={() => void importFolder()}
+            disabled={busy}
+            className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
+          >
+            Import folder…
+          </button>
+          <button
+            onClick={() => void exportAll()}
+            disabled={busy}
+            className="rounded-lg px-3 py-1.5 text-[13px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
+          >
+            Export all…
           </button>
           <button
             onClick={() => void addExamples()}

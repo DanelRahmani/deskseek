@@ -388,6 +388,12 @@ export interface SkillView {
   default_on: boolean;
 }
 
+/** What an import folder did: what landed, and what was already here. */
+export interface SkillImport {
+  imported: string[];
+  skipped: string[];
+}
+
 export type ToolClassName = "read" | "internal" | "write" | "command" | "computer";
 
 export interface DeltaEvent {

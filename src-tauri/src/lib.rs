@@ -300,6 +300,8 @@ pub fn run() {
             commands::install_skill,
             commands::install_skill_text,
             commands::install_examples,
+            commands::import_skills,
+            commands::export_skills,
             commands::delete_skill,
             commands::attach_path,
             commands::attach_bytes,

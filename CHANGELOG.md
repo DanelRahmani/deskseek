@@ -12,6 +12,10 @@ file to that shape — including that a section is marked `unreleased` only whil
 there is unreleased work, so a released top section is as valid as an unreleased
 one.
 
+## 0.5.0 — unreleased
+
+- Skills move in and out: import a folder of `SKILL.md` directories written for Claude or Gemini, or export the whole library in that same open shape
+
 ## 0.4.0 — 2026-10-12
 
 - Web search sets itself up: one button in the setup screen builds a local SearXNG container, writes the config it needs, and points the app at it

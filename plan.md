@@ -6,7 +6,10 @@ Phase 3 (3.1–3.6). **Phase 4** (4.1–4.4) and **Phases 5–6** (5.1–5.4, 6.
 done and committed as `7eb16c2`, still local; 5.2's file tree keys landed with 5.3,
 because the tree's roles and its keys are one edit to the same recursion. **Phase 7
 is on the working tree, uncommitted.** The next release is **0.4.0**, and
-`CHANGELOG.md`'s top section is what its tag will print.
+`CHANGELOG.md`'s top section is what its tag will print. **Phase 8 is planned and
+not started**: its items are below, and the analysis behind them (what Claude,
+ChatGPT and Gemini each do, and which of it is worth having here) is
+[`ReverseEngineering.md`](ReverseEngineering.md).
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -51,6 +54,26 @@ Rules that hold for every item, from this repo's practice:
 4. **Usage history (2.1): aggregate at turn level** — one row per completed turn,
    so `messages` stays narrow.
 5. **Backup (3.3): the API key stays out** of the archive.
+
+## Decisions taken (2026-10-13)
+
+Recorded when Phase 8 was planned, from [`ReverseEngineering.md`](ReverseEngineering.md):
+
+1. **Phase 8 first, in the order written.** Interop and daily-habit wins. Nothing in the batch
+   needs a server, a new subsystem or a new dependency, which is why it is the safest thing in the
+   plan to hand to somebody (or something) else.
+2. **The model layer will be two wire dialects, not a client per vendor.** `openai-compatible` and
+   `anthropic-compatible`, each one endpoint record of
+   `{ id, label, dialect, base_url, key_ref, models[] }`. DeepSeek is already OpenAI-compatible, so
+   the existing client becomes the first endpoint rather than being replaced, and OpenRouter,
+   Google's OpenAI-compatible endpoint and local runtimes (Ollama, LM Studio, vLLM) become
+   configuration rather than code. This is **Phase 12** scope, not Phase 8; it is recorded here so
+   that no Phase 8 item forecloses it. One consequence is worth writing down now: an endpoint with
+   no published rate must record its tokens and report its cost as **unknown** rather than guessing
+   a number, or the spend view quietly stops agreeing with the sidebar.
+3. **The cloud boundary is parked, not decided.** The binding consequence is negative: nothing in
+   Phase 8 may require a server, and nothing may foreclose one. Concretely, keep task, queue and
+   session state in the database rather than only in memory, and keep identifiers stable.
 
 ---
 
@@ -1133,7 +1156,178 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
+## Phase 8: Interop and the daily habit
+
+Planned 2026-10-13, from [`ReverseEngineering.md`](ReverseEngineering.md). Every item is small and
+self-contained: one file owns the rule, one runnable check proves it, and nothing here needs a
+server, a new subsystem or a new dependency. The order is value per unit of effort, not dependency.
+
+### 8.1 [S] Skills move in and out of DeskSeek ✅
+- **Why**: `skills/<id>/SKILL.md` is not a DeskSeek format, it is the open one. Anthropic publishes
+  it as Agent Skills, and Google states that its own skills are built entirely on the open,
+  Markdown-native `SKILL.md` standard, so that a skill written elsewhere can be copied in. A store
+  nothing can be imported into is a library nobody can move, and this is the cheapest item in the
+  batch: the reader and the writer are the store that already exists, seeing a second root.
+- **Files**: `skills.rs` (`skill_dirs`, `import_folder`, `export_all`, and a `SkillImport` report —
+  a byte copy of the *folder*, so frontmatter this build does not read and any reference file beside
+  `SKILL.md` survive verbatim); `store/files.rs` (the path guard, extracted as `safe_component` and
+  now asked by `Store::file_for` too, so the importer keeps no second copy of it); `commands.rs` and
+  `src/api.ts` (`import_skills`, `export_skills`); `src/types.ts` (`SkillImport`); `SkillsPanel.tsx`
+  (*Import folder…*, *Export all…*).
+- **Test**: in `skills.rs`, `a_skill_folder_round_trips_through_export_and_import_unchanged` (a
+  `license:`/`allowed-tools:` frontmatter key and a `references/` file both survive out and back
+  byte for byte; a second import is a skip, not an overwrite), `a_stray_file_beside_a_skill_is_not_a_skill`
+  (a `.txt` and a `README.md` never become skills), and `the_importer_uses_the_one_path_guard` (a
+  folder carrying `..` is refused, and the store refuses to export into itself). In `files.rs`,
+  `the_safe_component_guard_is_the_same_for_a_prefixed_store` shows the same names refused for an
+  empty prefix and a prefixed store, because the prefix was never what protected it. `cargo test`
+  330 passed.
+- **Stop**: a skill directory exported here imports into Claude- or Gemini-shaped tooling unchanged,
+  and one written there imports here with no edit.
+
+### 8.2 [S] Import what another assistant wrote
+- **Why**: ChatGPT imports instructions, settings, skills and projects from Claude Code, Cowork and
+  Cursor. The skills half is 8.1. The memory half is a markdown file mapped into the category files,
+  and it is how a person arrives here without retyping a year of context.
+- **Files**: `memory_files.rs` (parse an exported memory file into categories), `prompts.rs` (the
+  same for a prompts folder), `store/files.rs` (the name rules, reused), `commands.rs` and
+  `src/api.ts`, `MemorySection.tsx` and `PromptsSection.tsx` (*Import…*).
+- **Test**: a file naming a category lands each line in `memory/<category>.md` and every unlabelled
+  line in `other`; a name that is not a category falls back rather than creating a file; and
+  importing the same file twice is a no-op rather than a duplicate. Additive is the whole guarantee.
+- **Stop**: an exported memory file from another assistant becomes editable categories here, and
+  nothing already written is overwritten.
+
+### 8.3 [S] A chat that memory does not learn from
+- **Why**: one switch that is the difference between using the assistant for something private and
+  not using it at all. Claude calls it incognito, ChatGPT calls it temporary; the honest description
+  of the behaviour is "this chat does not feed memory".
+- **Files**: `store/db.rs` (`chats.incognito`, in the `CREATE TABLE` **and** as a guarded `ALTER`),
+  `memory.rs` (refuse the write), `conversation/agent.rs` (leave the memory part out of the assembled
+  prompt), `commands.rs`, `ChatView.tsx`, `src/types.ts`.
+- **Test**: a `save_memory` call from such a chat writes no row and no file, and the assembled prompt
+  for that chat carries no memory section; plus the upgrade path on a **real temp file**, a pre-8.3
+  `chats` table gaining the column, because a fresh `mem()` schema proves nothing about an `ALTER`.
+- **Stop**: nothing said in a chat that memory does not learn from can be quoted back in another one.
+
+### 8.4 [S] A project's memory is editable where it is shown
+- **Why**: 2.7 reads the project's own `project-<folder>.md` and shows it read-only, so forgetting
+  one entry means leaving the panel for *Settings → Memory*. The writer already exists; the panel is
+  simply not wired to it.
+- **Files**: `ProjectsPanel.tsx` (forget a line, add a line), `commands.rs` (a command scoped to the
+  project's file), `memory_files.rs` (`project_category` is already the one place that decides which
+  file a project owns), `MemorySection.tsx` (the row component, reused rather than re-implemented).
+- **Test**: forgetting one entry removes exactly that line and leaves the rest; and a project with no
+  folder still reports that it has no shared file rather than showing another project's notes, which
+  is the rule 2.7 already states.
+- **Stop**: a project's memory can be changed from the panel that displays it.
+
+### 8.5 [S] Hourly and weekdays
+- **Why**: the three fields *are* the schedule, and that stays. Two more values close the gap with
+  Claude, ChatGPT and Gemini without teaching anyone a cron string.
+- **Files**: `schedule.rs` (the pure local-time arithmetic and its tests), `ScheduledPanel.tsx`.
+- **Test**: `next_run_at` for an hourly task across a day boundary and for a weekday task across a
+  weekend, plus the invariant that holds this area together: the answer is **strictly after** now,
+  and it is advanced *before* the run starts, which is what stops a task firing twice.
+- **Stop**: a task can be set to run hourly, or on weekdays only, and the panel says when it is next.
+
+### 8.6 [S] A scheduled task shows its runs
+- **Why**: a schedule you cannot audit is one you stop trusting. Claude keeps a past-runs view, and
+  the honesty rule here is already set: a run that was stopped or errored still counts for what it
+  really spent.
+- **Files**: `store/db.rs` (a task id on `turn_usage`, or its own small table; prefer the former, so
+  that spend stays one story rather than two), `commands.rs`, `ScheduledPanel.tsx`.
+- **Test**: a task lists its last N runs with outcome and cost, and the sum over them agrees with
+  `spend_report` for the same window, which is the rule 2.1 and 2.9 exist to keep.
+- **Stop**: the panel shows what a task has done and what it has cost.
+
+### 8.7 [S] The model can schedule a task
+- **Why**: a task can only be created by filling in a form, so the model can never offer one
+  mid-conversation. Claude proposes a name, a cadence and the instructions and asks the user to
+  confirm; nothing about that needs a new mechanism here, only a tool.
+- **Files**: `tools/mod.rs` (the tool and its risk class: an action, so it asks),
+  `conversation/agent.rs` (a prompt section naming it), `commands.rs`, `src/api.ts`.
+- **Test**: the argument reader over every malformed shape a model can produce, which is exactly the
+  `tasks.ts` lesson: it parses what the model wrote and must therefore survive all of it; and a
+  refused approval creates nothing.
+- **Stop**: asking for a recurring task in chat produces one, after an approval, with no form.
+
+### 8.8 [S] Edit an artifact in place
+- **Why**: the best small idea in the whole teardown. Highlight the sentence you want changed, type
+  the change, and it lands where you marked it instead of re-describing the paragraph in chat.
+  Claude, ChatGPT and Gemini all ship it, and this repo's artifacts already carry versions, which is
+  the half that is expensive to add later.
+- **Files**: `ArtifactPanel.tsx` (a selection, and an edit control on it), `src/lib/artifact.ts` (a
+  patch operation, pure), `conversation/agent.rs` (a revise call that sends the selection, the
+  instruction and a small surrounding window rather than the whole document),
+  `src/lib/artifact.check.ts`.
+- **Test**: `artifact.check.ts` over a selection at the start, in the middle and at the end, and a
+  selection whose text appears twice, which is the case that goes wrong; plus that a revision always
+  adds a version rather than overwriting, the rule the version menu depends on.
+- **Stop**: a sentence in an artifact can be changed without a chat turn and without retyping the
+  document.
+
+### 8.9 [S] Break reminders and quiet hours
+- **Why**: the least glamorous item in Claude's settings and the most used. It is also the direct
+  answer to "reminders", which the assistant currently cannot do at all.
+- **Files**: `store/settings.rs` (the interval, the window, both switches), `notify.rs` (the one
+  place that decides whether a finish becomes a toast, so the window is honoured in exactly one
+  file), `SettingsDialog.tsx`, and a ticker beside the scheduler's in `lib.rs`.
+- **Test**: a toast inside quiet hours is suppressed while the in-app dot still appears, which is the
+  rule already stated for the notification switch and must survive this change; and a settings round
+  trip.
+- **Stop**: reminders fire, and quiet hours silence the toast without hiding that something happened.
+
+### 8.10 [S] A recap of the week or month
+- **Why**: Claude's Reflect reports the topics you spent time on, your most active day and your peak
+  hour. Everything it needs is already in `turn_usage` and `chats`; this is a read model, not a new
+  store.
+- **Files**: `store/db.rs` (a recap query, beside `spend_report`), `SpendPanel.tsx` (a section) or a
+  new `RecapPanel.tsx`, `src/lib/chart.ts` (the existing engine, not a second one).
+- **Test**: the recap's totals equal `spend_report`'s for the same window, so the two views cannot
+  tell different stories; and an empty window draws nothing rather than a chart of zeros.
+- **Stop**: a week's shape is readable, and its numbers agree with the spend view.
+
+### 8.11 [S] A notification that takes you to the thing
+- **Why**: a toast that says a task finished and cannot open it is half a feature. The hard half is
+  already done, because the park queue can be answered from the Scheduled panel.
+- **Files**: `notify.rs` (carry a target), `lib.rs` (focus the window), `App.tsx` (open the chat, or
+  the park item).
+- **Test**: mostly `docs/E2E-CHECKLIST.md`, because this needs a real toast and a real focus change;
+  leave a unit test for the route argument, which is the part that can be wrong silently.
+- **Stop**: clicking a finish opens the conversation that finished.
+
+### 8.12 [S] `@` and `$` in the composer
+- **Why**: the composer already parses `/` commands and `/p:<id>` prompts, so the parser exists.
+  ChatGPT's quick controls use `@` for context and `$` for a skill, and this is the same small
+  feature reached from the same keystroke.
+- **Files**: `src/lib/commands.ts` (the parser), `src/lib/commands.check.ts` (extend it; do not grow
+  a second parser), `ChatView.tsx`.
+- **Test**: the existing check plus the new cases: a bare marker lists its whole scope, an unknown
+  marker stays text, and a mention **inserts** rather than sending, which is the rule the prompt
+  library already set.
+- **Stop**: a file or a skill can be referenced from the composer without leaving the keyboard.
+
+### 8.13 [S] The log and the spend leave the app
+- **Why**: the decision log (3.5) and the run history exist so that a person can look something up,
+  but only from inside the app. An export is a file that gets mailed around, so the rule from 3.5
+  holds and is now load-bearing: arguments are stored as a digest, never as themselves.
+- **Files**: `commands.rs` (an export command), `store/db.rs` (the read paths exist), `src/api.ts`,
+  the palette in `src/lib/commands.ts`, where *Maintain the database* already lives.
+- **Test**: the exported rows equal what the panel shows for the same window, and no row carries a
+  tool's arguments, only its digest.
+- **Stop**: what was allowed, and what it cost, can be exported to a file.
+
+---
+
 ## Explicitly not doing (and why)
+
+- **First-party OAuth connectors (Gmail, Drive, Calendar, Slack)**: an app registration, a
+  verification process and a host for the secrets, which is a product rather than a feature. MCP is
+  the honest route, and a third-party server is the user's choice to install.
+- **Silent model routing**: a suggestion with an estimate, never a downgrade the user did not see.
+- **Generated video**: an Audio Overview (later) is a script plus text to speech, but video is a
+  separate media pipeline and a separate budget.
 
 - **Auto-update / code signing** — audience is one person; the release workflow
   already produces installers. Revisit only if the app is shared.

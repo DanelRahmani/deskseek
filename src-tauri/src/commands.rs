@@ -1204,6 +1204,25 @@ pub fn delete_skill(state: State<'_, AppState>, id: String) -> Result<(), String
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+/// Import skills from a folder the user picked — either one skill directory, or
+/// a folder holding several. A skill whose name is already installed is skipped
+/// rather than replaced, and the report names both.
+#[tauri::command]
+pub fn import_skills(state: State<'_, AppState>, path: String) -> Result<skills::SkillImport, String> {
+    let folder = std::path::Path::new(&path);
+    if !folder.is_dir() {
+        return Err(format!("{path} is not a folder."));
+    }
+    skills::import_folder(folder, &state.paths.skills_dir())
+}
+
+/// Write every skill to a folder the user picked, one `<id>/SKILL.md` each — the
+/// shape Claude, Gemini and this app all read — so a library can leave here.
+#[tauri::command]
+pub fn export_skills(state: State<'_, AppState>, path: String) -> Result<Vec<String>, String> {
+    skills::export_all(std::path::Path::new(&path), &state.paths.skills_dir())
+}
+
 // ---------------------------------------------------------------- projects
 
 #[tauri::command]
