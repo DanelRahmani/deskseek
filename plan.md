@@ -99,7 +99,7 @@ Recorded when Phase 8 was planned, from [`ReverseEngineering.md`](ReverseEnginee
 
 ---
 
-## Phase 1 — Close the holes ✅ done
+## Phase 1 — Close the holes ✅ done and pushed
 
 Nothing here was new scope; it is work already promised by the README, plus two
 defects the owner reported. All of it is on the working tree, gated, uncommitted.
@@ -199,7 +199,7 @@ defects the owner reported. All of it is on the working tree, gated, uncommitted
 
 ---
 
-## Phase 2 — Capability (make it do more)
+## Phase 2 — Capability (make it do more) ✅ done and pushed
 
 Ordered by how often the author would actually reach for it.
 
@@ -487,7 +487,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 3 — Trust and robustness
+## Phase 3 — Trust and robustness ✅ done and pushed
 
 ### 3.1 [S] React error boundary and a crash surface ✅
 - **Why**: the app has no boundary; a render throw is a blank window with a lost
@@ -702,7 +702,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 4 — Performance and scale
+## Phase 4 — Performance and scale ✅ done and pushed (v0.4.0)
 
 ### 4.1 [M] Transcript rendering for long conversations ✅
 - **Why**: chat view maps every message; a 500-turn chat pays for all of it on
@@ -871,7 +871,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 5 — Polish and craft
+## Phase 5 — Polish and craft ✅ done and pushed (v0.4.0)
 
 ### 5.1 [M] Motion pass ✅ done
 - **Why**: the app is careful about state and plain about motion; a few
@@ -1012,7 +1012,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 6 — Release and docs housekeeping
+## Phase 6 — Release and docs housekeeping ✅ done and pushed (v0.4.0)
 
 ### 6.1 [S] CHANGELOG.md ✅
 - **Why**: the release notes are reconstructed by hand from `git log` each time,
@@ -1120,7 +1120,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 7 — Setup that finishes the job
+## Phase 7 — Setup that finishes the job ✅ done and pushed (v0.4.0)
 
 ### 7.1 [S] A button that stands SearXNG up ✅
 - **Why**: `web_search` needs a SearXNG instance, and the setup screen asked the
@@ -1178,7 +1178,7 @@ Ordered by how often the author would actually reach for it.
 
 ---
 
-## Phase 8: Interop and the daily habit
+## Phase 8: Interop and the daily habit ✅ done, not yet pushed
 
 Planned 2026-10-13, from [`ReverseEngineering.md`](ReverseEngineering.md). Every item is small and
 self-contained: one file owns the rule, one runnable check proves it, and nothing here needs a
@@ -1441,7 +1441,7 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
 
 ---
 
-## Phase 9: Containment and trust
+## Phase 9: Containment and trust ✅ done, not yet pushed
 
 Planned 2026-10-13, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 8 made deskseek do
 more; this is the batch that makes what it does trustworthy when nobody is watching — what it may
@@ -1652,7 +1652,7 @@ restart is something the user can see and revoke.
 
 ---
 
-## Phase 10: Quick entry and the desktop surfaces
+## Phase 10: Quick entry and the desktop surfaces ✅ done, not yet pushed
 
 Planned 2026-10-14, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 9 made what the app
 does trustworthy when nobody is watching; this is the batch that makes it *reachable* — a question
@@ -1818,7 +1818,7 @@ line here.
 
 ---
 
-## Phase 11: Triggers
+## Phase 11: Triggers ✅ done, not yet pushed
 
 Planned 2026-10-15, from [`ReverseEngineering.md`](ReverseEngineering.md). Phase 10 made the app
 *reachable*; this is the batch that makes the scheduler an automation engine — a task that starts
@@ -1973,6 +1973,33 @@ it opens rather than replaying the whole time it was closed.
   ecosystem sends a server-initiated notification today, so in practice this is a hook waiting for
   one — which is why its test is over the matching rule rather than over a real server, and why the
   panel's own text says the task runs only while the app is open rather than promising otherwise.
+
+---
+
+## Not yet in this plan (still proposals in the archive)
+
+The archive's phase plan runs **8 to 13**, and this file has taken 8, 9, 10 and 11 and stopped. Two
+phases are still proposals in [`ReverseEngineering.md`](ReverseEngineering.md) and have never been
+written up here as items:
+
+- **Phase 12 — Providers, then everything they unblock.** The two wire dialects (`openai-compatible`
+  and `anthropic-compatible`) as configuration rather than a client per vendor, then per-task model,
+  effort, the routing suggestion, and after them the capabilities that only exist once a model can
+  see or speak: vision, computer use, audio, dictation. This is where the widest blast radius in the
+  whole document lives — a half-migrated provider layer is worse than a single-provider app — which
+  is why it is a phase of its own. The decision of 2026-10-13 recorded at the top of this file is
+  what makes it cheaper than the teardown first implied, and it is written down there specifically so
+  that nothing through Phase 11 has foreclosed it.
+- **Phase 13 — Grounded research.** Notebooks and sources, grounded retrieval, the notebook surface,
+  study outputs, data tables, semantic lookup. It wants the memory and retrieval path settled first,
+  which is what Phases 8 through 11 were.
+
+Plus the archive's own *Kept in reserve* list — sub-agents, the browser-extension bridge, the
+activity timeline, share snapshots, and the plugin and recording work — each of which wants either a
+real week of using the phases above or a task that actually needs it.
+
+So a ✅ on every item in this file means **the plan as written is built**, not that the roadmap is
+finished. Nothing in Phases 1 to 11 is waiting on either of the two, and neither of them is started.
 
 ---
 
