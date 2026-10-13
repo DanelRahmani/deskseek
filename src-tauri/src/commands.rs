@@ -600,6 +600,45 @@ pub fn memory_overview(state: State<'_, AppState>) -> Result<Vec<MemoryCategoryV
         .collect())
 }
 
+/// What an imported memory file did: how many notes were newly written (ones
+/// already present are not counted), and the categories anything landed in.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryImport {
+    pub added: usize,
+    pub categories: Vec<String>,
+}
+
+/// Import an exported memory file from another assistant.
+///
+/// The file is a markdown document of sections: a heading names a category, the
+/// lines under it are that category's notes. A heading this build does not know
+/// falls back to `other` rather than inventing a file — see
+/// `memory_files::parse_export`. Additive by construction: every line goes through
+/// the same `append` the assistant uses, which skips anything already there, so
+/// importing the same file twice changes nothing and nothing already written is
+/// overwritten.
+#[tauri::command]
+pub fn import_memory(state: State<'_, AppState>, path: String) -> Result<MemoryImport, String> {
+    let raw = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+    let dir = state.paths.memory_dir();
+    let mut report = MemoryImport {
+        added: 0,
+        categories: Vec::new(),
+    };
+    for (category, lines) in crate::memory_files::parse_export(&raw) {
+        let added = crate::memory_files::append(&dir, &category, &lines)
+            .map_err(|e| e.to_string())?;
+        if added > 0 {
+            report.added += added;
+            if !report.categories.contains(&category) {
+                report.categories.push(category);
+            }
+        }
+    }
+    Ok(report)
+}
+
 /// Forgets one entry, identified by the text the user can see. Only that entry
 /// goes: the file is rewritten line by line, so everything else in it survives.
 #[tauri::command]
@@ -1465,6 +1504,21 @@ pub fn delete_prompt(state: State<'_, AppState>, id: String) -> Result<(), Strin
 #[tauri::command]
 pub fn prompts_dir(state: State<'_, AppState>) -> String {
     state.paths.prompts_dir().display().to_string()
+}
+
+/// Import a folder of another assistant's prompt files. A prompt file is a
+/// markdown document whose first heading is its name, so one lifted from
+/// anywhere needs no edit. A name already saved is skipped, never overwritten.
+#[tauri::command]
+pub fn import_prompts(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<crate::prompts::PromptImport, String> {
+    let folder = std::path::Path::new(&path);
+    if !folder.is_dir() {
+        return Err(format!("{path} is not a folder."));
+    }
+    crate::prompts::import_folder(folder, &state.paths.prompts_dir())
 }
 
 // ------------------------------------------------------------ permissions

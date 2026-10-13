@@ -23,6 +23,7 @@ import type {
   InterruptedRun,
   Maintenance,
   MemoryCategoryView,
+  MemoryImport,
   MemoryEntryView,
   MemoryProposal,
   McpReadyEvent,
@@ -36,6 +37,7 @@ import type {
   PermissionMode,
   ProjectRow,
   ProjectSpend,
+  PromptImport,
   PromptView,
   QuestionAnswer,
   QuestionEvent,
@@ -129,6 +131,12 @@ export const api = {
   /** Forgets one line, by the text the panel shows. */
   deleteMemoryEntry: (category: string, text: string) =>
     invoke<boolean>("delete_memory_entry", { category, text }),
+  /**
+   * Import a memory file another assistant exported: a heading names a category
+   * and its lines become that category's notes. Additive — nothing already
+   * written is overwritten, and an unknown heading falls back to `other`.
+   */
+  importMemory: (path: string) => invoke<MemoryImport>("import_memory", { path }),
   summarizeChat: (chatId: string) => invoke<string>("summarize_chat", { chatId }),
   compactChat: (chatId: string) => invoke<string>("compact_chat", { chatId }),
 
@@ -280,6 +288,8 @@ export const api = {
   savePrompt: (name: string, body: string) => invoke<string>("save_prompt", { name, body }),
   deletePrompt: (id: string) => invoke<void>("delete_prompt", { id }),
   promptsDir: () => invoke<string>("prompts_dir"),
+  /** Import a folder of prompt markdown files; a name already saved is skipped. */
+  importPrompts: (path: string) => invoke<PromptImport>("import_prompts", { path }),
 };
 
 /**

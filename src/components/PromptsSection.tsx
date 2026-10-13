@@ -84,6 +84,32 @@ export function PromptsSection() {
     }
   };
 
+  /** Import another assistant's prompt folder: each `.md` becomes a saved prompt. */
+  const importFolder = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const folder = await open({
+        directory: true,
+        multiple: false,
+        title: "Pick a folder of prompt files",
+      });
+      if (typeof folder !== "string") return;
+      setBusy(true);
+      const report = await api.importPrompts(folder);
+      await reload();
+      const parts: string[] = [];
+      if (report.imported.length) parts.push(`Imported ${report.imported.join(", ")}.`);
+      if (report.skipped.length) {
+        parts.push(`Left ${report.skipped.join(", ")} alone — already saved.`);
+      }
+      setStatus(parts.join(" ") || "No prompt files found in that folder.");
+    } catch (e) {
+      setStatus(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <p className="text-[13px] leading-relaxed text-neutral-500">
@@ -127,9 +153,19 @@ export function PromptsSection() {
       </section>
 
       <section className="space-y-2">
-        <h3 className="text-[11px] font-medium uppercase tracking-wide text-neutral-600">
-          Saved ({prompts.length})
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-[11px] font-medium uppercase tracking-wide text-neutral-600">
+            Saved ({prompts.length})
+          </h3>
+          <button
+            onClick={() => void importFolder()}
+            disabled={busy}
+            className={quiet}
+            title="Read a folder of markdown prompt files — another assistant's, or your own"
+          >
+            Import folder…
+          </button>
+        </div>
         {prompts.length === 0 && (
           <p className="text-xs text-neutral-600">
             Nothing saved yet. Fill in the form above to keep one.

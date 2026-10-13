@@ -50,6 +50,14 @@ fn heading(line: &str) -> Option<(u8, String)> {
     Some((hashes as u8, rest.trim().to_string()))
 }
 
+/// The one markdown heading reader, for callers outside this module that need to
+/// tell a heading from body text — importing another assistant's memory file, for
+/// one. `pub(crate)` because a second copy of "is this a heading" is how the two
+/// drift on `#hashtag`.
+pub(crate) fn heading_text(line: &str) -> Option<String> {
+    heading(line).map(|(_, text)| text)
+}
+
 fn bullet(line: &str) -> Option<(u8, String)> {
     let indent = line.len() - line.trim_start().len();
     let rest = line.trim_start();

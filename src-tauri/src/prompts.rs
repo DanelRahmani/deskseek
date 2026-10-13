@@ -13,7 +13,9 @@
 //! Hand-editable on purpose. The app is a convenience over the folder, not the
 //! only way in.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 /// A saved prompt: a name, and the text it stands for.
 pub use crate::store::files::Doc as Prompt;
@@ -41,6 +43,49 @@ pub fn write(dir: &Path, name: &str, body: &str) -> Result<String, String> {
 
 pub fn remove(dir: &Path, id: &str) -> Result<(), String> {
     STORE.remove(dir, id)
+}
+
+/// The outcome of importing a prompts folder: what landed, and what was left
+/// alone because a prompt of that name is already saved.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PromptImport {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Import every markdown file in a folder as a saved prompt.
+///
+/// A prompt file is a document whose first heading is its name — the same rule
+/// this store writes and reads, so a file lifted from another assistant's prompt
+/// folder needs no edit. A name already saved is *skipped*, not replaced: an
+/// import must never overwrite an edit, the same rule the skills importer keeps.
+/// A file that is not `.md` is not a prompt.
+pub fn import_folder(folder: &Path, dir: &Path) -> Result<PromptImport, String> {
+    let mut out = PromptImport::default();
+    let mut files: Vec<PathBuf> = std::fs::read_dir(folder)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .collect();
+    files.sort();
+    for file in files {
+        let Ok(raw) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        // The store's own reader names it: first heading, else the file name.
+        let doc = crate::store::files::parse(stem, &raw);
+        let id = STORE.id_for(&doc.name);
+        if STORE.read(dir, &id).is_some() {
+            out.skipped.push(id);
+            continue;
+        }
+        STORE.write(dir, &doc.name, &doc.body).map_err(|e| e.to_string())?;
+        out.imported.push(id);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -80,5 +125,35 @@ mod tests {
             assert!(STORE.read(Path::new("/prompts"), bad).is_none(), "{bad} must not read");
             assert!(remove(Path::new("/prompts"), bad).is_err(), "{bad} must not delete");
         }
+    }
+
+    #[test]
+    fn a_prompts_folder_imports_as_files_and_never_overwrites_one() {
+        let base = std::env::temp_dir().join(format!("deskseek-prompts-{}", uuid::Uuid::new_v4()));
+        let folder = base.join("from-cursor");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("review.md"),
+            "# Review a diff\n\nRead the diff, then list what is wrong.\n",
+        )
+        .unwrap();
+        // Not markdown: not a prompt.
+        std::fs::write(folder.join("notes.txt"), "just notes").unwrap();
+
+        let dir = base.join("prompts");
+        let report = import_folder(&folder, &dir).unwrap();
+        assert_eq!(report.imported, vec!["review-a-diff".to_string()]);
+        let back = STORE.read(&dir, "review-a-diff").unwrap();
+        assert_eq!(back.name, "Review a diff");
+        assert_eq!(back.body, "Read the diff, then list what is wrong.");
+        assert!(STORE.read(&dir, "notes").is_none(), "a .txt is not a prompt");
+
+        // A prompt already saved is left alone, edit and all.
+        write(&dir, "Review a diff", "MY OWN TEXT\n").unwrap();
+        let again = import_folder(&folder, &dir).unwrap();
+        assert!(again.imported.is_empty());
+        assert_eq!(again.skipped, vec!["review-a-diff".to_string()]);
+        assert_eq!(STORE.read(&dir, "review-a-diff").unwrap().body, "MY OWN TEXT");
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

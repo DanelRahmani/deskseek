@@ -1185,16 +1185,22 @@ server, a new subsystem or a new dependency. The order is value per unit of effo
 - **Stop**: a skill directory exported here imports into Claude- or Gemini-shaped tooling unchanged,
   and one written there imports here with no edit.
 
-### 8.2 [S] Import what another assistant wrote
+### 8.2 [S] Import what another assistant wrote ✅
 - **Why**: ChatGPT imports instructions, settings, skills and projects from Claude Code, Cowork and
   Cursor. The skills half is 8.1. The memory half is a markdown file mapped into the category files,
   and it is how a person arrives here without retyping a year of context.
-- **Files**: `memory_files.rs` (parse an exported memory file into categories), `prompts.rs` (the
-  same for a prompts folder), `store/files.rs` (the name rules, reused), `commands.rs` and
-  `src/api.ts`, `MemorySection.tsx` and `PromptsSection.tsx` (*Import…*).
-- **Test**: a file naming a category lands each line in `memory/<category>.md` and every unlabelled
-  line in `other`; a name that is not a category falls back rather than creating a file; and
-  importing the same file twice is a no-op rather than a duplicate. Additive is the whole guarantee.
+- **Files**: `memory_files.rs` (`parse_export` + a `note_text` that drops a bullet marker and a
+  stored `(date)`, reusing the one heading reader now exposed as `tools::docs::heading_text`);
+  `prompts.rs` (`import_folder`, `PromptImport`); `commands.rs` and `src/api.ts` (`import_memory`,
+  `import_prompts`); `src/types.ts` (`MemoryImport`, `PromptImport`); `MemorySection.tsx`
+  (*Import from a file…*) and `PromptsSection.tsx` (*Import folder…*). Both are a *byte* import of
+  another tool's files, so an edit already saved here is never touched.
+- **Test**: in `memory_files.rs`, `an_exported_memory_file_lands_in_categories_and_invents_none` (a
+  heading names the category and its bullets become that category's notes; an unknown heading and
+  the unlabelled preamble both fall to `other`; no `hobbies.md` is invented; a stored `(date)` is
+  dropped; importing the same export twice adds nothing). In `prompts.rs`,
+  `a_prompts_folder_imports_as_files_and_never_overwrites_one` (a `.txt` is not a prompt; a name
+  already saved keeps the user's own text). `cargo test` 332 passed.
 - **Stop**: an exported memory file from another assistant becomes editable categories here, and
   nothing already written is overwritten.
 

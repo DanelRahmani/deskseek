@@ -329,6 +329,69 @@ pub fn remove(dir: &Path, category: &str, text: &str) -> io::Result<bool> {
     Ok(removed)
 }
 
+/// Reads an exported memory file into `(category, lines)` groups, ready for
+/// `append`.
+///
+/// The shape another assistant exports is a markdown document of sections: a
+/// heading names a category, the lines under it are that category's notes. A
+/// heading this build does not know is *not* an error and does not invent a file
+/// — its lines fall to `other`, exactly like a line under no heading at all. That
+/// fallback is the whole safety of an import: it can only ever add to a file the
+/// categories table already lists, so a stray heading cannot litter `memory/`
+/// with a file the panel would then have to explain.
+pub fn parse_export(body: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    let mut current = FALLBACK.to_string();
+    for line in body.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // The heading reader is the one in `tools::docs`; a second copy is how
+        // the two would come to disagree about `#hashtag`.
+        if let Some(heading) = crate::tools::docs::heading_text(trimmed) {
+            current = canonical(&heading).unwrap_or(FALLBACK).to_string();
+            continue;
+        }
+        let text = note_text(trimmed);
+        if !text.is_empty() {
+            group(&mut out, &current).push(text);
+        }
+    }
+    out
+}
+
+/// The group for a category, created on first use so the output keeps the order
+/// the file wrote its sections in.
+fn group<'a>(out: &'a mut Vec<(String, Vec<String>)>, category: &str) -> &'a mut Vec<String> {
+    if let Some(pos) = out.iter().position(|(c, _)| c == category) {
+        return &mut out[pos].1;
+    }
+    out.push((category.to_string(), Vec::new()));
+    &mut out.last_mut().expect("just pushed").1
+}
+
+/// One note out of one exported line. Bullets are the writer's formatting, and a
+/// stored `(2025-01-01) ` prefix is dropped so importing our own export cannot
+/// stack a second date on the same note.
+fn note_text(line: &str) -> String {
+    let rest = line
+        .strip_prefix("- ")
+        .or_else(|| line.strip_prefix("* "))
+        .or_else(|| line.strip_prefix("+ "))
+        .unwrap_or(line)
+        .trim();
+    if let Some(after) = rest.strip_prefix('(') {
+        if let Some(end) = after.find(')') {
+            let inside = &after[..end];
+            if inside.len() == 10 && inside.chars().all(|c| c.is_ascii_digit() || c == '-') {
+                return after[end + 1..].trim_start().to_string();
+            }
+        }
+    }
+    rest.to_string()
+}
+
 /// Every category that currently has a file, in the order `CATEGORIES` declares,
 /// with anything else (project files) after it.
 pub fn categories_in_use(dir: &Path) -> Vec<String> {
@@ -657,6 +720,41 @@ mod tests {
         // near-empty files, so anything unrecognised is filed under `other`.
         append(&dir, &destination("crypto-tips", None), &["A note.".to_string()]).unwrap();
         assert!(file_for(&dir, "other").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_exported_memory_file_lands_in_categories_and_invents_none() {
+        let dir = tmp();
+        // A heading names a category and its lines are that category's notes; the
+        // unknown heading and the unlabelled preamble both fall to `other`, and
+        // nothing becomes a file the categories table does not list.
+        let export = "# Memories\n\nA preamble with no heading above it.\n\n\
+## Work\n- I work at Axiom\n- Dan is my client\n\n\
+## Hobbies\n- Plays guitar\n\n\
+## Education\n- (2025-09-01) Studies International Business\n";
+        for (category, lines) in parse_export(export) {
+            assert!(
+                category_ids().contains(&category.as_str()),
+                "{category} is not a category"
+            );
+            append(&dir, &category, &lines).unwrap();
+        }
+        assert_eq!(read(&dir, "work").len(), 2);
+        assert_eq!(read(&dir, "education").len(), 1);
+        // A stored `(date) ` was dropped, so the note reads as the note.
+        assert_eq!(read(&dir, "education")[0].text, "Studies International Business");
+        let other: Vec<String> = read(&dir, "other").into_iter().map(|e| e.text).collect();
+        assert!(other.iter().any(|t| t.contains("preamble")), "{other:?}");
+        assert!(other.contains(&"Plays guitar".to_string()), "{other:?}");
+        assert!(!file_for(&dir, "hobbies").exists(), "an unknown heading invents no file");
+
+        // Importing the same export again changes nothing: `append` skips what is
+        // already there, which is the whole "additive" guarantee.
+        for (category, lines) in parse_export(export) {
+            assert_eq!(append(&dir, &category, &lines).unwrap(), 0);
+        }
+        assert_eq!(read(&dir, "work").len(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

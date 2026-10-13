@@ -104,6 +104,28 @@ export function MemorySection({ chatId, onChanged }: Props) {
       );
     });
 
+  /**
+   * Import a memory file another assistant exported: a heading names a category
+   * and the lines under it are that category's notes. Additive — every line goes
+   * through the same store the assistant uses, so nothing already written is lost.
+   */
+  const importFile = () =>
+    run(async () => {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const picked = await open({
+        multiple: false,
+        title: "Pick a memory file",
+        filters: [{ name: "Memory", extensions: ["md", "markdown", "txt"] }],
+      });
+      if (typeof picked !== "string") return;
+      const report = await api.importMemory(picked);
+      setStatus(
+        report.added === 0
+          ? "Nothing new — everything in that file is already remembered."
+          : `Added ${report.added} note${report.added === 1 ? "" : "s"} across ${report.categories.join(", ")}.`,
+      );
+    });
+
   // The profile rides along with every single request, so a nudge when it grows
   // is worth more than a hard limit: the user may still write whatever they like.
   const profileEntries = body.split("\n").filter((line) => line.trim().startsWith("- ")).length;
@@ -186,10 +208,21 @@ export function MemorySection({ chatId, onChanged }: Props) {
       </section>
 
       <section>
-        <label className="block text-xs text-neutral-500">Kept memory</label>
+        <div className="flex items-center justify-between">
+          <label className="block text-xs text-neutral-500">Kept memory</label>
+          <button
+            onClick={() => Promise.resolve(importFile())}
+            disabled={busy}
+            className={LINK}
+            title="Read a memory file another assistant exported — one heading per category"
+          >
+            Import from a file…
+          </button>
+        </div>
         <p className="mt-1 mb-2 text-[11px] text-neutral-600">
           One file per category. These are looked up only when they match what you ask, so they can
-          grow without costing anything on the turns where none of it is relevant.
+          grow without costing anything on the turns where none of it is relevant. A file with a
+          heading this app does not know is filed under <span className="font-mono">other</span>.
         </p>
         {filed.length === 0 ? (
           <p className="text-xs text-neutral-600">

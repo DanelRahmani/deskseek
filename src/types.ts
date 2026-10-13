@@ -362,6 +362,12 @@ export interface MemoryCategoryView {
   entries: MemoryEntryView[];
 }
 
+/** What an imported memory file did: notes newly written, and where they landed. */
+export interface MemoryImport {
+  added: number;
+  categories: string[];
+}
+
 /**
  * A stored style reference, in its own store rather than the skills folder.
  *
@@ -679,6 +685,12 @@ export interface PromptView {
   name: string;
   /** The whole prompt, because the composer's job is to put it in the box. */
   body: string;
+}
+
+/** What an imported prompts folder did: what landed, and what was already saved. */
+export interface PromptImport {
+  imported: string[];
+  skipped: string[];
 }
 
 /** A tool call the UI is rendering. */

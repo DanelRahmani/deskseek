@@ -15,6 +15,7 @@ one.
 ## 0.5.0 — unreleased
 
 - Skills move in and out: import a folder of `SKILL.md` directories written for Claude or Gemini, or export the whole library in that same open shape
+- Another assistant's memory file or prompt folder imports into editable categories and saved prompts — additive, with nothing already written overwritten
 
 ## 0.4.0 — 2026-10-12
 
