@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { citations } from "../lib/citation";
-import { quantities, right, score } from "../lib/quiz";
+import { quantities, right, score, sitting } from "../lib/quiz";
 import { Icon } from "./Icon";
 import type { StudySetRow } from "../types";
 
@@ -30,17 +30,23 @@ export function StudySetDialog({ set, sources, onClose }: Props) {
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<number, string>>({});
   const [flipped, setFlipped] = useState(false);
+  // The order is dealt once when the set opens and again on *Start again* — per
+  // attempt rather than per render, or the question would reshuffle while the reader
+  // was reading it. It is the same items either way, so the counts below are the
+  // set's own.
+  const [dealt, setDealt] = useState(() => sitting(set.items, Math.random));
 
   const quiz = set.kind === "quiz";
   const finished = index >= set.items.length;
-  const item = set.items[Math.min(index, set.items.length - 1)];
+  const item = dealt[Math.min(index, dealt.length - 1)];
   const chosen = answers[index];
-  const result = score(set.items, answers);
+  const result = score(dealt, answers);
 
   const restart = () => {
     setIndex(0);
     setAnswers({});
     setFlipped(false);
+    setDealt(sitting(set.items, Math.random));
   };
 
   return (
@@ -101,8 +107,8 @@ export function StudySetDialog({ set, sources, onClose }: Props) {
                   <ul className="mt-1 flex flex-col gap-1.5">
                     {result.wrong.map((missed) => (
                       <li key={missed} className="text-[12px] leading-relaxed text-neutral-400">
-                        {set.items[missed].prompt}{" "}
-                        <span className="text-neutral-200">{set.items[missed].answer}</span>
+                        {dealt[missed].prompt}{" "}
+                        <span className="text-neutral-200">{dealt[missed].answer}</span>
                       </li>
                     ))}
                   </ul>

@@ -14,7 +14,7 @@
  * marks a choice by its text, so two options that read the same are
  * indistinguishable to it, and that is exactly why the validator refuses them.
  */
-import { quantities, right, score } from "./quiz.ts";
+import { quantities, right, score, shuffled, sitting } from "./quiz.ts";
 import type { StudyItem } from "../types.ts";
 
 function ok(condition: boolean, message: string): void {
@@ -75,5 +75,82 @@ ok(quantities(1, "flashcards") === "1 card", `one card: got ${quantities(1, "fla
 ok(quantities(2, "flashcards") === "2 cards", "and two are cards");
 ok(quantities(1, "quiz") === "1 question", "one question, not one questions");
 ok(quantities(9, "quiz") === "9 questions", "and nine are questions");
+
+// --- dealing a sitting -------------------------------------------------------
+
+// A seeded generator: the order has to be unpredictable in the app and repeatable
+// in here, or the properties below could only be asserted by luck.
+function seeded(seed: number): () => number {
+  let state = seed % 2147483647;
+  if (state <= 0) state += 2147483646;
+  return () => {
+    state = (state * 16807) % 2147483647;
+    return state / 2147483647;
+  };
+}
+
+const long = [
+  item("One", "a", ["a", "b", "c"]),
+  item("Two", "c", ["a", "c"]),
+  item("Three", "b", ["b", "a"]),
+];
+
+const order = (set: StudyItem[]) => set.map((one) => one.prompt).join("|");
+/** The same prompts, sorted — an order-free fingerprint of which items are here. */
+const prompts = (set: StudyItem[]) => [...set].map((one) => one.prompt).sort().join("|");
+
+// The same members, and really moved. A "shuffle" that hands back what it was given
+// is the bug this rule exists to prevent, so it has to be able to fail here.
+let moved = false;
+for (let seed = 1; seed <= 20; seed += 1) {
+  const dealt = sitting(long, seeded(seed));
+  ok(dealt.length === long.length, `seed ${seed}: a sitting is the same number of items`);
+  ok(
+    prompts(dealt) === prompts(long),
+    `seed ${seed}: the items changed rather than just their order`,
+  );
+  if (order(dealt) !== order(long)) moved = true;
+  for (const one of dealt) {
+    const from = long.find((original) => original.prompt === one.prompt);
+    ok(from !== undefined, `seed ${seed}: "${one.prompt}" is not one of the set's items`);
+    ok(
+      [...one.options].sort().join("|") === [...(from?.options ?? [])].sort().join("|"),
+      `seed ${seed}: the options of "${one.prompt}" are the same options, reordered`,
+    );
+    // The answer rides on its option's *text*, not on where it sits — which is what
+    // lets the order be dealt again without marking changing.
+    ok(
+      one.options.includes(one.answer),
+      `seed ${seed}: the answer to "${one.prompt}" is still one of its options`,
+    );
+  }
+}
+ok(moved, "at least one seed must deal a different order, or this is not a shuffle");
+
+// Marking is untouched by the deal: answering a sitting with its own answers is all
+// right, and a different option is still wrong.
+const dealt = sitting(long, seeded(7));
+const answers: Record<number, string> = {};
+dealt.forEach((one, at) => {
+  answers[at] = one.answer;
+});
+ok(score(dealt, answers).right === dealt.length, "answering a sitting with its answers is right");
+const other = dealt[0].options.find((one) => one !== dealt[0].answer);
+ok(other !== undefined && !right(dealt[0], other), "and a different option is still wrong");
+
+// With a source that always answers the same, the order it deals is the same order
+// every time — so "shuffled" cannot pass by being a coin toss either.
+const fixed = () => 0;
+ok(
+  order(sitting(long, fixed)) === order(sitting(long, fixed)),
+  "the same source deals the same order twice",
+);
+ok(
+  [...shuffled([1, 2, 3], fixed)].sort().join("|") === "1|2|3",
+  "and what it deals is a permutation of what it was given",
+);
+// Nothing to deal, and one thing to deal, are both fine: no crash, no loop.
+ok(shuffled([], fixed).length === 0, "nothing deals as nothing");
+ok(shuffled([7], fixed).join() === "7", "one item deals as itself");
 
 console.log("quiz.check.ts: all checks passed");

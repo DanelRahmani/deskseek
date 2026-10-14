@@ -323,7 +323,9 @@ Both sections are functional:
     tool call instead of into its reply, so the app receives items rather than prose — the number you
     asked for is held against what comes back, so six cards means six cards. A quiz is marked
     a question at a time — the option that was right, the one that was chosen, the line saying why, and
-    a score at the end naming what to look at again — and flashcards turn over one at a time. Each item
+    a score at the end naming what to look at again — and flashcards turn over one at a time. The set is
+    **dealt fresh each time you open it**, questions and options both, so the right answer is never in
+    the same place twice and taking the same quiz again is worth doing. Each item
     names the source it came from, marked as gone when that source has since been removed. Unlike the
     outputs above, a set is not a file anywhere: the questions themselves are what is stored
   - **Fact table**: the same idea across sources rather than within one — a row per comparable fact,

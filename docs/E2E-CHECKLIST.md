@@ -447,6 +447,10 @@ the parts only a person can see.
       it, and ends with a score that names the questions to look at again
 - [ ] A flashcard set shows a front, turns over to its back, goes through to the end, and can be gone
       through again; removing a set takes only that set
+- [ ] Taking the same set twice asks it in a **different order** — the questions and each question's
+      options — and the answer marked right is still the right answer wherever it lands
+- [ ] *Start again* deals a new order rather than the one just worked through, and a flashcard set
+      shuffles its cards the same way
 - [ ] A quiz item whose source has since been removed shows the source as gone rather than naming a
       file that is not there
       (the spend panel shows no new `Notebook digests` row)

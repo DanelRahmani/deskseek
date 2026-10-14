@@ -678,15 +678,16 @@ pub const GENERATORS: [Generator; 7] = [
         formats: &[],
         // No number in the instruction itself — and no answer key, because the
         // window marks the answers: the item that says which option is right *is*
-        // the key.
+        // the key. Nor any word about the *order* of the options, because the window
+        // deals that fresh every time the set is taken (`lib/quiz.ts`), and asking a
+        // model for a random order is asking the one thing it cannot do.
         prompt: "Make a quiz the reader can take, from these sources. Call `make_study_set` with \
                  kind `quiz`, a short title, and one item per question — the question, four \
                  options, and which option is right written into `answer` exactly as that option is \
-                 spelled. Pass `count` as the number asked for, spread the right answers across the \
-                 options rather than letting one letter be the answer most of the time, name the \
-                 source of every question that has one, and leave out a question the sources cannot \
-                 settle rather than inventing it. The set is the answer: do not write the questions \
-                 out in your reply as well.",
+                 spelled. Pass `count` as the number asked for, name the source of every question \
+                 that has one, and leave out a question the sources cannot settle rather than \
+                 inventing it. The set is the answer: do not write the questions out in your reply \
+                 as well.",
         count: Some(Count {
             noun: "questions",
             default: 10,

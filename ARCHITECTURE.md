@@ -121,7 +121,7 @@ Changing behaviour in this app is usually changing one of these.
 | What a menu entry may be asked for, and what a source scope really filters: the catalogue, the citable labels and both source tools read one `in_scope` | `conversation/notebook.rs` |
 | The form the Make column opens, drawn from what an entry declares — so the window knows no entry by name | `src/components/MakeDialog.tsx` |
 | What a study set is and what makes one usable — a quiz item's answer spelled exactly as one of its options, so the choice can be marked — and where the items live | `conversation/notebook.rs`, `store/db.rs` |
-| Which choice is right and what a half-finished set has scored: the window's half of the same feature, and nothing of its vocabulary | `src/lib/quiz.ts` |
+| Which choice is right, what a half-finished set has scored, and what order it is dealt in: the window's half of the same feature, and nothing of its vocabulary | `src/lib/quiz.ts` |
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |

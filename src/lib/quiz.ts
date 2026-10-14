@@ -68,3 +68,42 @@ export function quantities(items: number, kind: string): string {
   const noun = kind === "quiz" ? "question" : "card";
   return items === 1 ? `1 ${noun}` : `${items} ${noun}s`;
 }
+
+/**
+ * A copy in a new order: Fisher–Yates, from the random source it is given.
+ *
+ * The source is a parameter rather than a call to `Math.random` inside, because an
+ * order nobody can predict is also an order nobody can test. The check script hands
+ * it a seeded generator and holds it to the properties a shuffle has to have — the
+ * same members, really moved — and the dialog hands it `Math.random`.
+ */
+export function shuffled<T>(values: T[], random: () => number): T[] {
+  const out = [...values];
+  for (let i = out.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(random() * (i + 1));
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
+/**
+ * A set as one *sitting*: the items in a fresh order, and each item's options in a
+ * fresh order of their own.
+ *
+ * This is the one thing a model cannot be trusted to do — it writes options in the
+ * order it thought of them, which is how "the right answer is usually the first
+ * one" becomes a strategy rather than a guess. The answer travels on its option's
+ * **text**, which is exactly why 14.2 stored it spelled as that option is: a
+ * shuffle cannot move an answer away from the choice that is right, so marking is
+ * untouched by it.
+ *
+ * Dealt when the reader opens the set rather than when the set was stored, so the
+ * same set is a different quiz each time — which is what makes it worth taking
+ * twice.
+ */
+export function sitting(items: StudyItem[], random: () => number): StudyItem[] {
+  return shuffled(items, random).map((item) => ({
+    ...item,
+    options: shuffled(item.options, random),
+  }));
+}

@@ -2843,21 +2843,43 @@ still say what a check *will* be.
   optional, so a typed question that never asked for a number is not held to one.
 - **Stop**: pressing Quiz or Flashcards gives a set to take, and no file.
 
-### 15.3 [S] A set is dealt fresh every time it is taken
+### 15.3 [S] A set is dealt fresh every time it is taken ✅
 - **Why**: order is not something a model does randomly, and a quiz whose right answer is always the
   first option teaches the wrong thing.
-- **Files**: `src/lib/quiz.ts`, `src/lib/quiz.check.ts`, `src/components/StudySetDialog.tsx`,
-  `conversation/notebook.rs` (one instruction in the document prompts).
+- **Files**: `src/lib/quiz.ts` (`shuffled`, `sitting`); `src/lib/quiz.check.ts` (the dealing section);
+  `src/components/StudySetDialog.tsx` (the sitting per attempt); `conversation/notebook.rs` (one
+  instruction taken *out* of the quiz entry's prompt); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
+  `docs/E2E-CHECKLIST.md`; `plan.md`.
 - **Shape**: `shuffled(values, random)` and `sitting(items, random)` — the items' order and each item's
   options, with the answer riding on its option's **text**, so marking is untouched by the shuffle (which
   is the whole reason 14.2 normalised the answer to the option it belongs to). The dialog deals a new
   sitting every time it opens and every time the reader starts again, from `Math.random`. A document's
   options cannot be shuffled by the app — they are prose in a file — so there the one thing that works is
   an instruction in the prompt, and it goes in.
-- **Test**: `quiz.check.ts` — with a seeded generator the order really changes; every item survives as a
-  multiset with its options and its answer; a *constant* generator gives a deterministic permutation, so
-  "shuffled" cannot pass by being a no-op; and marking a sitting scores exactly what marking the set it
-  came from scored.
+- **Test**: `npm run check` — `quiz.check.ts` gained the dealing section: over twenty seeds a sitting
+  holds exactly the same items with the same options each, the answer is still one of the options it
+  was normalised to, and at least one seed deals a **different** order, which is the assertion that
+  fails when a shuffle is a no-op; marking a sitting with its own answers is all right and a different
+  option is still wrong (the answer rides on the option's text, so the deal cannot move it); a constant
+  source deals the same order twice and what it deals is a permutation of what it was given, so
+  "shuffled" cannot pass as a coin toss either; and nothing, and one item, deal as nothing and itself
+  rather than looping. `cargo test` **481** — unchanged, and deliberately: this item's Rust change is a
+  sentence *removed*, not a case added. `npm run typecheck` and `npm run build` are clean.
+  **Falsified**: making the shuffle a no-op (`const j = Math.floor(random() * (i + 1))` → `const j = i`),
+  a one-line needle confirmed on disk and restored afterwards, exits **1** from
+  `node src/lib/quiz.check.ts` with `FAIL: at least one seed must deal a different order, or this is
+  not a shuffle` — a set dealt in the order it was written, which is the strategy this item exists to
+  take away — and restoring passes (`quiz.check.ts: all checks passed`, exit 0).
+  **Three deviations, said out loud**: the plan said the *document* prompts gain an instruction to vary
+  the answer's position, and what happened is the opposite — one instruction was **deleted** from the
+  quiz entry, because that entry is a set now and the window deals its order; asking a model for a
+  random order is asking for the one thing it cannot do, so the instruction belongs to the exam
+  (`15.4`), which is a document nothing shuffles; the order is dealt into **state** on open and re-dealt
+  on *Start again* rather than on every render, which the plan did not say and without which the
+  question would reshuffle while the reader was reading it — and the dialog's counts stay the *set's*,
+  which is the same length as the sitting, with a comment saying so; and my new check script did not
+  typecheck the first time (`map(order)` applied per element rather than to the array), which the gate
+  caught before the phase did.
 - **Stop**: taking the same set twice does not ask it in the same order.
 
 ### 15.4 [M] An exam, as a paper and a key
