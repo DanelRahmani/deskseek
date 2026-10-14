@@ -477,7 +477,10 @@ export function NotebookShell({
               Make
             </span>
           </div>
-          <div className="border-b border-neutral-800/60 p-2">
+          {/* Each of the three lists has a ceiling and scrolls inside it, and none of
+              them is pinned: a menu that grows until the window runs out takes the
+              column with it, and the documents are at the bottom of it. */}
+          <div className="max-h-40 overflow-y-auto border-b border-neutral-800/60 p-2">
             {generators.map((entry) => (
               <button
                 key={entry.id}
@@ -501,7 +504,7 @@ export function NotebookShell({
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Study
           </div>
-          <div className="max-h-44 shrink-0 overflow-y-auto border-b border-neutral-800/60 p-2">
+          <div className="max-h-44 overflow-y-auto border-b border-neutral-800/60 p-2">
             {view.sets.length === 0 && (
               <p className="px-1 py-2 text-[12px] leading-relaxed text-neutral-500">
                 Ask for a quiz or a set of flashcards and the model makes one through a tool call.

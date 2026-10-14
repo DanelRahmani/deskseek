@@ -406,6 +406,9 @@ the parts only a person can see.
       entry declares is what the form starts with
 - [ ] Unticking a source really takes it out of scope: ask for something only that document covers
       and the answer says the sources do not settle it rather than answering anyway
+- [ ] The right rail shows *Make*, *Study* and *Outputs* **all at once**, even in a short window: the
+      menu and the Study list scroll inside their own boxes instead of pushing *Outputs* off the
+      bottom, so a saved document stays reachable however many entries and sets have piled up
 - [ ] The line you steer with arrives as the last thing asked — "only the national-accounts
       material" narrows the output to it, and an empty box changes nothing
 - [ ] *Fact table* is an entry in that list now rather than a button of its own, and it takes the

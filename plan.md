@@ -3092,9 +3092,10 @@ nothing makes one, so a second notebook is unreachable by any route at all.
 - **Stop**: a paper opens with a cover page naming the subject, the date and the sources, and its options
   are indented under their question.
 
-### 17.2 [S] The rail stops eating the column
+### 17.2 [S] The rail stops eating the column ✅
 - **Why**: *Outputs* is what a reader comes back for, and it is the section that gets pushed out.
-- **Files**: `src/components/NotebookShell.tsx`; `docs/E2E-CHECKLIST.md`.
+- **Files**: `src/components/NotebookShell.tsx` (two class strings and a comment naming the rule);
+  `docs/E2E-CHECKLIST.md`, `CHANGELOG.md`; `plan.md`.
 - **Shape**: *Make* gets a ceiling and scrolls inside it, *Study* keeps the one it has, and *Outputs*
   takes what is left and scrolls — so all three are on screen together and the documents stay reachable
   however many entries the menu grows. None of the three is pinned with `shrink-0` any longer: a box that
@@ -3102,7 +3103,14 @@ nothing makes one, so a second notebook is unreachable by any route at all.
   one that goes.
 - **Test**: no new check, and said out loud rather than papered over: this is layout, and there is no rule
   here that a Node script can hold — a pure helper written to have something to assert would be a check
-  on nothing. `a11y.check.ts` walks the component; the end-to-end line is where this is settled.
+  on nothing. So the gate is the whole window side of it: `npm run typecheck`, all **19** check scripts
+  (including `a11y.check.ts` over **41** components) and `npm run build`, then the end-to-end line above,
+  which is where a rail's three heights can actually be settled. It was gated twice — once inside 17.1's
+  run, because the file was already in the tree, and again on its own before this commit — and `cargo test`
+  is deliberately not part of this item's gate: no Rust file changed, so its 490 tests say nothing about
+  a class name. **No falsification, and that is not an oversight**: there is no logic here to remove, and a
+  mutated class name would fail a screenshot, not a check — a "mutation" a test cannot see proves nothing,
+  which is the same reason section 17.1's two did.
 - **Stop**: with eight menu entries, four sets and two documents, all three headings are on screen and
   every output can be reached without a scroll fight.
 
