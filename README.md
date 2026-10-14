@@ -311,7 +311,9 @@ Both sections are functional:
     question in that shape, written into the notebook's folder as a `.md` or `.docx`; an **exam**,
     which is a paper and its answer key as **two documents** — 40 multiple-choice questions by default,
     open questions on request, `.docx` or `.pdf`, and no answers anywhere on the paper itself; and a
-    fact table as a `.xlsx` — plus the two study shapes below, which are **sets rather than files**. The
+    fact table as a `.xlsx` — plus the two study shapes below, which are **sets rather than files**. A
+    written document is set in **Times New Roman 11** with bold headings, an exam's questions bold at
+    14 over their options, and the model's `**bold**` rendered as bold rather than as asterisks. The
     list is Rust rather than TypeScript, so the menu, the prompts and the form each press opens are
     one list; a mind map is a `mermaid` fence inside the document rather than a second renderer, and
     a quiz is no longer a worksheet with a key at the end — it is the thing you take

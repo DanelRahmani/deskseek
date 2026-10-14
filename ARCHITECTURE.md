@@ -120,6 +120,7 @@ Changing behaviour in this app is usually changing one of these.
 | What makes a row of a fact table a fact — a source that exists in the last cell — and why a cell beginning with `=` is text | `conversation/notebook.rs` |
 | What a menu entry may be asked for, and what a source scope really filters: the catalogue, the citable labels and both source tools read one `in_scope` | `conversation/notebook.rs` |
 | An entry that makes two documents — the exam — and why the key's question is short: the paper is the previous turn of the notebook's own conversation | `conversation/notebook.rs`, `commands.rs` |
+| The house look of a written document: Times New Roman 11 body, headings at 16/14/12, monospace for a code block, and how `**bold**` becomes a run rather than two asterisks | `tools/docs.rs` |
 | The form the Make column opens, drawn from what an entry declares — so the window knows no entry by name | `src/components/MakeDialog.tsx` |
 | What a study set is and what makes one usable — a quiz item's answer spelled exactly as one of its options, so the choice can be marked — and where the items live | `conversation/notebook.rs`, `store/db.rs` |
 | Which choice is right, what a half-finished set has scored, and what order it is dealt in: the window's half of the same feature, and nothing of its vocabulary | `src/lib/quiz.ts` |

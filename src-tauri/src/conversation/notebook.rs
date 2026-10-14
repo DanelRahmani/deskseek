@@ -751,14 +751,15 @@ pub const GENERATORS: [Generator; 8] = [
         // Word or PDF, chosen in the form: a paper is something you print and hand
         // out, and which of the two you hand out is the reader's call.
         formats: &["docx", "pdf"],
-        prompt: "Write an exam paper on these sources, to be printed and sat. Number the questions \
-                 and letter the options A to D, and vary which letter is the right answer rather \
-                 than letting one letter be correct most of the time — a paper nothing can shuffle \
-                 has to vary in the writing. The paper carries no answers anywhere — no key, no \
-                 asterisk, no hint — because the key is written separately, and no citations \
-                 either, because they belong on the key rather than on the paper a reader is \
-                 sitting. Cover what the sources actually say, and leave out a question they cannot \
-                 settle rather than inventing it.",
+        prompt: "Write an exam paper on these sources, to be printed and sat. Write each question \
+                 as a level-two heading — `## 1. …` — so it is set in bold at 14 point, with its \
+                 options as plain lines underneath, one per line, lettered A to D. Vary which \
+                 letter is the right answer rather than letting one letter be correct most of the \
+                 time: a paper nothing can shuffle has to vary in the writing. The paper carries no \
+                 answers anywhere — no key, no asterisk, no hint — because the key is written \
+                 separately, and no citations either, because they belong on the key rather than on \
+                 the paper a reader is sitting. Cover what the sources actually say, and leave out a \
+                 question they cannot settle rather than inventing it.",
         count: Some(Count {
             noun: "multiple-choice questions",
             default: 40,
@@ -809,9 +810,10 @@ pub fn generator(id: &str) -> Option<&'static Generator> {
 /// It carries no counts either: it asks for the same questions in the same order,
 /// which the paper the model just wrote already states.
 const EXAM_KEY_PROMPT: &str = "\
-Now write the answer key for the paper above, as a document of its own. One line per question, in \
-the same order and with the same numbers, saying which option is right and why in a sentence. Cite \
-the source of each answer as `[name#Heading]`, and do not repeat the questions themselves.";
+Now write the answer key for the paper above, as a document of its own. Give each answer the same \
+shape as its question — a level-two heading, `## 1.`, with the answer on the line under it — in the \
+same order and with the same numbers, saying which option is right and why in a sentence. Cite the \
+source of each answer as `[name#Heading]`, and do not repeat the question itself.";
 
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -1531,8 +1533,14 @@ That is everything the sources settle.";
                     // Nothing shuffles a document's options, so the paper is the one
                     // place the instruction to vary them has to be written down: a
                     // paper whose right answer is always C is a paper with a strategy.
+                    // Compared in lower case because the sentence it sits in begins
+                    // with the word — the rule is about what is said, not about where
+                    // the capital falls.
                     assert!(
-                        entry.prompt.contains("vary which letter is the right answer"),
+                        entry
+                            .prompt
+                            .to_lowercase()
+                            .contains("vary which letter is the right answer"),
                         "{} leaves the right answer in the same place every time",
                         entry.id
                     );

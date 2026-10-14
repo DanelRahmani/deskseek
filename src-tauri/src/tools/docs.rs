@@ -33,6 +33,34 @@ const MAX_SLIDES: usize = 60;
 const MAX_ROWS: usize = 5_000;
 const MAX_COLUMNS: usize = 64;
 
+/// The look of a document this app writes: one body font and size, and one scale of
+/// headings, in points.
+///
+/// Times New Roman because these are documents a reader prints and marks, and
+/// because the PDF's own stylesheet has been set in that family all along — this is
+/// the `.docx` catching up with it rather than a second opinion about what a
+/// document looks like. A code block is the one exception, and deliberately:
+/// monospace is what makes it a code block rather than a paragraph somebody
+/// indented.
+const BODY_FONT: &str = "Times New Roman";
+const BODY_SIZE: usize = 11;
+const HEADING_SIZES: [usize; 3] = [16, 14, 12];
+const CODE_FONT: &str = "Consolas";
+const CODE_SIZE: usize = 10;
+
+/// A heading's size, by level.
+///
+/// Level 2 is 14 because that is what an exam's questions are written as — the
+/// level the paper's own shape asks the model for, so a question comes out bold at
+/// 14 with its options at 11 underneath it.
+fn heading_size(level: u8) -> usize {
+    match level {
+        0 | 1 => HEADING_SIZES[0],
+        2 => HEADING_SIZES[1],
+        _ => HEADING_SIZES[2],
+    }
+}
+
 /// The three tools this module serves.
 pub fn is_document_tool(name: &str) -> bool {
     matches!(name, "doc_create" | "sheet_create" | "slides_create")
@@ -161,6 +189,77 @@ pub fn parse_blocks(md: &str) -> Vec<Block> {
     out
 }
 
+// ---------------------------------------------------------- inline emphasis
+
+/// One piece of a line: what it says, and how it is set.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+/// The emphasis in one line of Markdown, as runs.
+///
+/// Deliberately the two markers a model actually writes — `**bold**` and `*italic*`
+/// — and deliberately not `_`, which turns up inside file names and would make half
+/// of `q3_file.docx` italic. Anything unmatched is left as the text it is: a stray
+/// asterisk in a document about tax rates is not emphasis, and eating it would drop
+/// a character the model meant to write.
+///
+/// This is what keeps a `.docx` from showing the markup that asked for the
+/// emphasis. The `.md` writer is the one place it does *not* apply, because there
+/// the asterisks are the format.
+pub fn runs_of(text: &str) -> Vec<Run> {
+    let mut out: Vec<Run> = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('*') {
+        if at > 0 {
+            push_run(&mut out, &rest[..at], false, false);
+        }
+        let after = &rest[at..];
+        let (marker, bold) = match after.strip_prefix("**") {
+            Some(inner) => (inner, true),
+            None => (&after[1..], false),
+        };
+        let close = if bold { "**" } else { "*" };
+        match marker.find(close) {
+            // A marker with a close after it is emphasis, and what is between them
+            // is one run of it. An *empty* pair is not: `****` is four asterisks.
+            Some(end) if end > 0 => {
+                push_run(&mut out, &marker[..end], bold, !bold);
+                rest = &marker[end + close.len()..];
+            }
+            // No close: the asterisk is text, and the rest carries on after it.
+            _ => {
+                push_run(&mut out, "*", false, false);
+                rest = &after[1..];
+            }
+        }
+    }
+    push_run(&mut out, rest, false, false);
+    out
+}
+
+/// Adds a run, merging it into the one before when they are set the same way — so
+/// `a **b**` is two runs rather than three pieces of one sentence.
+fn push_run(out: &mut Vec<Run>, text: &str, bold: bool, italic: bool) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(last) = out.last_mut() {
+        if last.bold == bold && last.italic == italic {
+            last.text.push_str(text);
+            return;
+        }
+    }
+    out.push(Run {
+        text: text.to_string(),
+        bold,
+        italic,
+    });
+}
+
 // ----------------------------------------------------------------- uploading
 
 /// Plain, filesystem-safe stem from a document name. Kept to ASCII letters,
@@ -217,12 +316,44 @@ fn saved(path: &Path, note: &str) -> String {
 // --------------------------------------------------------------------- docx
 
 fn docx_bytes(blocks: &[Block]) -> Result<Vec<u8>, String> {
-    use docx_rs::{BreakType, Docx, Paragraph, Run, Table, TableCell, TableRow};
+    use docx_rs::{BreakType, Docx, Paragraph, Run as TextRun, RunFonts, Table, TableCell, TableRow};
 
-    // A bullet is a paragraph with a marker rather than a Word list: the
-    // numbering definition a real list needs is a lot of XML for a visual
-    // difference nobody sees in a generated report.
-    let text_paragraph = |text: &str| Paragraph::new().add_run(Run::new().add_text(text));
+    // Every run says its own font, size and emphasis rather than naming a Word
+    // style: this file defines no styles, so `.style("Heading1")` would point at
+    // something the reader's Word has never seen — which is how a heading ends up
+    // as plain text with the markup still in it.
+    let set = |runs: &[Run], font: &str, size: usize, all_bold: bool| -> Vec<TextRun> {
+        runs.iter()
+            .map(|run| {
+                let mut out = TextRun::new()
+                    .add_text(run.text.as_str())
+                    .fonts(
+                        RunFonts::new()
+                            .ascii(font)
+                            .hi_ansi(font)
+                            .east_asia(font)
+                            .cs(font),
+                    )
+                    // Half-points, which is why this doubles: 11pt is written 22.
+                    .size(size * 2);
+                if all_bold || run.bold {
+                    out = out.bold();
+                }
+                if run.italic {
+                    out = out.italic();
+                }
+                out
+            })
+            .collect()
+    };
+    let paragraph = |text: &str, font: &str, size: usize, bold: bool| {
+        let mut out = Paragraph::new();
+        for run in set(&runs_of(text), font, size, bold) {
+            out = out.add_run(run);
+        }
+        out
+    };
+    let body = |text: &str| paragraph(text, BODY_FONT, BODY_SIZE, false);
 
     let mut doc = Docx::new();
     // Word has no "list" here, so bullets and numbers are written into the
@@ -234,38 +365,35 @@ fn docx_bytes(blocks: &[Block]) -> Result<Vec<u8>, String> {
         }
         doc = match block {
             Block::Heading { level, text } => {
-                let style = format!("Heading{level}");
-                doc.add_paragraph(
-                    Paragraph::new()
-                        .style(style.as_str())
-                        .add_run(Run::new().add_text(text)),
-                )
+                doc.add_paragraph(paragraph(text, BODY_FONT, heading_size(*level), true))
             }
-            Block::Bullet { depth, text } => doc.add_paragraph(text_paragraph(&format!(
+            Block::Bullet { depth, text } => doc.add_paragraph(body(&format!(
                 "{}{text}",
                 "    ".repeat(*depth as usize + 1) + "• "
             ))),
             Block::Numbered { text } => {
                 number += 1;
-                doc.add_paragraph(text_paragraph(&format!("    {number}. {text}")))
+                doc.add_paragraph(body(&format!("    {number}. {text}")))
             }
             Block::Code(text) => {
-                let mut p = Paragraph::new();
+                let mut out = Paragraph::new();
                 for (i, line) in text.lines().enumerate() {
                     if i > 0 {
-                        p = p.add_run(Run::new().add_break(BreakType::TextWrapping));
+                        out = out.add_run(TextRun::new().add_break(BreakType::TextWrapping));
                     }
-                    p = p.add_run(Run::new().add_text(line));
+                    for run in set(&runs_of(line), CODE_FONT, CODE_SIZE, false) {
+                        out = out.add_run(run);
+                    }
                 }
-                doc.add_paragraph(p)
+                doc.add_paragraph(out)
             }
-            Block::Paragraph(text) => doc.add_paragraph(text_paragraph(text)),
+            Block::Paragraph(text) => doc.add_paragraph(body(text)),
             Block::Table(rows) => doc.add_table(Table::new(
                 rows.iter()
                     .map(|row| {
                         TableRow::new(
                             row.iter()
-                                .map(|cell| TableCell::new().add_paragraph(text_paragraph(cell)))
+                                .map(|cell| TableCell::new().add_paragraph(body(cell)))
                                 .collect(),
                         )
                     })
@@ -297,14 +425,36 @@ fn escape_html(text: &str) -> String {
     out
 }
 
-const PRINT_CSS: &str = "body{margin:0;font:11.5pt/1.5 Georgia,'Times New Roman',serif;color:#111}\
-h1{font-size:20pt;margin:0 0 10pt}h2{font-size:15pt;margin:16pt 0 6pt}\
-h3{font-size:13pt;margin:14pt 0 5pt}h4,h5,h6{font-size:11.5pt;margin:12pt 0 4pt}\
+/// One line of Markdown as HTML: the emphasis becomes tags and everything else is
+/// escaped. Deliberately the same reader the `.docx` uses, so the two writers
+/// cannot disagree about what was emphasised — only about how to say it. The
+/// text is escaped *after* the runs are found, because the escaping has to happen
+/// to the text rather than to the tags this function adds.
+fn inline_html(text: &str) -> String {
+    runs_of(text)
+        .iter()
+        .map(|run| {
+            let escaped = escape_html(&run.text);
+            match (run.bold, run.italic) {
+                (true, _) => format!("<strong>{escaped}</strong>"),
+                (false, true) => format!("<em>{escaped}</em>"),
+                _ => escaped,
+            }
+        })
+        .collect()
+}
+
+/// The page a `.pdf` is printed from. The font and the heading sizes are the ones
+/// `docx_bytes` sets, so the same document does not change its look with its
+/// extension — 11pt body, headings at 16/14/12, and a code block in monospace.
+const PRINT_CSS: &str = "body{margin:0;font:11pt/1.5 'Times New Roman',Times,serif;color:#111}\
+h1{font-size:16pt;margin:0 0 10pt}h2{font-size:14pt;margin:16pt 0 6pt}\
+h3{font-size:12pt;margin:14pt 0 5pt}h4,h5,h6{font-size:11pt;margin:12pt 0 4pt}\
 p{margin:0 0 8pt}ul,ol{margin:0 0 8pt;padding-left:20pt}li{margin:0 0 3pt}\
-table{border-collapse:collapse;width:100%;margin:0 0 10pt;font-size:10pt}\
+table{border-collapse:collapse;width:100%;margin:0 0 10pt;font-size:11pt}\
 th,td{border:1px solid #999;padding:4pt 6pt;text-align:left}\
 th{background:#eee}pre{background:#f4f4f4;border:1px solid #ddd;padding:6pt;\
-font:9.5pt/1.4 Consolas,monospace;white-space:pre-wrap}@page{margin:20mm}";
+font:10pt/1.4 Consolas,monospace;white-space:pre-wrap}@page{margin:20mm}";
 
 /// The blocks as a printable HTML page. Every piece of text is escaped: this
 /// string is a document, but it is built from model output all the same.
@@ -330,10 +480,10 @@ pub fn html_doc(title: &str, blocks: &[Block]) -> String {
                     Block::Bullet { depth, text } => body.push_str(&format!(
                         "<li style=\"margin-left:{}pt\">{}</li>",
                         *depth as usize * 14,
-                        escape_html(text)
+                        inline_html(text)
                     )),
                     Block::Numbered { text } => {
-                        body.push_str(&format!("<li>{}</li>", escape_html(text)))
+                        body.push_str(&format!("<li>{}</li>", inline_html(text)))
                     }
                     _ => unreachable!(),
                 }
@@ -345,7 +495,7 @@ pub fn html_doc(title: &str, blocks: &[Block]) -> String {
                     let tag = if index == 0 { "th" } else { "td" };
                     body.push_str("<tr>");
                     for cell in row {
-                        body.push_str(&format!("<{tag}>{}</{tag}>", escape_html(cell)));
+                        body.push_str(&format!("<{tag}>{}</{tag}>", inline_html(cell)));
                     }
                     body.push_str("</tr>");
                 }
@@ -356,11 +506,12 @@ pub fn html_doc(title: &str, blocks: &[Block]) -> String {
                 match other {
                     Block::Heading { level, text } => body.push_str(&format!(
                         "<h{level}>{}</h{level}>",
-                        escape_html(text)
+                        inline_html(text)
                     )),
                     Block::Paragraph(text) => {
-                        body.push_str(&format!("<p>{}</p>", escape_html(text)))
+                        body.push_str(&format!("<p>{}</p>", inline_html(text)))
                     }
+                    // A code block is the one thing whose asterisks are text.
                     Block::Code(text) => {
                         body.push_str(&format!("<pre>{}</pre>", escape_html(text)))
                     }
@@ -798,6 +949,121 @@ mod tests {
         );
         assert!(table.contains("<th>H</th>"));
         assert!(table.contains("<td>&lt;b&gt;</td>"));
+    }
+
+    #[test]
+    fn the_emphasis_a_model_writes_becomes_runs_rather_than_asterisks() {
+        let plain = |text: &str| Run {
+            text: text.into(),
+            bold: false,
+            italic: false,
+        };
+        let bold = |text: &str| Run {
+            text: text.into(),
+            bold: true,
+            italic: false,
+        };
+        let italic = |text: &str| Run {
+            text: text.into(),
+            bold: false,
+            italic: true,
+        };
+
+        // A line with no marker is one plain run, and an empty line is no runs.
+        assert_eq!(runs_of("Revenue rose."), vec![plain("Revenue rose.")]);
+        assert_eq!(runs_of(""), Vec::<Run>::new());
+
+        // The two markers, with the text around them kept in order.
+        assert_eq!(
+            runs_of("**Q1.** What is GDP?"),
+            vec![bold("Q1."), plain(" What is GDP?")]
+        );
+        assert_eq!(runs_of("a *b* c"), vec![plain("a "), italic("b"), plain(" c")]);
+        assert_eq!(runs_of("**a** *b*"), vec![bold("a"), plain(" "), italic("b")]);
+
+        // Everything that is *not* emphasis stays as written: a stray asterisk is a
+        // character, an unclosed marker loses nothing, and an underscore is never a
+        // marker because it lives inside file names.
+        assert_eq!(runs_of("****"), vec![plain("****")]);
+        assert_eq!(runs_of("2 * 3 = 6"), vec![plain("2 * 3 = 6")]);
+        assert_eq!(runs_of("**unclosed"), vec![plain("**unclosed")]);
+        assert_eq!(runs_of("q3_file.docx"), vec![plain("q3_file.docx")]);
+    }
+
+    /// The body of a built `.docx`, so a test can say what Word will show rather
+    /// than what the library was asked for.
+    fn document_xml(bytes: &[u8]) -> String {
+        use std::io::Read;
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a real package");
+        let mut part = zip
+            .by_name("word/document.xml")
+            .expect("a Word document has a body");
+        let mut out = String::new();
+        part.read_to_string(&mut out).expect("the body is XML");
+        out
+    }
+
+    /// The run a piece of text is in, as the XML before it: a run's properties come
+    /// before its text, so this is what says *that* text is bold or 14pt rather
+    /// than that something in the document is.
+    fn run_before<'a>(xml: &'a str, text: &str) -> &'a str {
+        let at = xml.find(text).unwrap_or_else(|| panic!("{text:?} is not in the document"));
+        let before = &xml[..at];
+        &before[before.rfind("<w:r>").unwrap_or(0)..]
+    }
+
+    #[test]
+    fn a_word_document_is_set_in_the_house_look() {
+        let md = [
+            "## 1. What is GDP?",
+            "",
+            "A) A stock of assets",
+            "B) A flow of output",
+            "",
+            "**Note**: the key is a separate sheet.",
+        ]
+        .join("\n");
+        let xml = document_xml(&docx_bytes(&parse_blocks(&md)).unwrap());
+
+        // The font, everywhere: a generated document is Times New Roman rather than
+        // whatever the library's default happens to be.
+        assert!(xml.contains("Times New Roman"), "{xml}");
+
+        // The question is bold at 14pt (14 points is 28 half-points) and an option
+        // is 11pt and not bold — which is the whole request, held per run rather
+        // than by looking for a size somewhere in the file.
+        let question = run_before(&xml, "What is GDP?");
+        assert!(question.contains("<w:b"), "the question is not bold: {question}");
+        assert!(question.contains("28"), "the question is not 14pt: {question}");
+        let option = run_before(&xml, "A) A stock of assets");
+        assert!(option.contains("22"), "an option is not 11pt: {option}");
+        assert!(!option.contains("<w:b"), "an option is bold: {option}");
+
+        // And no markup reaches the page: the asterisks *and* the hashes were
+        // markup, and the text they marked is what a reader sees.
+        assert!(!xml.contains("**"), "asterisks reached the page: {xml}");
+        assert!(!xml.contains("##"), "hashes reached the page: {xml}");
+        assert!(xml.contains("Note"), "the emphasised text is missing: {xml}");
+    }
+
+    #[test]
+    fn the_printable_page_carries_the_same_look_and_the_same_emphasis() {
+        let html = html_doc(
+            "T",
+            &parse_blocks("## 1. Why?\n\n**Bold** and *italic*.\n\n```\na **b** c\n```"),
+        );
+        // Emphasis becomes tags rather than asterisks, and a code block is the one
+        // place they are text — because there they are the content.
+        assert!(html.contains("<strong>Bold</strong>"), "{html}");
+        assert!(html.contains("<em>italic</em>"), "{html}");
+        assert!(!html.contains("**Bold**"), "asterisks reached the page: {html}");
+        assert!(html.contains("a **b** c"), "a code block lost its asterisks: {html}");
+
+        // And the stylesheet is the same font and the same sizes the `.docx` sets,
+        // so a document does not change its look with its extension.
+        assert!(html.contains("'Times New Roman'"), "{html}");
+        assert!(html.contains("font:11pt"), "{html}");
+        assert!(html.contains("h2{font-size:14pt"), "{html}");
     }
 
     #[test]

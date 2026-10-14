@@ -459,6 +459,10 @@ the parts only a person can see.
       and appear nowhere when it is zero
 - [ ] The chosen format is the file that lands: `.docx` opens in Word, `.pdf` opens in a reader, and
       both are named so the paper and the key can be told apart at a glance
+- [ ] The exam paper opens in Word as Times New Roman 11 with **each question bold at 14** and its
+      options underneath, and there is no `**`, no `##` and no stray asterisk anywhere in it
+- [ ] The same paper as `.pdf` looks the same — same font, same sizes — and the two are not a
+      paragraph away from each other
 - [ ] A quiz item whose source has since been removed shows the source as gone rather than naming a
       file that is not there
       (the spend panel shows no new `Notebook digests` row)

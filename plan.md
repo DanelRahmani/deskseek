@@ -2932,6 +2932,76 @@ and its own falsification had failed the right check on purpose.
 
 ---
 
+## Phase 16: A document that looks like a document ✅ done
+
+Planned from the owner's first look at an exam paper in Word: *"it looks like trash"*. Three causes, and
+only the first is about the exam:
+
+**The writer never reads the emphasis it is given.** `Block::Paragraph(text)` keeps the text as it
+arrived, so the model's `**bold**` reaches Word as two asterisks and its `*italic*` as two more. The
+`.md` writer is right to keep them — that is what Markdown is — but a `.docx` is a typeset document, and
+the reader of a printed paper should never see the markup that asked for the emphasis.
+
+**Nothing sets a font or a size.** Every run is whatever the library's default is, which in Word means
+Calibri 11 — nothing to do with the document's own `PRINT_CSS`, which has been Times New Roman's cousin
+Georgia all along. Two writers, two looks, and only one of them was chosen.
+
+**Headings point at styles that are not in the file.** `Paragraph::style("Heading1")` names a Word style
+this document never defines, so a heading is either plain text or whatever Word decides "Heading 1"
+means — which is how a paper comes out as one undifferentiated wall.
+
+**16.1 [M] The house look of a generated document ✅**
+- **Why**: a document a reader prints has to look like one, and the markup that asked for emphasis is
+  not part of what was asked for.
+- **Files**: `tools/docs.rs` (the look constants, `heading_size`, `Run`/`runs_of`/`push_run`,
+  `docx_bytes`, `inline_html`, `PRINT_CSS`, and three tests); `conversation/notebook.rs` (the exam's two
+  prompts, and the menu test's own-case comparison); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
+  `docs/E2E-CHECKLIST.md`; `plan.md`. No new dependency: `zip` was already one, and it is what lets a
+  test read the very file Word will open.
+- **Shape**: one inline reader — `**bold**` and `*italic*` into runs, with anything unmatched left as
+  the text it is, because a stray asterisk in a document about tax rates is not emphasis. One place
+  decides the look: **Times New Roman 11 for body text**, and bold Times New Roman at 16/14/12 for
+  headings of level 1/2/3+, applied as *direct formatting* on the run rather than by naming a style the
+  file does not define. Both writers read the same runs, so the `.docx` and the `.pdf` cannot come to
+  disagree about what the document looks like any more than they can about what it says. The exam's
+  prompts then ask for each question as a level-2 heading — which is what makes a question bold 14 with
+  its options at 11 underneath — and the same for the key's numbered answers.
+- **Test**: `cargo test` 482 → **485**, no warnings. `the_emphasis_a_model_writes_becomes_runs_rather_than_asterisks`
+  — a line with no marker is one plain run and an empty line is no runs; `**Q1.** What is GDP?` is a bold
+  run then a plain one; `a *b* c` is italic in the middle and `**a** *b*` is three runs in order; and
+  `****`, `2 * 3 = 6`, `**unclosed` and `q3_file.docx` are each left exactly as written, the last because
+  an underscore is not a marker here. `a_word_document_is_set_in_the_house_look` — the built `.docx` is
+  unzipped and `word/document.xml` read, then **the run a piece of text sits in** is inspected rather
+  than looking for a size somewhere in the file: the question's run is bold and carries 28 half-points
+  (14pt), an option's run carries 22 (11pt) and is not bold, `Times New Roman` is in the document, and
+  neither `**` nor `##` reaches the page. `the_printable_page_carries_the_same_look_and_the_same_emphasis`
+  — emphasis becomes `<strong>`/`<em>`, a **code block keeps its asterisks** because there they are the
+  content, and the stylesheet names the same font and the same three sizes. `npm run typecheck`,
+  `npm run check` and `npm run build` are untouched by this item: nothing in the window changed.
+  **Falsified**: making the emphasis reader never accept a marker
+  (`Some(end) if end > 0` → `Some(end) if end > text.len()`), a one-line needle confirmed on disk and
+  restored afterwards, fails `the_emphasis_a_model_writes_becomes_runs_rather_than_asterisks` —
+  `MUT=101`, `test result: FAILED. 0 passed; 1 failed`, `assertion left == right failed` with
+  `left: [Run { text: "**Q1.** What is GDP?", bold: false, italic: false }]` against `right: [Run { text:
+  "Q1.", bold: true, italic: false }, Run { text: " What is GDP?" ... }]` — the whole line arriving in
+  Word as one plain run with the asterisks still in it, which is the complaint verbatim. Restoring
+  passes with the whole suite green at **485 passed; 0 failed**.
+  **Four deviations, said out loud**: the look is **one house style rather than an option per
+  document** — the owner asked about the exam paper, and a per-document font would be a parameter
+  threaded through `doc_create`, the entry, the form and the writer to let one caller differ; **`_italic_`
+  is deliberately not a marker**, because an underscore lives inside file names and half of
+  `q3_file.docx` would have come out italic; a **code block keeps monospace** (Consolas 10) instead of
+  the body font, because monospace is what makes it code rather than an indented paragraph; and **the
+  PDF moved with the `.docx`** — `PRINT_CSS` was 11.5pt Georgia with 20pt headings, so leaving it alone
+  would have meant the same document changing its look with its extension. One thing my own test caught:
+  the exam arm of the menu test looked for the vary-the-answer instruction in lower case and the sentence
+  it now lives in begins with the word, so that comparison is made on a lower-cased copy — the rule is
+  about what is said, not about where the capital falls.
+- **Stop**: an exam paper opened in Word is Times New Roman 11 with its questions in bold 14, and no
+  Markdown punctuation shows anywhere in the document.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
 The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left
