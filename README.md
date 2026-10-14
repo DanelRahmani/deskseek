@@ -307,12 +307,12 @@ Both sections are functional:
   - **Reading a source**: the card has room for a name, a state and three lines of description, so
     *Read* opens the whole thing beside the facts the rail cannot hold — where the file came from, the
     copy the notebook keeps, how much text was read out of it, and when it was described
-  - **What it can make**: flashcards, a quiz (with its answer key), a briefing, a timeline, a study
-    guide and a mind map, each one a grounded question in that shape, written into the notebook's
-    folder as a `.md` or `.docx`. The list is Rust rather than TypeScript, so the menu and the
-    prompts are one list; a mind map is a `mermaid` fence inside the document rather than a second
-    renderer, and a quiz ships with its key rather than marking itself — the one that marks itself is
-    the *set* below, which is a tool call rather than a document
+  - **What it can make**: a briefing, a timeline, a study guide and a mind map, each one a grounded
+    question in that shape, written into the notebook's folder as a `.md` or `.docx`, plus a fact
+    table as a `.xlsx` — and the two study shapes below, which are **sets rather than files**. The
+    list is Rust rather than TypeScript, so the menu, the prompts and the form each press opens are
+    one list; a mind map is a `mermaid` fence inside the document rather than a second renderer, and
+    a quiz is no longer a worksheet with a key at the end — it is the thing you take
   - **Every entry takes a form first**: how many (the entry declares the count, its
     noun and its ceiling), which sources to read, and a line of your own to steer it with — "only the
     national-accounts material". The sources you untick are out of scope for the question *and* for
@@ -320,7 +320,8 @@ Both sections are functional:
     fact table is one of these entries now rather than a button of its own, because it wanted the
     same form
   - **A set you can take**: ask for a quiz or flashcards and the model writes the questions through a
-    tool call instead of into its reply, so the app receives items rather than prose. A quiz is marked
+    tool call instead of into its reply, so the app receives items rather than prose — the number you
+    asked for is held against what comes back, so six cards means six cards. A quiz is marked
     a question at a time — the option that was right, the one that was chosen, the line saying why, and
     a score at the end naming what to look at again — and flashcards turn over one at a time. Each item
     names the source it came from, marked as gone when that source has since been removed. Unlike the

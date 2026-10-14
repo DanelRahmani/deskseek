@@ -206,6 +206,13 @@ export interface StudySetRow {
   createdAt: number;
 }
 
+/** What pressing a *Make* entry produced: documents or a workbook written, and
+ *  sets stored — two lists, because the reader looks in two different places. */
+export interface Made {
+  outputs: NotebookOutputRow[];
+  sets: StudySetRow[];
+}
+
 /** Everything one notebook shows, in one read. */
 export interface NotebookView {
   notebook: NotebookRow;

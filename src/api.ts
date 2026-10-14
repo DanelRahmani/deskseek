@@ -28,6 +28,7 @@ import type {
   Instruction,
   InterruptedRun,
   Maintenance,
+  Made,
   MakeOptions,
   MemoryCategoryView,
   MemoryImport,
@@ -360,10 +361,9 @@ export const api = {
    *  prompts and the form a press opens cannot drift apart. */
   notebookGenerators: () => invoke<Generator[]>("notebook_generators"),
   /** Runs one with what the reader asked for, and returns what it produced: a
-   *  document, a workbook, or nothing at all for an entry that stores what it made
-   *  instead of writing it. */
+   *  document, a workbook, or a **set** the tool stored rather than a file. */
   runMakeEntry: (notebookId: string, entry: string, options: MakeOptions) =>
-    invoke<NotebookOutputRow[]>("run_notebook_entry", { notebookId, entry, options }),
+    invoke<Made>("run_notebook_entry", { notebookId, entry, options }),
   /** Carries the sources and the outputs, and deliberately not the questions. */
   copyNotebook: (id: string) => invoke<NotebookRow>("copy_notebook", { id }),
 

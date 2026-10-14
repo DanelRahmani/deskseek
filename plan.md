@@ -2800,11 +2800,13 @@ still say what a check *will* be.
 - **Stop**: pressing any entry opens a form, and what the form says is what the model is asked and all it
   may read.
 
-### 15.2 [S] Quiz and Flashcards in Make make a set, not a file
+### 15.2 [S] Quiz and Flashcards in Make make a set, not a file ✅
 - **Why**: the label is the symptom; the entry was the cause.
-- **Files**: `conversation/notebook.rs` (the two entries' action, and the count rule);
-  `tools/mod.rs` (`count` on the schema); `commands.rs` (the set command); `src/api.ts`;
-  `src/components/NotebookShell.tsx`.
+- **Files**: `conversation/notebook.rs` (the two entries' action and prompts, `Action::Set`, and the
+  count rule in `study_set`); `tools/mod.rs` (`count` on the schema and its description, and the
+  assertion that the schema offers what the validator reads); `commands.rs` (`Made`, and the set arm
+  that reads the sets back); `src/types.ts`, `src/api.ts`; `src/components/NotebookShell.tsx`
+  (`whatWasMade`); `CHANGELOG.md`, `README.md`, `docs/E2E-CHECKLIST.md`; `plan.md`.
 - **Shape**: those two entries' action is `set`, their `format` is `None`, and pressing one asks the
   notebook a question whose only job is to make the model call `make_study_set` with exactly the number
   asked for. **The count becomes enforceable**: the tool takes an optional `count` and refuses a set whose
@@ -2812,9 +2814,33 @@ still say what a check *will* be.
   repair its own call inside the same question" rule the options and the answers already go through, and
   the difference between "the reader asked for ten" and "the reader hopes for ten". Nothing is written to
   the notebook's folder, so nothing appears under *Outputs*: the set is the output, under *Study*.
-- **Test**: the validator's count rule (a set that is not the number asked for is refused and says by how
-  much; the same set with the count left out is accepted), and the menu invariant rewritten — an entry
-  may name **no** format only when it makes a set, and a document entry may not.
+- **Test**: `cargo test` 480 → **481**, no warnings. `conversation::notebook::tests` —
+  `a_set_is_the_size_that_was_asked_for_or_it_is_refused` is the count rule: one item is what a count
+  of one asks for; ten asked for and one sent is refused **with both numbers** ("1 of the 10 items");
+  a count of `null` is not a mismatch, because a question typed into the box has no form behind it; and
+  a count of 0 or 400 is refused before anything is built. The menu test's `Action::Set` arm holds the
+  two entries to what the model has to get right — no format named, `make_study_set` named, the count
+  passed on, and a count declared to pass — and `tools::tests::the_study_set_schema_and_its_validator_are_one_list`
+  now asserts the schema offers `count`, since a field the validator reads and the schema omits is a
+  rule that could never fire.
+  **Falsified**: stopping the tool holding a set to its size (`if raws.len() != wanted` →
+  `if wanted > MAX_STUDY_ITEMS`), a one-line needle confirmed on disk and restored afterwards, fails
+  `a_set_is_the_size_that_was_asked_for_or_it_is_refused` — `MUT=101`,
+  `test result: FAILED. 0 passed; 1 failed`, `panicked at src\conversation\notebook.rs:1767` with the
+  returned one-item set printed — which is a reader asking for ten and being handed one. Restoring
+  passes with the whole suite green at **481 passed; 0 failed**.
+  **Five deviations, said out loud**: the command returns a **`Made { outputs, sets }`** rather than a
+  list of outputs, because whether a set happened is not something the window can infer from an empty
+  list — it is the difference between "nothing was written" and "something was stored"; the command
+  reads the notebook's sets **before** the ask so what the ask produced can be told from what was
+  already there, and refuses with "the answer came back without a set" when the model answers in prose
+  instead of calling the tool, which is the one failure this path can have and the one the reader
+  cannot see for themselves; **a test of mine from 15.1 was wrong and 15.2 found it** — it asserted
+  `plan(quiz).format == "md"`, which this item made false, so the format rules moved to the `timeline`
+  entry and the set now asserts an empty format and that a format sent to it is dropped; the count
+  refusal is **worded so that no number is followed by a noun** ("came back with 1 of the 10 items"),
+  because "1 items" is the plural bug this repo has already shipped once; and the tool's `count` is
+  optional, so a typed question that never asked for a number is not held to one.
 - **Stop**: pressing Quiz or Flashcards gives a set to take, and no file.
 
 ### 15.3 [S] A set is dealt fresh every time it is taken

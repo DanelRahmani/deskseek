@@ -591,6 +591,10 @@ fn plain(role: &str, content: &str) -> ChatMessage {
 pub enum Action {
     Document,
     Table,
+    /// Stored rather than written: a quiz or a card set the window runs. It has no
+    /// format because there is no file, which is what the menu reads to stop
+    /// promising one.
+    Set,
 }
 
 /// How many of something an entry can be asked for.
@@ -649,12 +653,16 @@ pub const GENERATORS: [Generator; 7] = [
     Generator {
         id: "flashcards",
         title: "Flashcards",
-        action: Action::Document,
-        // Word rather than Markdown: a card set is something you print and cut.
-        formats: &["docx"],
-        prompt: "Turn these sources into flashcards. One card is `Q:` on a line, `A:` on the next, \
-                 then a blank line. Cover the facts that matter rather than every sentence, and \
-                 after each answer cite the source it came from, as `[name#Heading]`.",
+        action: Action::Set,
+        // No format at all: what this makes is a set the window flips, and the
+        // label saying `.docx` was the menu promising something it does not write.
+        formats: &[],
+        prompt: "Make flashcards the reader can flip, from these sources. Call `make_study_set` \
+                 with kind `flashcards`, a short title, and one item per card — the front as \
+                 `prompt`, the back as `answer`, and no options. Pass `count` as the number asked \
+                 for, name the source of every card that has one, and leave out a fact the sources \
+                 cannot settle rather than inventing it. The set is the answer: do not write the \
+                 cards out in your reply as well.",
         count: Some(Count {
             noun: "cards",
             default: 20,
@@ -666,16 +674,19 @@ pub const GENERATORS: [Generator; 7] = [
     Generator {
         id: "quiz",
         title: "Quiz",
-        action: Action::Document,
-        formats: &["md"],
-        // No number in the instruction itself: the count is added once, by
-        // `question_for`, from what the reader asked for — a prompt that also
-        // said "ten questions" would be asked for forty and mean ten.
-        prompt: "Write a quiz over these sources: four options each, then an answer key at the end \
-                 saying which option is right and why. Spread the right answers across the \
-                 options rather than letting one letter be the answer most of the time, and every \
-                 answer in the key cites the source it came from as `[name#Heading]`. A question \
-                 the sources cannot settle is left out rather than invented.",
+        action: Action::Set,
+        formats: &[],
+        // No number in the instruction itself — and no answer key, because the
+        // window marks the answers: the item that says which option is right *is*
+        // the key.
+        prompt: "Make a quiz the reader can take, from these sources. Call `make_study_set` with \
+                 kind `quiz`, a short title, and one item per question — the question, four \
+                 options, and which option is right written into `answer` exactly as that option is \
+                 spelled. Pass `count` as the number asked for, spread the right answers across the \
+                 options rather than letting one letter be the answer most of the time, name the \
+                 source of every question that has one, and leave out a question the sources cannot \
+                 settle rather than inventing it. The set is the answer: do not write the questions \
+                 out in your reply as well.",
         count: Some(Count {
             noun: "questions",
             default: 10,
@@ -952,6 +963,26 @@ pub fn study_set(args: &serde_json::Value) -> Result<StudySet, String> {
             "a set holds at most {MAX_STUDY_ITEMS} items, and that one has {}.",
             raws.len()
         ));
+    }
+    // The number the reader asked for, when they asked for one — refused rather
+    // than counted and shrugged at, because "ten questions" that arrives as eight is
+    // the one thing a reader notices without being told.
+    if let Some(wanted) = args.get("count").and_then(|value| value.as_u64()) {
+        let wanted = wanted as usize;
+        if wanted == 0 || wanted > MAX_STUDY_ITEMS {
+            return Err(format!(
+                "a set holds between 1 and {MAX_STUDY_ITEMS} items, and {wanted} were asked for."
+            ));
+        }
+        if raws.len() != wanted {
+            // Worded so that no number is followed by a noun: "1 items" is the
+            // kind of line a reader stops trusting the whole message over.
+            return Err(format!(
+                "that set came back with {} of the {wanted} items that were asked for — send \
+                 exactly {wanted}.",
+                raws.len()
+            ));
+        }
     }
     let mut items = Vec::with_capacity(raws.len());
     for raw in raws {
@@ -1396,6 +1427,24 @@ That is everything the sources settle.";
                         entry.id
                     );
                 }
+                // A set writes nothing at all, so the label may not promise a file
+                // — and it has to name the tool and the count, because those are the
+                // two things the model has to get right for the reader to end up
+                // with something they can take.
+                Action::Set => {
+                    assert!(entry.formats.is_empty(), "{} names a format it does not write", entry.id);
+                    assert!(
+                        entry.prompt.contains("make_study_set"),
+                        "{} does not say which tool makes it",
+                        entry.id
+                    );
+                    assert!(
+                        entry.prompt.contains("`count`"),
+                        "{} does not pass on the number asked for",
+                        entry.id
+                    );
+                    assert!(entry.count.is_some(), "{} has no number to pass", entry.id);
+                }
             }
             assert!(!entry.title.trim().is_empty(), "{} has no title", entry.id);
             assert!(!entry.prompt.trim().is_empty(), "{} asks for nothing", entry.id);
@@ -1432,7 +1481,9 @@ That is everything the sources settle.";
         // default count, phrased exactly once, and no claim about a scope nobody
         // set.
         let plain = plan(quiz, &Options::default(), &held).unwrap();
-        assert_eq!(plain.format, "md");
+        // Quiz is a *set* now, so there is no format to name: that empty string is
+        // what stops the menu promising a file the entry does not write.
+        assert_eq!(plain.format, "");
         assert_eq!(plain.question.matches("Make exactly").count(), 1, "{}", plain.question);
         assert!(plain.question.contains("Make exactly 10 questions"), "{}", plain.question);
         assert!(
@@ -1524,8 +1575,14 @@ That is everything the sources settle.";
         )
         .expect_err("no questions at all is not a quiz");
         assert!(none_at_all.contains("between 1 and 40 questions"), "{none_at_all}");
+
+        // The format rules belong to the entries that write a file: a document that
+        // is asked for a format it does not write is refused, and its own format is
+        // what comes back when it is asked for nothing.
+        let timeline = generator("timeline").unwrap();
+        assert_eq!(plan(timeline, &Options::default(), &held).unwrap().format, "md");
         let wrong_format = plan(
-            quiz,
+            timeline,
             &Options {
                 format: Some("docx".to_string()),
                 ..Default::default()
@@ -1534,6 +1591,23 @@ That is everything the sources settle.";
         )
         .expect_err("a format the entry does not write is refused");
         assert!(wrong_format.contains("written as md"), "{wrong_format}");
+        // And a format sent to an entry that writes nothing is dropped for the same
+        // reason a count is: the form cannot send one, so refusing would only ever
+        // be reached by a caller that built its own options.
+        assert_eq!(
+            plan(
+                quiz,
+                &Options {
+                    format: Some("docx".to_string()),
+                    ..Default::default()
+                },
+                &held
+            )
+            .unwrap()
+            .format,
+            "",
+            "a set writes nothing, whatever format it is sent"
+        );
         let unknown = plan(
             quiz,
             &Options {
@@ -1675,6 +1749,40 @@ That is everything the sources settle.";
             })),
             "a set past the cap is refused"
         );
+    }
+
+    #[test]
+    fn a_set_is_the_size_that_was_asked_for_or_it_is_refused() {
+        // One item for a count of one, which is the case that must keep working:
+        // the rule is a mismatch, not a number.
+        let mut args = quiz_args();
+        args["count"] = serde_json::json!(1);
+        assert_eq!(study_set(&args).unwrap().items.len(), 1);
+
+        // Ten asked for and one sent is exactly what a reader notices without
+        // being told, so it is refused with both numbers — and the message counts
+        // nothing with a noun after it, because "1 items" is where a reader stops
+        // trusting the message.
+        args["count"] = serde_json::json!(10);
+        let reason = study_set(&args).expect_err("a set that is not the size asked for is refused");
+        assert!(reason.contains("1 of the 10 items"), "{reason}");
+
+        // Leaving the number out is not a mismatch: a question typed into the box
+        // never asks for one.
+        let mut unasked = quiz_args();
+        unasked["count"] = serde_json::Value::Null;
+        assert!(study_set(&unasked).is_ok(), "no number asked for is not a mismatch");
+
+        // And a number nobody could satisfy is refused before anything is built,
+        // so the model is told the range rather than guessing at it.
+        let mut zero = quiz_args();
+        zero["count"] = serde_json::json!(0);
+        let reason = study_set(&zero).expect_err("none of them is not a set");
+        assert!(reason.contains("between 1 and 40"), "{reason}");
+        let mut many = quiz_args();
+        many["count"] = serde_json::json!(400);
+        let reason = study_set(&many).expect_err("past the ceiling is refused");
+        assert!(reason.contains("between 1 and 40"), "{reason}");
     }
 
     #[test]

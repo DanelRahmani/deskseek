@@ -10,6 +10,7 @@ import { StudySetDialog } from "./StudySetDialog";
 import type {
   Generator,
   Instruction,
+  Made,
   MakeOptions,
   NotebookOutputRow,
   NotebookRow,
@@ -119,12 +120,10 @@ export function NotebookShell({
   const runEntry = async (options: MakeOptions) => {
     const entry = making;
     if (!entry) return;
-    const done = await act(
-      () => api.runMakeEntry(notebookId, entry.id, options),
-      entry.action === "table"
-        ? `${entry.title} — every row cites a source, exported as a .${entry.formats[0]}.`
-        : `${entry.title} — written into the notebook's folder as a .${entry.formats[0]}.`,
-    );
+    const done = await act(async () => {
+      const made = await api.runMakeEntry(notebookId, entry.id, options);
+      setStatus(whatWasMade(entry, made));
+    });
     // Closed only on success: a refusal is something to read and adjust the form
     // against, and it lands in the status line where it stays visible.
     if (done) setMaking(null);
@@ -686,6 +685,24 @@ function SourceRead({ source, onClose }: { source: SourceView; onClose: () => vo
       </div>
     </div>
   );
+}
+
+/**
+ * What to say after a press.
+ *
+ * A set is named by what it holds, because the reader has to go and find it in a
+ * list rather than in a file; a document by where it went, because that is the
+ * thing they would otherwise have to hunt for. One place, so the two never come to
+ * describe the same result differently.
+ */
+function whatWasMade(entry: Generator, made: Made): string {
+  const set = made.sets[0];
+  if (set) {
+    return `Made "${set.title}" — ${quantities(set.items.length, set.kind)}, under Study. Take it whenever you like.`;
+  }
+  return entry.action === "table"
+    ? `${entry.title} — every row cites a source, exported as a .${entry.formats[0]}.`
+    : `${entry.title} — written into the notebook's folder as a .${entry.formats[0]}.`;
 }
 
 /** A source's sync state, in one word and one colour. */

@@ -1199,11 +1199,12 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
         (
             Tool::function(
                 "make_study_set",
-                "Turn what the reader asked for into a set they can study from — flashcards, or a multiple-choice quiz. The app runs it: a quiz is answered a question at a time and marked, flashcards are flipped one by one, and the set stays in the notebook to come back to. Send the items themselves, in this shape, rather than writing the questions into your answer as well — the set is the answer. Every item that came from a source names it, exactly as the source list spells it. Questions the sources cannot settle are left out rather than invented.",
+                "Turn what the reader asked for into a set they can study from — flashcards, or a multiple-choice quiz. The app runs it: a quiz is answered a question at a time and marked, flashcards are flipped one by one, and the set stays in the notebook to come back to. Send the items themselves, in this shape, rather than writing the questions into your answer as well — the set is the answer. Every item that came from a source names it, exactly as the source list spells it, and if the request asks for a number of items, send exactly that many and pass the same number as `count`. Questions the sources cannot settle are left out rather than invented.",
                 params(
                     json!({
                         "kind": {"type": "string", "enum": crate::conversation::notebook::STUDY_KINDS, "description": "quiz: a question with two to six options, one of which is right. flashcards: a front and a back."},
                         "title": {"type": "string", "description": "Short name for the set, e.g. \"Q3 revenue quiz\"."},
+                        "count": {"type": "integer", "description": "How many items the reader asked for, when they asked for a number — and then send exactly that many. Leave it out otherwise."},
                         "items": {
                             "type": "array",
                             "description": "The questions or cards, in the order they should be asked.",
@@ -1387,6 +1388,12 @@ mod tests {
                 "{key} is not in the item's properties"
             );
         }
+        // The number the reader asked for is a field the validator reads, so the
+        // schema has to offer it or the count could never be enforced.
+        assert!(
+            args["properties"].get("count").is_some(),
+            "count is not in the schema, so a set could never be held to its size"
+        );
         assert_eq!(
             item["additionalProperties"],
             serde_json::json!(false),

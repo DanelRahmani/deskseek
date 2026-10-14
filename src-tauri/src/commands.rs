@@ -1942,6 +1942,19 @@ pub fn notebook_generators() -> Vec<crate::conversation::notebook::Generator> {
     crate::conversation::notebook::GENERATORS.to_vec()
 }
 
+/// What pressing a menu entry produced: documents or a workbook written, and sets
+/// stored.
+///
+/// Two lists rather than one because they are two different things — a written
+/// file appears under *Outputs*, a set appears under *Study* — and the window can
+/// then say which happened instead of inferring it from an empty list.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Made {
+    outputs: Vec<db::NotebookOutputRow>,
+    sets: Vec<db::StudySetRow>,
+}
+
 /// Runs one entry from the notebook's menu: a grounded question in the shape the
 /// entry asks for, with what the reader asked for added, written out in the form
 /// the entry declares.
@@ -1949,9 +1962,8 @@ pub fn notebook_generators() -> Vec<crate::conversation::notebook::Generator> {
 /// The generation **is** an ask — it lands in the notebook's conversation with its
 /// citations like any other question, because a generated output whose sources
 /// were not written down would be the one answer nobody could check. What comes
-/// back is the list of what pressing it produced: one document, one workbook, or
-/// nothing at all for an entry that *stores* what it makes instead of writing it.
-/// A list rather than an optional row because the exam this grows into makes two.
+/// back is what the press produced: a document, a workbook, or a **set**, which the
+/// tool stores rather than this writing anything.
 ///
 /// Everything the reader chose is checked before the model is paid: the counts
 /// against the entry's own bounds, the format against what that entry writes, and
@@ -1964,7 +1976,7 @@ pub async fn run_notebook_entry(
     notebook_id: String,
     entry: String,
     options: crate::conversation::notebook::Options,
-) -> Result<Vec<db::NotebookOutputRow>, String> {
+) -> Result<Made, String> {
     use crate::conversation::notebook::{self, Action};
 
     let found = notebook::generator(&entry)
@@ -1989,22 +2001,63 @@ pub async fn run_notebook_entry(
         return Err(notebook::no_sources(&plan.sources));
     }
 
+    // What existed before the ask, so what the ask *produced* can be told from what
+    // was already there. One read for every kind of entry: a set is stored by the
+    // tool rather than written by this function, so looking is the only way to know
+    // one was made.
+    let before: Vec<String> = {
+        let conn = state.db.lock().unwrap();
+        db::list_notebook_sets(&conn, &notebook_id)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|set| set.id)
+            .collect()
+    };
     let asked = notebook::ask(&state, &notebook_id, &plan.question, &plan.sources).await?;
 
-    match plan.entry.action {
-        Action::Document => {
-            let row = write_output(
-                &state,
-                &notebook_id,
-                plan.entry.title,
-                &plan.format,
-                &asked.answer.content,
-            )
-            .await?;
-            Ok(vec![row])
+    let made = match plan.entry.action {
+        Action::Document => Made {
+            outputs: vec![
+                write_output(
+                    &state,
+                    &notebook_id,
+                    plan.entry.title,
+                    &plan.format,
+                    &asked.answer.content,
+                )
+                .await?,
+            ],
+            sets: Vec::new(),
+        },
+        Action::Table => Made {
+            outputs: vec![write_table(&state, &notebook_id, &asked, &given).await?],
+            sets: Vec::new(),
+        },
+        // Nothing is written for a set, and nothing is reported unless one really
+        // appeared: a model that answered in prose instead of calling the tool has
+        // produced something the reader cannot take, and saying so is better than
+        // an empty list that looks like success.
+        Action::Set => {
+            let sets: Vec<db::StudySetRow> = {
+                let conn = state.db.lock().unwrap();
+                db::list_notebook_sets(&conn, &notebook_id)
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .filter(|set| !before.contains(&set.id))
+                    .collect()
+            };
+            if sets.is_empty() {
+                return Err("The answer came back without a set — the questions were written into \
+                            the reply rather than made with `make_study_set`. Ask for it again."
+                    .to_string());
+            }
+            Made {
+                outputs: Vec::new(),
+                sets,
+            }
         }
-        Action::Table => Ok(vec![write_table(&state, &notebook_id, &asked, &given).await?]),
-    }
+    };
+    Ok(made)
 }
 
 /// Reads an answer as *rows* and exports them as a workbook.

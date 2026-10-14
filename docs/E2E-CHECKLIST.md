@@ -394,9 +394,13 @@ the parts only a person can see.
       in Excel with the rows as a real table
 - [ ] A table answer whose citation column is fiddled with (a row naming a file that is not a
       source) writes **nothing** and says which row was wrong — the same for a source switched off
-- [ ] Each entry in *Make* produces something: flashcards, a quiz with a key, a briefing, a
-      timeline, a study guide and a mind map, and each lands under *Outputs* as a `.md` or `.docx`
-      that opens
+- [ ] Each document entry in *Make* produces something — a briefing, a timeline, a study guide and a
+      mind map — and each lands under *Outputs* as a `.md` or `.docx` that opens
+- [ ] *Quiz* and *Flashcards* name **no** format in the menu and write **no** file: the set appears
+      under *Study* rather than *Outputs*, and the status line says where it went and what it holds
+- [ ] Asking for six cards gives six cards: a set that comes back the wrong size is refused by the
+      tool with both numbers, so the model repairs its own call inside the same question rather than
+      the reader counting what arrived
 - [ ] Every entry in *Make* opens a form first: changing the count changes how many come back, a
       count past the entry's ceiling is refused **before** the model is called, and the number the
       entry declares is what the form starts with
