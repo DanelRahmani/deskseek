@@ -24,6 +24,8 @@ interface Props {
   /** Opens the Customise hub: skills, connectors, instructions, design systems. */
   onCustomise: () => void;
   onProjects: () => void;
+  /** Opens a notebook in the focused pane — the most recent one, or a new one. */
+  onNotebooks: () => void;
   onArtifacts: () => void;
   onScheduled: () => void;
   /** What the last turns cost: the spend panel. */
@@ -64,6 +66,7 @@ export function Sidebar({
   onMemory,
   onCustomise,
   onProjects,
+  onNotebooks,
   onArtifacts,
   onScheduled,
   onSpend,
@@ -362,6 +365,12 @@ export function Sidebar({
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
         >
           Projects
+        </button>
+        <button
+          onClick={onNotebooks}
+          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
+        >
+          Notebooks
         </button>
         <button
           onClick={onArtifacts}

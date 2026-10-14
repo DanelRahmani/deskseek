@@ -293,12 +293,17 @@ Both sections are functional:
   add a file or a page and it is copied into the notebook's own folder, listed with a line saying
   what it contains, and switchable on or off. The model is sent that *catalogue* — the names and
   what each holds — and not the documents, so a notebook of forty sources costs what one question
-  costs rather than what forty documents cost; answers cite the source they used by name. Its
-  sources are files you can open, so a changed one is reported as stale rather than silently reused
+  costs rather than what forty documents cost; answers cite the source they used by name.
+  *Notebooks* in the sidebar opens one, and it takes a pane of its own, so it can sit beside a
+  chat and comes back with it on the next launch. Its sources are files you can open, so a changed
+  one is reported as stale rather than silently reused, and *Copy* carries the sources and the
+  outputs while deliberately leaving the conversation behind
   - Honest limits: the line saying what a source contains is written once when it is added, and a
     document it describes as "40 pages" is summarised rather than read whole into every question.
     Re-syncing re-reads it when it has actually changed; a source whose *original* moved is still
-    readable, because the notebook keeps its own copy
+    readable, because the notebook keeps its own copy. An output is a document in the notebook's
+    folder rather than an artifact, because an artifact belongs to a chat and a notebook has none
+    — a question asked of a source set is not a turn
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
   fix is next to the warning rather than a command you have to remember. Past 90% a run folds the

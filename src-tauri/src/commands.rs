@@ -988,7 +988,9 @@ pub async fn export_chat_pdf(
         "format": "pdf",
         "content": chat_markdown(&chat, &messages),
     });
-    crate::tools::docs::execute("doc_create", &args, &dir, &browser).await
+    crate::tools::docs::execute("doc_create", &args, &dir, &browser)
+        .await
+        .map(|(text, _)| text)
 }
 
 /// Render a conversation as Markdown.
@@ -1861,6 +1863,78 @@ pub fn add_notebook_output(
 pub fn remove_notebook_output(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::remove_notebook_output(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Writes something the notebook produced into the notebook's own folder, and
+/// remembers where it went.
+///
+/// The writers are the ones a chat already has — `doc_create` for Markdown, Word
+/// and PDF — so a notebook has no second way to make a document, and the file
+/// lands in the folder the sources rail and the file manager already show. The
+/// row keeps the path because that is what a person clicks tomorrow.
+#[tauri::command]
+pub async fn save_notebook_output(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    title: String,
+    format: String,
+    content: String,
+) -> Result<db::NotebookOutputRow, String> {
+    if content.trim().is_empty() {
+        return Err("There is nothing to save yet.".to_string());
+    }
+    let dir = state.paths.notebook_dir(&notebook_id);
+    let browser = state.settings.lock().unwrap().browser_path.clone();
+    let args = serde_json::json!({
+        "name": title.trim(),
+        "format": format,
+        "content": content,
+    });
+    let (_, path) = crate::tools::docs::execute("doc_create", &args, &dir, &browser).await?;
+    let path = path.ok_or("the document writer did not say where it wrote")?;
+    let conn = state.db.lock().unwrap();
+    db::add_notebook_output(
+        &conn,
+        &notebook_id,
+        &format,
+        title.trim(),
+        &path.display().to_string(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// Copies a notebook: its rules, its model, its sources and what it produced —
+/// and, deliberately, not its questions.
+///
+/// That line is the one a notebook product draws and it is also the honest one: a
+/// notebook's worth is the source set it was built around, so passing a copy on
+/// should carry the sources rather than a conversation you had over them. The
+/// files come first, so a copied row never points at a file that is not there —
+/// and the row copying itself is `db::copy_notebook`, where it can be tested
+/// without an app around it.
+#[tauri::command]
+pub fn copy_notebook(state: State<'_, AppState>, id: String) -> Result<db::NotebookRow, String> {
+    let (source, copy) = {
+        let conn = state.db.lock().unwrap();
+        let source = db::get_notebook(&conn, &id)
+            .map_err(|e| e.to_string())?
+            .ok_or("That notebook has been deleted.")?;
+        let copy = db::create_notebook(&conn, &format!("{} copy", source.title))
+            .map_err(|e| e.to_string())?;
+        (source, copy)
+    };
+    let _ = source;
+    let from = state.paths.notebook_dir(&id);
+    let to = state.paths.notebook_dir(&copy.id);
+    // The files first, so a copied row never points at a file that is not there.
+    if from.is_dir() {
+        let _ = copy_files(&from, &to);
+    }
+    let conn = state.db.lock().unwrap();
+    db::fill_notebook_copy(&conn, &id, &copy.id, &from, &to).map_err(|e| e.to_string())?;
+    db::get_notebook(&conn, &copy.id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "the copy vanished as it was made".to_string())
 }
 
 /// The memory file a project owns, or `None` when it has no folder.

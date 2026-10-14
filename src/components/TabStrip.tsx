@@ -1,8 +1,19 @@
-import type { ChatRow } from "../types";
 import { Icon } from "./Icon";
 
+/**
+ * What a tab needs. A title and an id rather than a `ChatRow`, because a tab is
+ * not always a chat: a notebook opens in a pane beside one, and the strip is the
+ * same strip.
+ */
+export interface Tab {
+  id: string;
+  title: string;
+  /** Drawn with its own glyph: a set of sources is not a conversation. */
+  notebook?: boolean;
+}
+
 interface Props {
-  tabs: ChatRow[];
+  tabs: Tab[];
   panes: (string | null)[];
   focus: number;
   split: boolean;
@@ -59,6 +70,7 @@ export function TabStrip({
                   title="Working"
                 />
               )}
+              {chat.notebook && <Icon name="book" size={13} />}
               <button onClick={() => onSelect(chat.id)} className="truncate text-left">
                 {chat.title}
               </button>

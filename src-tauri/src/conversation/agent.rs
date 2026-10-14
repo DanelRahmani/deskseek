@@ -1636,7 +1636,10 @@ async fn run_tool(
         // what this conversation is producing, and the file tree beside it shows
         // the same folder because both ask `workspace_for`.
         let browser = state.settings.lock().unwrap().browser_path.clone();
-        return docs::execute(name, args, ws, &browser).await.map(Into::into);
+        return docs::execute(name, args, ws, &browser)
+            .await
+            .map(|(text, _)| text)
+            .map(Into::into);
     }
 
     // Before a run changes a file, its current content is recorded so the whole

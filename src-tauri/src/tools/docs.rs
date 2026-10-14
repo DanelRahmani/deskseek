@@ -470,12 +470,17 @@ fn require_name(args: &Value) -> Result<String, String> {
 /// Runs one of the three document tools. The caller supplies the output folder
 /// so this module never has to know what an `AppState` is, and so a test can
 /// point it at a temp directory.
+///
+/// The path comes back beside the text because the writer is the only thing that
+/// knows it: a notebook's output row has to remember where its file is, and
+/// reading the path back out of the sentence below would be a second answer to a
+/// question this function has already answered.
 pub async fn execute(
     name: &str,
     args: &Value,
     dir: &Path,
     browser: &str,
-) -> Result<String, String> {
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
 
     match name {
@@ -486,7 +491,11 @@ pub async fn execute(
     }
 }
 
-async fn doc_create(args: &Value, dir: &Path, browser: &str) -> Result<String, String> {
+async fn doc_create(
+    args: &Value,
+    dir: &Path,
+    browser: &str,
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     let name = require_name(args)?;
     let content = args
         .get("content")
@@ -516,10 +525,13 @@ async fn doc_create(args: &Value, dir: &Path, browser: &str) -> Result<String, S
             format!("PDF, {} block(s), {} kB.", blocks.len(), bytes.len() / 1024)
         }
     };
-    Ok(saved(&path, &note))
+    Ok((saved(&path, &note), Some(path)))
 }
 
-fn sheet_create(args: &Value, dir: &Path) -> Result<String, String> {
+fn sheet_create(
+    args: &Value,
+    dir: &Path,
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     let name = require_name(args)?;
     let rows = args
         .get("rows")
@@ -585,13 +597,19 @@ fn sheet_create(args: &Value, dir: &Path) -> Result<String, String> {
     let path = free_path(dir, &slug(&name), "xlsx");
     book.save(&path)
         .map_err(|e| format!("could not write the spreadsheet: {e}"))?;
-    Ok(saved(
-        &path,
-        &format!("Sheet \"{sheet}\", {written} cell(s). Formulas are stored as written and evaluated by Excel when the file opens."),
+    Ok((
+        saved(
+            &path,
+            &format!("Sheet \"{sheet}\", {written} cell(s). Formulas are stored as written and evaluated by Excel when the file opens."),
+        ),
+        Some(path),
     ))
 }
 
-fn slides_create(args: &Value, dir: &Path) -> Result<String, String> {
+fn slides_create(
+    args: &Value,
+    dir: &Path,
+) -> Result<(String, Option<std::path::PathBuf>), String> {
     use ppt_rs::generator::slide_content::SlideContent;
 
     let name = require_name(args)?;
@@ -657,12 +675,15 @@ fn slides_create(args: &Value, dir: &Path) -> Result<String, String> {
 
     let path = free_path(dir, &slug(&name), "pptx");
     std::fs::write(&path, &bytes).map_err(|e| e.to_string())?;
-    Ok(saved(
-        &path,
-        &format!(
-            "PowerPoint, {} slide(s). Layouts, images and animation are not supported — title and bullets only.",
-            slides.len()
+    Ok((
+        saved(
+            &path,
+            &format!(
+                "PowerPoint, {} slide(s). Layouts, images and animation are not supported — title and bullets only.",
+                slides.len()
+            ),
         ),
+        Some(path),
     ))
 }
 
@@ -792,11 +813,24 @@ mod tests {
         assert_eq!(file_url(Path::new("/tmp/x.html")), "file:///tmp/x.html");
     }
 
-    /// The path out of a tool result, asserting the exact shape the frontend
-    /// parses on the other side (`Saved to: <path>` on its own first line).
-    fn path_of(result: &str) -> PathBuf {
-        let first = result.lines().next().unwrap_or_default();
-        PathBuf::from(first.trim_start_matches("Saved to: "))
+    /// The path a document tool reports, and the check that the two ways of
+    /// saying it agree.
+    ///
+    /// The sentence is what the model reads and what the window's Open button
+    /// parses; the `Option<PathBuf>` beside it is what a notebook's output row
+    /// stores, because a row that had to read the path back out of a sentence
+    /// would be a second answer about a file that already exists. Asserting the
+    /// sentence names the same path is what keeps the two from drifting apart.
+    fn path_of(result: &(String, Option<PathBuf>)) -> PathBuf {
+        let (text, path) = result;
+        let path = path.clone().expect("a document writer must say where it wrote");
+        let first = text.lines().next().unwrap_or_default();
+        assert_eq!(
+            first.trim_start_matches("Saved to: "),
+            path.display().to_string(),
+            "the sentence and the path disagree"
+        );
+        path
     }
 
     /// A ZIP's entry names live in its central directory uncompressed, so the

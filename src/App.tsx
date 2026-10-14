@@ -33,6 +33,7 @@ import type {
   MessageHit,
   MessageRow,
   ModelInfo,
+  NotebookRow,
   PermissionMode,
   ProjectRow,
   PromptView,
@@ -43,6 +44,7 @@ import type {
 } from "./types";
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
+import { NotebookShell } from "./components/NotebookShell";
 import { AGENT_MODES } from "./components/ChatView";
 import { SettingsDialog } from "./components/SettingsDialog";
 import type { SettingsSection } from "./components/SettingsDialog";
@@ -137,6 +139,9 @@ export default function App() {
   // Every chat seen so far, by id: tabs and panes outlive the sidebar's current
   // section, so they need rows of their own to render from.
   const [chatsById, setChatsById] = useState<Record<string, ChatRow>>({});
+  /** Notebooks, for the same reason and in the same shape: a tab id is one or the
+   *  other, and the pane asks which. */
+  const [notebooksById, setNotebooksById] = useState<Record<string, NotebookRow>>({});
   const [shell, setShell] = useState<Shell>(loadShell);
   // Transcripts and drafts are per chat, so two panes can show two
   // conversations at once and switching back does not refetch.
@@ -250,6 +255,12 @@ export default function App() {
   const { tabs, panes, focus, splitAt } = shell;
   const activeId = panes[focus] ?? null;
 
+  /** The notebook list changed under us — a copy, a delete — so read it again. */
+  const refreshNotebooks = useCallback(async () => {
+    const list = await api.listNotebooks().catch(() => [] as NotebookRow[]);
+    setNotebooksById(Object.fromEntries(list.map((n) => [n.id, n])));
+  }, []);
+
   // Tab and pane bookkeeping lives in lib/shell.ts so its rules can be checked
   // without a browser.
   const showChat = useCallback((id: string) => setShell((s) => openChatIn(s, id)), []);
@@ -272,6 +283,33 @@ export default function App() {
       if (!(id in messagesByChat)) loadMessages(id).catch((e) => setError(String(e)));
     },
     [messagesByChat, loadMessages],
+  );
+
+  /**
+   * Open a notebook in the focused pane, making one when there is none.
+   *
+   * A notebook is a pane like a chat is, so this is the same `showChat` — nothing
+   * here loads a transcript, because a notebook's conversation is not a chat's.
+   */
+  const openNotebook = useCallback(
+    async (id?: string) => {
+      try {
+        const list = id ? null : await api.listNotebooks();
+        const target =
+          id ??
+          list?.find((n) => n.id in notebooksById)?.id ??
+          list?.[0]?.id ??
+          (await api.createNotebook("New notebook")).id;
+        if (!(target in notebooksById)) {
+          const fresh = await api.listNotebooks();
+          setNotebooksById(Object.fromEntries(fresh.map((n) => [n.id, n])));
+        }
+        showChat(target);
+      } catch (e) {
+        setError(String(e));
+      }
+    },
+    [notebooksById, showChat],
   );
 
   const activeIdRef = useRef<string | null>(null);
@@ -338,12 +376,21 @@ export default function App() {
       // when it belongs to the other one.
       const all = [...chatList, ...codingList];
       setChatsById(Object.fromEntries(all.map((c) => [c.id, c])));
-      // Chats deleted while the app was closed must not come back as tabs.
-      const known = new Set(all.map((c) => c.id));
+      // Notebooks are panes too, so a tab restored from the last session may be
+      // one of them — and a notebook deleted while the app was closed must not
+      // come back as a tab, which is the same rule as a chat's.
+      const books = await api.listNotebooks().catch(() => [] as NotebookRow[]);
+      setNotebooksById(Object.fromEntries(books.map((n) => [n.id, n])));
+      // Chats and notebooks deleted while the app was closed must not come back
+      // as tabs.
+      const known = new Set([...all.map((c) => c.id), ...books.map((n) => n.id)]);
       setShell((prev) => pruneShell(prev, (id) => !known.has(id)));
-      // A restored pane needs its transcript, which lives in the database.
+      // A restored pane needs its transcript, which lives in the database — and
+      // only a chat has one.
       await Promise.all(
-        panes.filter((p): p is string => p !== null && known.has(p)).map(loadMessages),
+        panes
+          .filter((p): p is string => p !== null && all.some((c) => c.id === p))
+          .map(loadMessages),
       );
 
       // First run: show setup. It covers the API key too, so the settings
@@ -772,6 +819,10 @@ export default function App() {
             return;
           case "/projects":
             setPanel((current) => (current === "projects" ? "none" : "projects"));
+            return;
+          case "/notebook":
+          case "/notebooks":
+            await openNotebook();
             return;
           case "/artifacts":
             setPanel((current) => (current === "artifacts" ? "none" : "artifacts"));
@@ -1792,6 +1843,7 @@ export default function App() {
         onProjects={() =>
           setPanel((current) => (current === "projects" ? "none" : "projects"))
         }
+        onNotebooks={() => void openNotebook()}
         onArtifacts={() =>
           setPanel((current) => (current === "artifacts" ? "none" : "artifacts"))
         }
@@ -1816,7 +1868,11 @@ export default function App() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TabStrip
-          tabs={tabs.map((id) => chatsById[id]).filter((c): c is ChatRow => !!c)}
+          tabs={tabs.map((id) => ({
+            id,
+            title: chatsById[id]?.title ?? notebooksById[id]?.title ?? "Notebook",
+            notebook: !chatsById[id] && !!notebooksById[id],
+          }))}
           panes={panes}
           focus={focus}
           split={panes.length > 1}
@@ -1832,6 +1888,8 @@ export default function App() {
             // streaming into the pane that is not focused.
             const rt = (id && sessions[id]) || IDLE;
             const row = id ? (chatsById[id] ?? null) : null;
+            // A tab id is one or the other, and this is the one place that asks.
+            const notebook = id ? (notebooksById[id] ?? null) : null;
             const max = models.find((m) => m.id === row?.model)?.context ?? 1_000_000;
             return (
               <Fragment key={pane}>
@@ -1858,8 +1916,21 @@ export default function App() {
                       : { flexGrow: 1, flexBasis: 0 }
                   }
                 >
-                  <ChatView
-                    chat={row}
+                  {notebook ? (
+                    <NotebookShell
+                      notebookId={notebook.id}
+                      notebooks={Object.values(notebooksById)}
+                      models={models}
+                      onOpen={showChat}
+                      onChanged={() => void refreshNotebooks()}
+                      onDeleted={(gone) => {
+                        setShell((s) => pruneShell(s, (t) => t === gone));
+                        void refreshNotebooks();
+                      }}
+                    />
+                  ) : (
+                    <ChatView
+                      chat={row}
                     messages={id ? (messagesByChat[id] ?? []) : []}
                     stream={rt.stream}
                     tools={rt.tools}
@@ -1910,6 +1981,7 @@ export default function App() {
                     // the same way the insert above is nulled for the other pane.
                     jumpToLatest={pane === focus ? jumpToLatest : 0}
                   />
+                )}
                 </div>
               </Fragment>
             );

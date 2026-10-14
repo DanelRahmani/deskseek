@@ -390,6 +390,16 @@ the parts only a person can see.
 
 ## Notebooks
 
+- [ ] *Notebooks* in the sidebar opens a notebook — a new one the first time — in the focused pane,
+      and `/notebook` does the same
+- [ ] A notebook pane sits beside a chat (split), both answer, and both are still there after a
+      restart — with the notebook showing its sources and its conversation
+- [ ] Deleting a notebook while it is open closes its pane rather than leaving a blank one, and a
+      notebook deleted while the app was closed does not come back as a tab
+- [ ] *Copy* makes a second notebook that has the same sources and outputs with the files beside
+      them, and no questions — and the original is untouched
+- [ ] *Save .docx* under an answer writes it into the notebook's folder and it appears under
+      *Outputs*, where clicking it shows the file
 - [ ] Asking about a document that is in this chat's folder answers from it, and the answer names
       the file and the heading it used — with no attachment made to the message
 - [ ] The same chat, asked something unrelated to the folder, arrives with no excerpts (the

@@ -2419,29 +2419,55 @@ and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not 
 - **Stop**: asking about a folder answers from it, and every citation names a file that was actually
   retrieved.
 
-### 8.2 [L] The notebook shell
+### 8.2 [L] The notebook shell ✅
 - **Why**: the user-facing half — one surface holding its sources, a grounded conversation and a set
   of outputs, which is the shape a notebook product has to have.
-- **Files**: `src/components/NotebookShell.tsx` (**new**); `src-tauri/src/conversation/notebook.rs`
-  (**new** — the ask, its prompt, the generator table); `tools/mod.rs` (`tools_for_notebook`, and the
-  two declarations); `src/App.tsx` (the startup id set, the pane dispatch, `/notebook`, the `Panel`
-  union), `src/components/TabStrip.tsx` and `Sidebar.tsx` (a notebook's title and its entry),
-  `src/lib/commands.ts`, `src/lib/shell.check.ts` (the resolver case), `src/api.ts`, `src/types.ts`,
-  `commands.rs` (the copy command), `ARCHITECTURE.md`, `README.md`.
-- **Shape**: three regions — a sources rail (add, enable and disable, sync state, stale, and each
-  source's digest line), the grounded chat, and the outputs list — with the notebook picker in the
-  rail's header so there is no second list panel. Outputs go through the **existing** writers
-  (`artifact_create`, `doc_create`, `sheet_create`): there is no second viewer and no second writer.
-  The ask is a bounded read-only loop rather than `agent::run` — the notebook's catalogue in the
-  system prompt, the two source tools, and the read-only and web tools so a fact can be verified
-  against the web — and it says plainly when an answer came from the web rather than from a source.
-  No writes, no approvals, no browser session and no chat row: a notebook's question is not a turn,
-  and pretending otherwise would be a second answer to "what is a chat". Copying a notebook carries
-  its sources and its outputs but **not** its messages.
-- **Test**: a tab id held only by the notebook list survives a prune while one held by neither list
-  is dropped; a copy carries outputs and no messages; every citation in a stored answer resolves; a
-  chat is not offered the notebook's two tools while a notebook is; and an ask records its spend
-  under a `notebook` kind.
+- **Files**: new `src/components/NotebookShell.tsx`; `src/App.tsx` (the notebook map, the union at
+  startup, the pane branch, `/notebook`, and the opener); `src/components/TabStrip.tsx` (a `Tab`
+  rather than a `ChatRow`, because a tab is not always a chat); `src/components/Icon.tsx` (a book
+  glyph); `src/components/Sidebar.tsx` (one button); `src/api.ts` (`copyNotebook`,
+  `saveNotebookOutput`); `src/lib/shell.check.ts` (the restore case); `commands.rs`
+  (`copy_notebook`, `save_notebook_output`); `store/db.rs` (`fill_notebook_copy`, tested);
+  `conversation/agent.rs` and `commands.rs` (the two `docs::execute` callers); `tools/docs.rs`.
+- **Shape**: three regions — a sources rail (add a file or a page, switch a source on or off, its
+  sync state, its digest, *Re-sync*), the conversation, and what it produced — with the notebook
+  picker and the model pin in the header, so there is no second list panel. A question is asked of
+  the notebook, not of a chat: `open_notebook` is one read, `ask_notebook` one call, and the answer's
+  citations come back as chips through `src/lib/citation.ts`, which marks one whose source is gone
+  rather than linking to nothing. Outputs go through `doc_create` — the writer a chat already uses —
+  into the notebook's own folder, and the row remembers the path so tomorrow's click works. Copying
+  carries the sources, their files, their digests and their switches, and the outputs; it carries no
+  questions.
+- **Test**: `cargo test` 471 → **472**. `store::db::tests`
+  — `a_copy_carries_the_sources_and_the_outputs_but_not_the_questions`, over a notebook with a model
+  pin, an instruction block, two sources (one switched off, one with a digest), an output and two
+  messages: the copy has the rules and the model, both sources in order with their digests, their
+  extracts, their switches **and their paths rewritten into the copy's own folder**, the output's
+  target rewritten with them, and an empty message list; the original keeps everything, including
+  the messages it had. `npm run check` — `shell.check.ts` gained the resolver case (an id held by a
+  chat or a notebook survives a restore and one held by neither is dropped, with each pane keeping
+  its own), and `a11y.check.ts` now walks 39 components rather than 38 because the shell is a
+  component like any other. `tools::docs::tests::it_writes_a_real_file_of_every_format` now asserts
+  the sentence and the structured path agree, through `path_of`.
+  **Falsified**: dropping the path substitution in the copy
+  (`|path: &str| path.replace(&out, &into)` → `|path: &str| format!("{path}")`) fails
+  `a_copy_carries_the_sources_and_the_outputs_but_not_the_questions` on
+  `"a copied source must point at the copy's own file"` — a copy listing the original's files, so
+  deleting the original silently breaks it — after checking the mutation reached the disk, and
+  restoring passes. **Six deviations, said out loud**: the sidebar got **one button rather than a
+  list**, because the picker lives in the shell's own header and a second list of notebooks would be
+  a second answer to "which notebooks are there"; `src/lib/commands.ts` is **not touched** — the
+  palette lists chats, and a notebook is opened from the sidebar button or `/notebook`; a notebook's
+  outputs are **documents, not artifacts**, because `artifacts.chat_id` is a foreign key to `chats`
+  and a notebook deliberately has no chat, which is the same reason its answer is not a turn;
+  `tools/docs.rs::execute` now returns **the path beside the text** rather than leaving it inside the
+  sentence for a caller to parse back out, which is what makes an output row able to remember where
+  its file is; a notebook's rules are edited in the shell but are the **same `Instruction` shape and
+  the same rule** about which of them apply, pushed by `agent::push_instructions`; and `lib/shell.ts`
+  itself is **untouched**, because its ids were already opaque — only the caller's `known` set and
+  its check changed. One limit named: `save_notebook_output` offers the three formats `doc_create`
+  writes, so a notebook output is a document rather than a spreadsheet or a deck, and the fact-table
+  export in 8.4 is the one place a spreadsheet is wanted.
 - **Stop**: one source set supports several questions and several outputs, durably, and a notebook
   can sit beside a chat across a restart.
 

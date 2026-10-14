@@ -17,6 +17,7 @@ export type IconName =
   | "archive"
   | "restore"
   | "split"
+  | "book"
   | "close";
 
 const PATHS: Record<IconName, string> = {
@@ -30,6 +31,8 @@ const PATHS: Record<IconName, string> = {
   archive: "M3.5 4.5h17v4h-17v-4ZM5.5 8.5v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-10M10 13h4",
   restore: "M12 15.5V4M8 8l4-4 4 4M4.5 15v3a1 1 0 0 0 1 1h13a1 1 0 0 0 1-1v-3",
   split: "M4 4.5h16a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1ZM12 4.5v15",
+  // An open book: two pages meeting at a spine.
+  book: "M12 7.2C10.6 5.9 8.5 5.2 5.8 5.2H4.2v12.1h1.6c2.7 0 4.8.7 6.2 2 1.4-1.3 3.5-2 6.2-2h1.6V5.2h-1.6c-2.7 0-4.8.7-6.2 2ZM12 7.2v12.1",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
 };
 

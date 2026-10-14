@@ -3650,6 +3650,59 @@ pub fn remove_notebook_output(conn: &Connection, id: &str) -> rusqlite::Result<(
     Ok(())
 }
 
+/// Fills an empty notebook from another one: its rules, its model, its sources
+/// and what it produced — **not** its questions.
+///
+/// The two folders are parameters because a path is only valid inside the profile
+/// that owns it: a source's row points at the copy the notebook made of it, so a
+/// copied row has to point at the *copy's* copy. One substitution, in one place,
+/// so the rows and the files cannot come to disagree about where a source lives.
+///
+/// The digests come across as they are: the content is the same content, and
+/// paying a model to describe it a second time would buy nothing. One that were
+/// somehow wrong here is corrected by the same *Re-sync* a changed file goes
+/// through.
+pub fn fill_notebook_copy(
+    conn: &Connection,
+    from_id: &str,
+    to_id: &str,
+    from_dir: &Path,
+    to_dir: &Path,
+) -> rusqlite::Result<()> {
+    let Some(source) = get_notebook(conn, from_id)? else {
+        return Ok(());
+    };
+    set_notebook_instructions(conn, to_id, &source.instructions)?;
+    set_notebook_model(conn, to_id, &source.model)?;
+
+    let out = from_dir.display().to_string();
+    let into = to_dir.display().to_string();
+    let moved = |path: &str| path.replace(&out, &into);
+
+    for row in list_sources(conn, from_id)? {
+        let copied = create_source(
+            conn,
+            to_id,
+            &row.name,
+            &row.kind,
+            &row.origin,
+            row.path.as_deref().map(moved).as_deref(),
+            row.extract.as_deref().unwrap_or(""),
+            &row.fingerprint,
+        )?;
+        if !row.digest.is_empty() {
+            set_source_digest(conn, &copied.id, &row.digest)?;
+        }
+        if !row.enabled {
+            set_source_enabled(conn, &copied.id, false)?;
+        }
+    }
+    for output in list_notebook_outputs(conn, from_id)? {
+        add_notebook_output(conn, to_id, &output.kind, &output.title, &moved(&output.target))?;
+    }
+    Ok(())
+}
+
 // ------------------------------------------------------------------ chunks
 
 /// One indexed piece of one document, as a search returns it.
@@ -5586,6 +5639,116 @@ mod tests {    use super::*;
             .iter()
             .all(|row| row["argsDigest"].is_string()));
         assert_camel_case_keys(&shape, "audit");
+    }
+
+    #[test]
+    fn a_copy_carries_the_sources_and_the_outputs_but_not_the_questions() {
+        let conn = mem();
+        let original = create_notebook(&conn, "Thesis").unwrap();
+        set_notebook_model(&conn, &original.id, "a-model").unwrap();
+        set_notebook_instructions(
+            &conn,
+            &original.id,
+            &[Instruction {
+                id: "1".to_string(),
+                name: "Cite everything".to_string(),
+                scope: "both".to_string(),
+                body: "Always.".to_string(),
+                enabled: true,
+            }],
+        )
+        .unwrap();
+        let kept = create_source(
+            &conn,
+            &original.id,
+            "q3.pdf",
+            "file",
+            "C:/origin/q3.pdf",
+            Some("C:/profile/notebooks/old/sources/q3.pdf"),
+            "the numbers",
+            "10-1",
+        )
+        .unwrap();
+        set_source_digest(&conn, &kept.id, "Quarterly numbers.").unwrap();
+        let off = create_source(
+            &conn,
+            &original.id,
+            "draft.md",
+            "file",
+            "",
+            Some("C:/profile/notebooks/old/sources/draft.md"),
+            "a draft",
+            "20-2",
+        )
+        .unwrap();
+        set_source_enabled(&conn, &off.id, false).unwrap();
+        add_notebook_output(
+            &conn,
+            &original.id,
+            "md",
+            "Briefing",
+            "C:/profile/notebooks/old/briefing.md",
+        )
+        .unwrap();
+        append_notebook_message(&conn, &original.id, "user", "what changed?", &[]).unwrap();
+        append_notebook_message(
+            &conn,
+            &original.id,
+            "assistant",
+            "Revenue rose [q3.pdf].",
+            &["q3.pdf".to_string()],
+        )
+        .unwrap();
+
+        let copy = create_notebook(&conn, "Thesis copy").unwrap();
+        fill_notebook_copy(
+            &conn,
+            &original.id,
+            &copy.id,
+            Path::new("C:/profile/notebooks/old"),
+            Path::new("C:/profile/notebooks/new"),
+        )
+        .unwrap();
+
+        // The rules and the model come with it, which is what makes a copy worth
+        // handing on.
+        let copy = get_notebook(&conn, &copy.id).unwrap().unwrap();
+        assert_eq!(copy.model, "a-model");
+        assert_eq!(copy.instructions.len(), 1);
+        assert_eq!(copy.instructions[0].name, "Cite everything");
+
+        // The sources come, in order, with their digests and their switches, and
+        // every path now points inside the copy's own folder.
+        let sources = list_sources(&conn, &copy.id).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[0].name, "q3.pdf");
+        assert!(sources[0].enabled && !sources[1].enabled, "the switch is copied");
+        assert_eq!(sources[0].digest, "Quarterly numbers.");
+        assert_eq!(sources[0].extract.as_deref(), Some("the numbers"));
+        assert_eq!(
+            sources[0].path.as_deref(),
+            Some("C:/profile/notebooks/new/sources/q3.pdf"),
+            "a copied source must point at the copy's own file"
+        );
+        assert_eq!(sources[1].path.as_deref(), Some("C:/profile/notebooks/new/sources/draft.md"));
+        // The origin is where it was imported from, and that has not moved.
+        assert_eq!(sources[0].origin, "C:/origin/q3.pdf");
+
+        // The output comes, pointing at the copied file.
+        let outputs = list_notebook_outputs(&conn, &copy.id).unwrap();
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].target, "C:/profile/notebooks/new/briefing.md");
+
+        // And the questions do not: that is the line this copy draws, and the one
+        // case where the absence *is* the feature.
+        assert!(list_notebook_messages(&conn, &copy.id).unwrap().is_empty());
+        // The original is untouched, including the messages it kept.
+        assert_eq!(list_sources(&conn, &original.id).unwrap().len(), 2);
+        assert_eq!(list_notebook_messages(&conn, &original.id).unwrap().len(), 2);
+        assert_eq!(
+            list_sources(&conn, &original.id).unwrap()[0].path.as_deref(),
+            Some("C:/profile/notebooks/old/sources/q3.pdf")
+        );
     }
 
     #[test]

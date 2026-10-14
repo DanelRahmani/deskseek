@@ -419,6 +419,8 @@ pub fn run() {
             commands::ask_notebook,
             commands::add_notebook_output,
             commands::remove_notebook_output,
+            commands::save_notebook_output,
+            commands::copy_notebook,
             commands::list_parked,
             commands::dismiss_parked,
             commands::list_all_artifacts,

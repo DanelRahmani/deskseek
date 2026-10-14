@@ -112,7 +112,7 @@ Changing behaviour in this app is usually changing one of these.
 | The schema, and every upgrade — a new column is a `CREATE TABLE` entry *and* a guarded `ALTER` | `store/db.rs` |
 | The "one markdown file per named thing" store, including the id that may never climb out of its folder | `store/files.rs` |
 | The profile (`MEMORY.md`) versus one file per category | `memory.rs`, `memory_files.rs` |
-| What a notebook is, what a source's `ok`/`stale`/`missing` means and when its digest is worth paying for again (one fingerprint answers both), and how much of a source reaches the model — a catalogue of the enabled ones, never the corpus | `conversation/notebook.rs`, `store/db.rs` |
+| What a notebook is, what a source's `ok`/`stale`/`missing` means and when its digest is worth paying for again (one fingerprint answers both), and how much of a source reaches the model — a catalogue of the enabled ones, never the corpus. Its surface is a pane of its own, and what a copy of it carries is `store/db.rs`'s | `conversation/notebook.rs`, `src/components/NotebookShell.tsx`, `store/db.rs` |
 | What a citation is, and whether one names a source that was actually there | `retrieval.rs` |
 | What a chat reads out of its own folder, what a document becomes as chunks, and the budget the excerpts stay inside | `retrieval.rs`, `conversation/assemble.rs` |
 | Which tools a notebook's question may use, as opposed to a chat's | `tools/mod.rs` |
@@ -135,7 +135,7 @@ pins).
 
 | Rule | Owner |
 | --- | --- |
-| Tabs, panes, and what comes back on the next launch | `src/lib/shell.ts` |
+| Tabs, panes, and what comes back on the next launch — and that a tab id is a chat, a notebook, or gone | `src/lib/shell.ts` |
 | The transcript's window over a long chat | `src/lib/transcript.ts` |
 | Where an attachment is filed | `src/lib/filing.ts` |
 | Keyboard chords, and what they may fire while a field has focus | `src/lib/shortcuts.ts` |

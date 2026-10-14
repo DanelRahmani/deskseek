@@ -27,8 +27,7 @@ assert(parseShell('{"focus":9,"panes":["a"]}').focus === 0, "an out-of-range foc
 assert(parseShell('{"panes":["a","b","c"]}').panes.length === 2, "extra panes are dropped");
 
 // Closing the tab a pane was showing leaves that pane with a different chat.
-const closed = pruneShell(shell({ tabs: ["a", "b", "c"], panes: ["a", "b"], focus: 0 }), (t) => t === "a");
-assert(eq(closed.tabs, ["b", "c"]), "the closed tab is gone");
+const closed = pruneShell(shell({ tabs: ["a", "b", "c"], panes: ["a", "b"], focus: 0 }), (t) => t === "a");assert(eq(closed.tabs, ["b", "c"]), "the closed tab is gone");
 assert(closed.panes[0] === "c", `the emptied pane refills with the next free tab (got ${closed.panes[0]})`);
 assert(closed.panes[1] === "b", "the other pane is left alone");
 
@@ -41,6 +40,22 @@ assert(emptied.focus === 0, "focus lands on a valid pane index");
 // A removal that matches nothing must be identity, so React skips the render.
 const untouched = shell({ tabs: ["a"], panes: ["a"] });
 assert(pruneShell(untouched, () => false) === untouched, "a no-op prune returns the same object");
+
+// A notebook is a tab too, and the only rule that brings is the one the caller's
+// `known` set has to answer: an id held by a chat *or* a notebook survives a
+// restore, and one held by neither is dropped. A notebook deleted while the app
+// was closed must not come back as a tab, exactly as a deleted chat must not.
+const held = new Set(["chat-1", "book-1"]);
+const restored = pruneShell(
+  shell({ tabs: ["chat-1", "book-1", "gone"], panes: ["book-1", "chat-1"], focus: 0 }),
+  (id) => !held.has(id),
+);
+assert(eq(restored.tabs, ["chat-1", "book-1"]), "a notebook tab survives and a vanished one does not");
+assert(
+  restored.panes[0] === "book-1" && restored.focus === 0,
+  "the pane keeps showing its notebook",
+);
+assert(eq(restored.panes[1], "chat-1"), "and the other pane keeps its chat");
 
 // Clicking an already-open chat moves the focus instead of duplicating a tab.
 const refocused = openChatIn(shell({ tabs: ["a", "b"], panes: ["a", "b"], focus: 0 }), "b");

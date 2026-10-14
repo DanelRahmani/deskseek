@@ -346,6 +346,12 @@ export const api = {
   addNotebookOutput: (notebookId: string, kind: string, title: string, target: string) =>
     invoke<NotebookOutputRow>("add_notebook_output", { notebookId, kind, title, target }),
   removeNotebookOutput: (id: string) => invoke<void>("remove_notebook_output", { id }),
+  /** Writes something the notebook produced into its own folder, with the writers
+   *  a chat already has. */
+  saveNotebookOutput: (notebookId: string, title: string, format: string, content: string) =>
+    invoke<NotebookOutputRow>("save_notebook_output", { notebookId, title, format, content }),
+  /** Carries the sources and the outputs, and deliberately not the questions. */
+  copyNotebook: (id: string) => invoke<NotebookRow>("copy_notebook", { id }),
 
   /** Design systems: their own store and their own switch, so neither list has
    *  to know the other one to avoid switching it off. */
