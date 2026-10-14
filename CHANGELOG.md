@@ -12,7 +12,7 @@ file to that shape — including that a section is marked `unreleased` only whil
 there is unreleased work, so a released top section is as valid as an unreleased
 one.
 
-## 0.5.0 — unreleased
+## 0.5.0 — 2026-10-14
 
 - A notebook can build a **fact table** across its sources and export it as a spreadsheet: one row per fact with the source it came from in the last column, and nothing is written at all unless every row names a source the notebook holds
 - A notebook can be asked for the things a source set is actually for: flashcards, a quiz with an answer key, a briefing, a timeline, a study guide and a mind map — each written from its sources, cited like any other answer, and saved as a document in the notebook's folder
