@@ -135,7 +135,7 @@ export interface Count {
 export interface Generator {
   id: string;
   title: string;
-  /** `document` | `table` */
+  /** `document` | `table` | `set` | `exam` */
   action: string;
   /** The formats it writes, the first being the default — empty when it writes no
    *  file, which is how the menu stops claiming a format it does not produce. */

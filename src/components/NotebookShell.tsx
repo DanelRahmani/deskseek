@@ -700,6 +700,11 @@ function whatWasMade(entry: Generator, made: Made): string {
   if (set) {
     return `Made "${set.title}" — ${quantities(set.items.length, set.kind)}, under Study. Take it whenever you like.`;
   }
+  // More than one file is worth naming: the exam's second document is the answers,
+  // and a reader who is not told it is there will look for them on the paper.
+  if (made.outputs.length > 1) {
+    return `${made.outputs.map((one) => `"${one.title}"`).join(" and ")} — both in the notebook's folder as .${entry.formats[0]}.`;
+  }
   return entry.action === "table"
     ? `${entry.title} — every row cites a source, exported as a .${entry.formats[0]}.`
     : `${entry.title} — written into the notebook's folder as a .${entry.formats[0]}.`;

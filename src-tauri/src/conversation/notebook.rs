@@ -595,6 +595,9 @@ pub enum Action {
     /// format because there is no file, which is what the menu reads to stop
     /// promising one.
     Set,
+    /// Two documents rather than one — a paper, and the key to it — which is why the
+    /// plan carries a second question.
+    Exam,
 }
 
 /// How many of something an entry can be asked for.
@@ -648,8 +651,8 @@ pub struct Generator {
 }
 
 /// What the menu offers, in the order a reader wants it: the study shapes, the
-/// summary shapes, and the table.
-pub const GENERATORS: [Generator; 7] = [
+/// summary shapes, the exam, and the table.
+pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "flashcards",
         title: "Flashcards",
@@ -742,6 +745,32 @@ pub const GENERATORS: [Generator; 7] = [
         open: None,
     },
     Generator {
+        id: "exam",
+        title: "Exam",
+        action: Action::Exam,
+        // Word or PDF, chosen in the form: a paper is something you print and hand
+        // out, and which of the two you hand out is the reader's call.
+        formats: &["docx", "pdf"],
+        prompt: "Write an exam paper on these sources, to be printed and sat. Number the questions \
+                 and letter the options A to D. The paper carries no answers anywhere — no key, no \
+                 asterisk, no hint — because the key is written separately, and no citations \
+                 either, because they belong on the key rather than on the paper a reader is \
+                 sitting. Cover what the sources actually say, and leave out a question they cannot \
+                 settle rather than inventing it.",
+        count: Some(Count {
+            noun: "multiple-choice questions",
+            default: 40,
+            min: 1,
+            max: 60,
+        }),
+        open: Some(Count {
+            noun: "open questions",
+            default: 0,
+            min: 0,
+            max: 20,
+        }),
+    },
+    Generator {
         id: "fact-table",
         title: "Fact table",
         // In the menu like everything else now that every entry takes the same
@@ -770,6 +799,18 @@ pub fn generator(id: &str) -> Option<&'static Generator> {
 /// Every field optional, because the form draws only the ones an entry declares —
 /// and `Default` so a caller that asks for nothing at all is the plain question
 /// the entry's own prompt describes.
+/// The second question of an entry that makes two documents: the key to the paper
+/// it has just written.
+///
+/// Short, and it does not repeat the questions, because the paper is the *previous
+/// turn of the notebook's own conversation* — which is what that conversation is for.
+/// It carries no counts either: it asks for the same questions in the same order,
+/// which the paper the model just wrote already states.
+const EXAM_KEY_PROMPT: &str = "\
+Now write the answer key for the paper above, as a document of its own. One line per question, in \
+the same order and with the same numbers, saying which option is right and why in a sentence. Cite \
+the source of each answer as `[name#Heading]`, and do not repeat the questions themselves.";
+
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Options {
@@ -797,6 +838,9 @@ pub struct Plan {
     /// The sources it may read, by name — empty for "everything switched on".
     pub sources: Vec<String>,
     pub question: String,
+    /// The second ask, for the entry that makes two documents: the exam's key. `None`
+    /// everywhere else, and read by the command rather than ignored.
+    pub then: Option<String>,
 }
 
 /// One entry's request, checked against the notebook — or the reason it is not.
@@ -839,12 +883,30 @@ pub fn plan(entry: &'static Generator, options: &Options, held: &[String]) -> Re
         sources.push(found.clone());
     }
     let question = question_for(entry, count, open, &sources, &options.steer);
+    let then = follow_up_for(entry, open);
     Ok(Plan {
         entry,
         format,
         sources,
         question,
+        then,
     })
+}
+
+/// The second ask, for the entry that makes two documents.
+fn follow_up_for(entry: &Generator, open: Option<u32>) -> Option<String> {
+    if entry.action != Action::Exam {
+        return None;
+    }
+    let mut out = String::from(EXAM_KEY_PROMPT);
+    if let (Some(open), Some(slot)) = (open, entry.open) {
+        out.push_str(&format!(
+            "\n\nThen give a model answer for each of the {open} {}. Each one is worth a mark of its \
+             own, and none of them is answered by choosing.",
+            slot.noun
+        ));
+    }
+    Some(out)
 }
 
 /// A number an entry declares a field for, inside that field's own bounds.
@@ -1446,6 +1508,30 @@ That is everything the sources settle.";
                     );
                     assert!(entry.count.is_some(), "{} has no number to pass", entry.id);
                 }
+                // An exam is two documents, both written by the same writer, so both
+                // of its formats have to be ones that writer takes — and the paper may
+                // not carry an answer anywhere, because the key is a document of its
+                // own.
+                Action::Exam => {
+                    assert!(!entry.formats.is_empty(), "{} writes nothing at all", entry.id);
+                    for format in entry.formats {
+                        assert!(
+                            crate::tools::docs::DOC_FORMATS.contains(format),
+                            "{} names the format {format}",
+                            entry.id
+                        );
+                    }
+                    assert!(
+                        entry.prompt.contains("no answers anywhere"),
+                        "{} does not keep the answers off the paper",
+                        entry.id
+                    );
+                    assert!(
+                        entry.count.is_some() && entry.open.is_some(),
+                        "{} declares only one of its two numbers",
+                        entry.id
+                    );
+                }
             }
             assert!(!entry.title.trim().is_empty(), "{} has no title", entry.id);
             assert!(!entry.prompt.trim().is_empty(), "{} asks for nothing", entry.id);
@@ -1750,6 +1836,77 @@ That is everything the sources settle.";
             })),
             "a set past the cap is refused"
         );
+    }
+
+    #[test]
+    fn an_exam_is_a_paper_and_a_key_and_the_paper_carries_no_answers() {
+        let held = vec!["Macro I.docx".to_string()];
+        let exam = generator("exam").unwrap();
+
+        // The defaults are the whole request: forty questions, and no open ones.
+        assert_eq!(exam.count.unwrap().default, 40);
+        assert_eq!(exam.open.unwrap().default, 0);
+
+        // Nothing touched: forty multiple-choice questions, no open ones, and a second
+        // ask that refers to the paper rather than repeating it.
+        let asked = plan(exam, &Options::default(), &held).unwrap();
+        assert_eq!(asked.format, "docx");
+        assert!(
+            asked.question.contains("Make exactly 40 multiple-choice questions"),
+            "{}",
+            asked.question
+        );
+        assert!(
+            !asked.question.contains("open question"),
+            "no open questions were asked for: {}",
+            asked.question
+        );
+        let key = asked.then.as_deref().expect("an exam has a key to write");
+        assert!(key.contains("answer key"), "{key}");
+        assert!(key.contains("the paper above"), "{key}");
+        assert!(
+            !key.contains("open question"),
+            "a key for a paper with no open questions must not ask for one: {key}"
+        );
+        assert!(
+            !key.contains("Make exactly"),
+            "the key answers the paper's numbers, not numbers of its own: {key}"
+        );
+
+        // Open questions bring a sentence to both halves: the paper asks for them, and
+        // the key answers them.
+        let with_open = plan(
+            exam,
+            &Options {
+                count: Some(12),
+                open: Some(5),
+                ..Default::default()
+            },
+            &held,
+        )
+        .unwrap();
+        assert!(
+            with_open.question.contains("Make exactly 12 multiple-choice questions"),
+            "{}",
+            with_open.question
+        );
+        assert!(
+            with_open.question.contains("add exactly 5 open questions"),
+            "{}",
+            with_open.question
+        );
+        let key = with_open.then.as_deref().unwrap();
+        assert!(key.contains("each of the 5 open questions"), "{key}");
+
+        // No other entry makes a second document, which is what keeps `then` honest
+        // rather than a field every entry carries and none of them uses.
+        for entry in GENERATORS.iter().filter(|one| one.id != "exam") {
+            assert!(
+                plan(entry, &Options::default(), &held).unwrap().then.is_none(),
+                "{} makes a second document nobody asked for",
+                entry.id
+            );
+        }
     }
 
     #[test]

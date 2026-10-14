@@ -451,6 +451,14 @@ the parts only a person can see.
       options — and the answer marked right is still the right answer wherever it lands
 - [ ] *Start again* deals a new order rather than the one just worked through, and a flashcard set
       shuffles its cards the same way
+- [ ] *Exam* puts **two** documents under *Outputs* — a paper and its answer key — and the paper
+      carries no answers, no asterisk and no hint anywhere in it
+- [ ] The exam's defaults are 40 multiple-choice and 0 open questions out of the box, and changing
+      either changes what the paper asks for and what the key answers
+- [ ] Open questions appear on the paper **and** are answered in the key when the number is not zero,
+      and appear nowhere when it is zero
+- [ ] The chosen format is the file that lands: `.docx` opens in Word, `.pdf` opens in a reader, and
+      both are named so the paper and the key can be told apart at a glance
 - [ ] A quiz item whose source has since been removed shows the source as gone rather than naming a
       file that is not there
       (the spend panel shows no new `Notebook digests` row)

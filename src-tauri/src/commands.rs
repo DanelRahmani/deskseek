@@ -2056,6 +2056,35 @@ pub async fn run_notebook_entry(
                 sets,
             }
         }
+        // Two documents rather than one: the paper, and then the key to it. The key's
+        // ask is short because the paper is the *previous turn of this notebook's own
+        // conversation* — which is what that conversation is for — and it is a separate
+        // ask rather than a second half of one because the paper has to carry no
+        // answers at all.
+        Action::Exam => {
+            let then = plan.then.as_deref().ok_or("an exam needs its key question")?;
+            let paper = write_output(
+                &state,
+                &notebook_id,
+                "Exam paper",
+                &plan.format,
+                &asked.answer.content,
+            )
+            .await?;
+            let key = notebook::ask(&state, &notebook_id, then, &plan.sources).await?;
+            let answers = write_output(
+                &state,
+                &notebook_id,
+                "Exam answer key",
+                &plan.format,
+                &key.answer.content,
+            )
+            .await?;
+            Made {
+                outputs: vec![paper, answers],
+                sets: Vec::new(),
+            }
+        }
     };
     Ok(made)
 }

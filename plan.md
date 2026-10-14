@@ -2714,7 +2714,7 @@ the app already has, and a script asserting a `<p>` is not a test. Its end-to-en
 
 ---
 
-## Phase 15: The Make column can be asked for something specific (15.1 built, 15.2–15.4 not yet)
+## Phase 15: The Make column can be asked for something specific ✅ done
 
 Asked for by the owner straight after using 0.6.0's study sets, and three things were plain the moment a
 real quiz came back:
@@ -2739,9 +2739,9 @@ Flashcards become the interactive set with no file at all** (a printable version
 in the ask box, and the exam below *is* the printed path), and **the exam's open questions are a number
 defaulting to 0** rather than a checkbox that adds a fixed block. Neither adds a dependency.
 
-**15.1 is built and 15.2–15.4 are not.** The rule at the top of this file is that a ✅ means the Stop
-is met and the Test runs in the gate, so 15.1 carries one and the other three do not — their Test lines
-still say what a check *will* be.
+**All four items are built, and each was ticked only once its own Stop was met** — the rule at the top
+of this file is that a ✅ means the Test runs in the gate, so none carries one before its gate was green
+and its own falsification had failed the right check on purpose.
 
 ### 15.1 [M] Every entry can be asked for something specific ✅
 - **Why**: the reader should not have to start a whole second turn to say "twenty questions, only the
@@ -2882,11 +2882,13 @@ still say what a check *will* be.
   caught before the phase did.
 - **Stop**: taking the same set twice does not ask it in the same order.
 
-### 15.4 [M] An exam, as a paper and a key
+### 15.4 [M] An exam, as a paper and a key ✅
 - **Why**: the owner's actual need — forty multiple-choice questions to print, with the answers on a
   separate sheet so the paper can be handed out.
-- **Files**: `conversation/notebook.rs` (the entry, the two questions, the two documents);
-  `commands.rs`; `src/api.ts`, `src/types.ts`; `src/components/NotebookShell.tsx`.
+- **Files**: `conversation/notebook.rs` (the entry, `Action::Exam`, `EXAM_KEY_PROMPT`, `follow_up_for`,
+  `Plan.then`); `commands.rs` (the two-ask arm); `src/components/NotebookShell.tsx` (`whatWasMade`
+  naming both documents); `src/types.ts` (the action vocabulary); `CHANGELOG.md`, `README.md`,
+  `ARCHITECTURE.md`, `docs/E2E-CHECKLIST.md`; `plan.md`. No new command, no new file, no dependency.
 - **Shape**: a seventh entry, `exam`, whose defaults are the ones asked for — **40 questions, 0 open,
   `.docx`** (`.pdf` offered beside it). Pressing it runs **two asks rather than one**: the paper, whose
   prompt says there are no answers anywhere in it, and then the key, whose question is short because the
@@ -2894,10 +2896,36 @@ still say what a check *will* be.
   for. Two documents land under *Outputs*, the second named so the two can be told apart at a glance.
   Open questions are added to the paper and answered in the key only when their number is not zero. Both
   counts are stated in one place, so they cannot be stated twice.
-- **Test**: the two questions come from one function and the test holds them (the paper asks for no
-  answers; the key's refers to the paper just written and asks for no new questions; both carry the right
-  numbers; no open-questions wording appears when the count is 0), plus the entry's own defaults, because
-  "40 by standard" is the whole request.
+- **Test**: `cargo test` 481 → **482**, no warnings.
+  `an_exam_is_a_paper_and_a_key_and_the_paper_carries_no_answers` is the item's own rule: the defaults
+  are asserted as the defaults (**40**, and **0**) because "forty by standard" is the whole request; an
+  untouched form asks for forty multiple-choice questions, asks for no open questions, and builds a
+  second question that refers to "the paper above" and asks for the key rather than for more questions;
+  a key with no open questions must not so much as mention them, and a key must not carry a count of
+  its own because it is written to the paper's numbers; with five open questions the sentence appears
+  in **both** halves — the paper asks for them, the key answers them; and **no other entry makes a
+  second document**, which is what keeps `then` a field one entry carries rather than one every entry
+  ignores. The menu test's `Action::Exam` arm holds both formats to the writer that has to take them,
+  holds the paper to carrying no answers, and holds the entry to declaring both of its numbers.
+  `npm run typecheck`, `npm run check` (19 scripts) and `npm run build` are clean.
+  **Falsified**: never building the key question (`if entry.action != Action::Exam` → `if true`), a
+  one-line needle confirmed on disk and restored afterwards, fails the test — `MUT=101`,
+  `test result: FAILED. 0 passed; 1 failed`, `panicked at src\conversation\notebook.rs:1864:41: an exam
+  has a key to write` — which is an exam whose answers never arrive. Restoring passes with the whole
+  suite green at **482 passed; 0 failed**.
+  **Five deviations, said out loud**: the key's question carries **no counts** where the plan said both
+  halves would carry them, because it asks for the same questions in the same order and the paper has
+  just stated the numbers — so it is a constant plus one conditional sentence rather than a rebuilt
+  question; the paper is told to carry **no citations either**, which the plan did not say: a citation in
+  the margin is the answer's neighbour because it says where the answer is, so the paper has neither and
+  the exam takes its own arm in the menu test rather than sharing the document rule about citations; the
+  two outputs are named **"Exam paper" and "Exam answer key"** by constant rather than derived from the
+  entry's title, which would have produced "Exam exam" — and the window names both in the status line,
+  because a reader who is not told the key exists will look for the answers on the paper; the exam is
+  **not** bounded by `MAX_STUDY_ITEMS` (a set's cap of 40), because a paper of sixty questions is a
+  paper and the entry declares its own ceiling of 60 with the open list capped at 20; and the second ask
+  rests on one assumption worth naming — the paper travels as the previous turn of the notebook's own
+  conversation, which holds the last eight messages, so the key is written to a paper it can still see.
 - **Stop**: pressing Exam produces a paper and its key as two documents.
 
 ---

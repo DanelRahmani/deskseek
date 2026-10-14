@@ -308,8 +308,10 @@ Both sections are functional:
     *Read* opens the whole thing beside the facts the rail cannot hold — where the file came from, the
     copy the notebook keeps, how much text was read out of it, and when it was described
   - **What it can make**: a briefing, a timeline, a study guide and a mind map, each one a grounded
-    question in that shape, written into the notebook's folder as a `.md` or `.docx`, plus a fact
-    table as a `.xlsx` — and the two study shapes below, which are **sets rather than files**. The
+    question in that shape, written into the notebook's folder as a `.md` or `.docx`; an **exam**,
+    which is a paper and its answer key as **two documents** — 40 multiple-choice questions by default,
+    open questions on request, `.docx` or `.pdf`, and no answers anywhere on the paper itself; and a
+    fact table as a `.xlsx` — plus the two study shapes below, which are **sets rather than files**. The
     list is Rust rather than TypeScript, so the menu, the prompts and the form each press opens are
     one list; a mind map is a `mermaid` fence inside the document rather than a second renderer, and
     a quiz is no longer a worksheet with a key at the end — it is the thing you take
