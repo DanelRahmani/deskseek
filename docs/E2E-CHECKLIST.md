@@ -417,8 +417,12 @@ the parts only a person can see.
       notebook's conversation with its citations
 - [ ] A source that is switched off is not used by anything the notebook makes, and the model is
       told in the catalogue only about the ones that are on
-- [ ] *Notebooks* in the sidebar opens a notebook — a new one the first time — in the focused pane,
-      and `/notebook` does the same
+- [ ] *Notebooks* is a **third segment** beside *Chat* and *Coding*, listing every notebook with the one
+      open in the focused pane marked, and picking a row opens that one there
+- [ ] *+ New notebook* makes a **second** notebook and opens it in the focused pane, and both are in the
+      list with the new one marked — `/notebook` shows this list rather than opening a notebook by itself
+- [ ] The message search box is not shown while the notebooks are listed, and switching back to *Chat*
+      or *Coding* returns to the section you were in rather than resetting it
 - [ ] A notebook pane sits beside a chat (split), both answer, and both are still there after a
       restart — with the notebook showing its sources and its conversation
 - [ ] Deleting a notebook while it is open closes its pane rather than leaving a blank one, and a

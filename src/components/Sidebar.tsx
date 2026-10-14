@@ -1,11 +1,12 @@
 import { useRef, useState } from "react";
-import type { ChatRow, MessageHit, SectionKind } from "../types";
+import type { ChatRow, MessageHit, NotebookRow, SidebarView } from "../types";
 import { searchTerms, snippetParts } from "../lib/snippet";
 import { Icon } from "./Icon";
 
 interface Props {
-  kind: SectionKind;
-  onKind: (kind: SectionKind) => void;
+  /** What the sidebar is listing: a section, or the notebooks view. */
+  view: SidebarView;
+  onView: (view: SidebarView) => void;
   chats: ChatRow[];
   activeId: string | null;
   onSelect: (id: string) => void;
@@ -24,8 +25,12 @@ interface Props {
   /** Opens the Customise hub: skills, connectors, instructions, design systems. */
   onCustomise: () => void;
   onProjects: () => void;
-  /** Opens a notebook in the focused pane — the most recent one, or a new one. */
-  onNotebooks: () => void;
+  /** The notebooks this app holds, as the list the notebooks view draws. */
+  notebooks: NotebookRow[];
+  /** Open one of them in the focused pane. */
+  onOpenNotebook: (id: string) => void;
+  /** Make a new one and open it — what the sidebar's own button could never do. */
+  onNewNotebook: () => void;
   onArtifacts: () => void;
   onScheduled: () => void;
   /** What the last turns cost: the spend panel. */
@@ -45,14 +50,15 @@ interface Props {
   onMoreHits: (query: string) => void;
 }
 
-const SECTIONS: { id: SectionKind; label: string }[] = [
+const SECTIONS: { id: SidebarView; label: string }[] = [
   { id: "chat", label: "Chat" },
   { id: "coding", label: "Coding" },
+  { id: "notebooks", label: "Notebooks" },
 ];
 
 export function Sidebar({
-  kind,
-  onKind,
+  view,
+  onView,
   chats,
   activeId,
   onSelect,
@@ -66,7 +72,9 @@ export function Sidebar({
   onMemory,
   onCustomise,
   onProjects,
-  onNotebooks,
+  notebooks,
+  onOpenNotebook,
+  onNewNotebook,
   onArtifacts,
   onScheduled,
   onSpend,
@@ -147,13 +155,13 @@ export function Sidebar({
           <span className="text-sm font-semibold tracking-tight">DeskSeek</span>
         </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-1 rounded-lg bg-neutral-950/70 p-1">
+        <div className="mb-3 grid grid-cols-3 gap-1 rounded-lg bg-neutral-950/70 p-1">
           {SECTIONS.map((s) => (
             <button
               key={s.id}
-              onClick={() => onKind(s.id)}
+              onClick={() => onView(s.id)}
               className={`rounded-lg px-2 py-1.5 text-[13px] font-medium transition duration-150 ${
-                kind === s.id
+                view === s.id
                   ? "bg-neutral-800 text-neutral-100"
                   : "text-neutral-400 hover:text-neutral-200"
               }`}
@@ -164,25 +172,60 @@ export function Sidebar({
         </div>
 
         <button
-          onClick={onNew}
+          onClick={view === "notebooks" ? onNewNotebook : onNew}
           className="mb-2 w-full rounded-xl bg-neutral-800/70 px-3 py-2 text-left text-[13px] text-neutral-200 transition duration-150 hover:bg-neutral-800"
         >
-          + New {kind === "coding" ? "coding task" : "chat"}
+          + New {view === "coding" ? "coding task" : view === "notebooks" ? "notebook" : "chat"}
         </button>
       </div>
 
-      <div className="px-3 pb-2">
-        <input
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            onSearch(e.target.value);
-          }}
-          placeholder="Search…"
-          className="w-full rounded-lg border border-neutral-800/80 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-hidden transition duration-150 focus:border-neutral-600"
-        />
-      </div>
+      {/* Searching messages has nothing to say about a list of notebooks, so the box
+          belongs to the chat list rather than to the sidebar as a whole. */}
+      {view !== "notebooks" && (
+        <div className="px-3 pb-2">
+          <input
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              onSearch(e.target.value);
+            }}
+            placeholder="Search…"
+            className="w-full rounded-lg border border-neutral-800/80 bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-200 outline-hidden transition duration-150 focus:border-neutral-600"
+          />
+        </div>
+      )}
 
+      {/* One slot, two lists. The notebooks view is a peer of Chat and Coding rather
+          than a sixth item in the list of settings, because it is where a notebook is
+          *chosen* — and the one already open in the focused pane is marked, so the list
+          and the pane cannot disagree about which one that is. */}
+      {view === "notebooks" && (
+        <nav className="flex-1 overflow-y-auto px-3 pb-2">
+          {notebooks.length === 0 && (
+            <p className="px-2 py-2 text-[12px] leading-relaxed text-neutral-500">
+              No notebooks yet. New notebook makes one: a place holding its own sources and the
+              questions asked of them.
+            </p>
+          )}
+          {notebooks.map((book) => (
+            <button
+              key={book.id}
+              onClick={() => onOpenNotebook(book.id)}
+              title={`Open "${book.title}"`}
+              className={`mb-1 flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] transition duration-150 ${
+                book.id === activeId
+                  ? "bg-neutral-800/70 text-neutral-100"
+                  : "text-neutral-300 hover:bg-neutral-800/50"
+              }`}
+            >
+              <Icon name="book" size={13} className="shrink-0 text-sky-400" />
+              <span className="min-w-0 flex-1 truncate">{book.title}</span>
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {view !== "notebooks" && (
       <nav className="flex-1 overflow-y-auto px-3 pb-2">
         {query.trim() && hits.length > 0 && (
           <div className="mb-2">
@@ -352,6 +395,7 @@ export function Sidebar({
           </div>
         )}
       </nav>
+      )}
 
       <div className="space-y-1 border-t border-neutral-800 p-3">
         <button
@@ -365,12 +409,6 @@ export function Sidebar({
           className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
         >
           Projects
-        </button>
-        <button
-          onClick={onNotebooks}
-          className="w-full rounded-md px-2 py-1.5 text-left text-sm text-neutral-400 transition duration-150 hover:bg-neutral-800/60 hover:text-neutral-200"
-        >
-          Notebooks
         </button>
         <button
           onClick={onArtifacts}

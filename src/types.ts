@@ -1,5 +1,14 @@
 export type SectionKind = "chat" | "coding";
 
+/**
+ * What the sidebar is listing.
+ *
+ * `chat` and `coding` are the sections — what a new conversation is *for* — and
+ * `notebooks` is a view of the same slot rather than a third kind of chat: a
+ * notebook is not a conversation with a different toolset, it is its own surface.
+ */
+export type SidebarView = SectionKind | "notebooks";
+
 export interface Attachment {
   name: string;
   mime: string;

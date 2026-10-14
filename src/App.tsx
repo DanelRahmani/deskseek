@@ -135,6 +135,9 @@ export default function App() {
   const [keyMask, setKeyMask] = useState<string | null>(null);
   const [documentsDir, setDocumentsDir] = useState("");
   const [kind, setKind] = useState<SectionKind>("chat");
+  // Whether the sidebar is listing notebooks instead of conversations. A *view* rather
+  // than a section: opening a notebook does not make the composer a notebook's.
+  const [notebooksView, setNotebooksView] = useState(false);
   const [chats, setChats] = useState<ChatRow[]>([]);
   // Every chat seen so far, by id: tabs and panes outlive the sidebar's current
   // section, so they need rows of their own to render from.
@@ -311,6 +314,25 @@ export default function App() {
     },
     [notebooksById, showChat],
   );
+
+  /**
+   * A notebook where there was none.
+   *
+   * `openNotebook` opens one that is already open, which is right for a button that
+   * says *Notebooks* and wrong for one that says *New*: the whole reason this exists is
+   * that nothing in the app could make a second notebook. The name counts the ones that
+   * exist, so a list of them can be told apart before each is renamed.
+   */
+  const newNotebook = useCallback(async () => {
+    try {
+      const books = await api.listNotebooks().catch(() => [] as NotebookRow[]);
+      const book = await api.createNotebook(`Notebook ${books.length + 1}`);
+      setNotebooksById((prev) => ({ ...prev, [book.id]: book }));
+      showChat(book.id);
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [showChat]);
 
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
@@ -822,7 +844,9 @@ export default function App() {
             return;
           case "/notebook":
           case "/notebooks":
-            await openNotebook();
+            // The list, not a notebook: opening one for them is how a second notebook
+            // stayed invisible.
+            setNotebooksView(true);
             return;
           case "/artifacts":
             setPanel((current) => (current === "artifacts" ? "none" : "artifacts"));
@@ -1822,8 +1846,13 @@ export default function App() {
   return (
     <div className="flex h-full">
       <Sidebar
-        kind={kind}
-        onKind={setKind}
+        view={notebooksView ? "notebooks" : kind}
+        onView={(next) => {
+          setNotebooksView(next === "notebooks");
+          // The section is left alone when notebooks are showing: a notebook is not a
+          // third kind of chat, so coming back to Chat returns to the one you were in.
+          if (next !== "notebooks") setKind(next);
+        }}
         chats={chats}
         activeId={activeId}
         hits={hits}
@@ -1843,7 +1872,9 @@ export default function App() {
         onProjects={() =>
           setPanel((current) => (current === "projects" ? "none" : "projects"))
         }
-        onNotebooks={() => void openNotebook()}
+        notebooks={Object.values(notebooksById).sort((a, b) => b.updatedAt - a.updatedAt)}
+        onOpenNotebook={(id) => void openNotebook(id)}
+        onNewNotebook={() => void newNotebook()}
         onArtifacts={() =>
           setPanel((current) => (current === "artifacts" ? "none" : "artifacts"))
         }

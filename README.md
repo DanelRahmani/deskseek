@@ -294,9 +294,10 @@ Both sections are functional:
   what it contains, and switchable on or off. The model is sent that *catalogue* — the names and
   what each holds — and not the documents, so a notebook of forty sources costs what one question
   costs rather than what forty documents cost; answers cite the source they used by name.
-  *Notebooks* in the sidebar opens one, and it takes a pane of its own, so it can sit beside a
-  chat and comes back with it on the next launch. Its sources are files you can open, so a changed
-  one is reported as stale rather than silently reused, and *Copy* carries the sources and the
+  *Notebooks* is a segment beside *Chat* and *Coding*: it lists every notebook with the one you are in
+  marked, and *+ New notebook* makes another and opens it. A notebook takes a pane of its own, so it can
+  sit beside a chat and comes back with it on the next launch. Its sources are files you can open, so a
+  changed one is reported as stale rather than silently reused, and *Copy* carries the sources and the
   outputs while deliberately leaving the conversation behind
   - Honest limits: the line saying what a source contains is written once when it is added, and a
     document it describes as "40 pages" is summarised rather than read whole into every question.

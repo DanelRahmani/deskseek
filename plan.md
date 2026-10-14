@@ -3002,7 +3002,7 @@ means — which is how a paper comes out as one undifferentiated wall.
 
 ---
 
-## Phase 17: The paper, the rail, and getting to a second notebook (planned 2026-10-14, **not built**)
+## Phase 17: The paper, the rail, and getting to a second notebook (planned 2026-10-14, ✅ **all three built**)
 
 From the owner's second look at a real paper and a real notebook:
 
@@ -3018,8 +3018,7 @@ open — is pushed off the bottom of the window.
 button opens *a* notebook: the most recent one open, else the first, else a new one. Nothing lists them and
 nothing makes one, so a second notebook is unreachable by any route at all.
 
-17.1 is built and has its ✅ and its record; 17.2 and 17.3 are not, so their Test lines still say what a check
-*will* be.
+All three items are built and have their ✅ and their records.
 
 ### 17.1 [M] A cover, and options that sit under their question ✅
 - **Why**: a paper handed to someone should say what it is, and its options should not read as more
@@ -3114,13 +3113,15 @@ nothing makes one, so a second notebook is unreachable by any route at all.
 - **Stop**: with eight menu entries, four sets and two documents, all three headings are on screen and
   every output can be reached without a scroll fight.
 
-### 17.3 [M] A notebooks view, beside Chat and Coding
+### 17.3 [M] A notebooks view, beside Chat and Coding ✅
 - **Why**: the sidebar's *Notebooks* button is a sixth item in a list of settings, and it opens one
   notebook without ever showing that there are others — which is why the owner could not find out how to
   make a second one.
-- **Files**: `src/components/Sidebar.tsx` (a third segment and a notebook list); `src/App.tsx` (the view
-  state, the list, and one command that makes a notebook from it); `src/api.ts` (nothing new — the three
-  commands exist); `CHANGELOG.md`, `README.md`, `docs/E2E-CHECKLIST.md`; `plan.md`.
+- **Files**: `src/types.ts` (`SidebarView`); `src/components/Sidebar.tsx` (the third segment, the New
+  button, the notebook list, the search box and the chat list moved behind the view, and the settings-list
+  `Notebooks` button deleted); `src/App.tsx` (`notebooksView`, `newNotebook`, the `onView` wiring, and
+  `/notebook` showing the list); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md` (two rule rows),
+  `docs/E2E-CHECKLIST.md`; `plan.md`.
 - **Shape**: the segmented control becomes three — **Chat | Coding | Notebooks** — where the third shows
   notebooks *in the sidebar* rather than in a panel, which is what makes it a peer of the other two
   rather than a setting: the list of notebooks where the list of chats is, and **+ New notebook** where
@@ -3131,8 +3132,22 @@ nothing makes one, so a second notebook is unreachable by any route at all.
   section, and pressing Chat or Coding returns to the section you were in.
 - **Test**: `npm run check` — `shell.check.ts` already holds the shell's own rule about what a pane holds;
   what is new here is the view, so the check is the accessibility walk over the new list and buttons plus
-  `typecheck`, and the end-to-end line covers the rest. No new `.check.ts`: the rule this item adds is
-  "the list shows what exists", and the list is `listNotebooks()`'s answer rendered.
+  `typecheck`, and the end-to-end line covers the rest. **No new `.check.ts`, and that is a judgement
+  rather than an oversight**: the rule this item adds is "the list shows what exists", and the list *is*
+  `listNotebooks()`'s answer rendered — a script asserting that would be asserting that a map is a map.
+  The gate is `npm run typecheck`, all **19** checks (`a11y.check.ts` over **41** components, which now
+  walks a sidebar with three segments and a named button per notebook) and `npm run build` — green, with
+  `cargo test` deliberately skipped: no Rust file changed in this item.
+- **Four decisions worth writing down**: the settings-list *Notebooks* button is **deleted** rather than
+  kept beside the segment, because two ways into one thing is how the second way becomes the stale one and
+  it was the way that could not make a notebook; `/notebook` **shows the list** instead of opening a
+  notebook, which is the same complaint in command form — silently opening one is what hid the others;
+  the message search box is **not drawn** while the notebooks are listed, because a search for what was
+  said in a chat has nothing to say about a list of notebooks; and a new notebook is **named by the count**
+  (`Notebook 2`), because a list of rows all called "New notebook" is a list you cannot choose from — the
+  pane's own title field is where it gets a real name. The *section* is deliberately left alone by the
+  third segment: a notebook is its own surface rather than a third kind of chat, so returning to *Chat* or
+  *Coding* comes back to the section you were in rather than resetting it.
 - **Stop**: pressing Notebooks shows every notebook, marks the one open, and makes a second one in one
   press.
 
