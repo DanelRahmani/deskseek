@@ -2906,7 +2906,9 @@ and its own falsification had failed the right check on purpose.
   in **both** halves — the paper asks for them, the key answers them; and **no other entry makes a
   second document**, which is what keeps `then` a field one entry carries rather than one every entry
   ignores. The menu test's `Action::Exam` arm holds both formats to the writer that has to take them,
-  holds the paper to carrying no answers, and holds the entry to declaring both of its numbers.
+  holds the paper to carrying no answers, holds the paper to **varying which letter is the right
+  answer** — the instruction 15.3 removed from the quiz entry on the promise that it belonged here,
+  where nothing can shuffle for it — and holds the entry to declaring both of its numbers.
   `npm run typecheck`, `npm run check` (19 scripts) and `npm run build` are clean.
   **Falsified**: never building the key question (`if entry.action != Action::Exam` → `if true`), a
   one-line needle confirmed on disk and restored afterwards, fails the test — `MUT=101`,

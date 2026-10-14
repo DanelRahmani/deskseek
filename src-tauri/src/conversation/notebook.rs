@@ -752,7 +752,9 @@ pub const GENERATORS: [Generator; 8] = [
         // out, and which of the two you hand out is the reader's call.
         formats: &["docx", "pdf"],
         prompt: "Write an exam paper on these sources, to be printed and sat. Number the questions \
-                 and letter the options A to D. The paper carries no answers anywhere — no key, no \
+                 and letter the options A to D, and vary which letter is the right answer rather \
+                 than letting one letter be correct most of the time — a paper nothing can shuffle \
+                 has to vary in the writing. The paper carries no answers anywhere — no key, no \
                  asterisk, no hint — because the key is written separately, and no citations \
                  either, because they belong on the key rather than on the paper a reader is \
                  sitting. Cover what the sources actually say, and leave out a question they cannot \
@@ -1524,6 +1526,14 @@ That is everything the sources settle.";
                     assert!(
                         entry.prompt.contains("no answers anywhere"),
                         "{} does not keep the answers off the paper",
+                        entry.id
+                    );
+                    // Nothing shuffles a document's options, so the paper is the one
+                    // place the instruction to vary them has to be written down: a
+                    // paper whose right answer is always C is a paper with a strategy.
+                    assert!(
+                        entry.prompt.contains("vary which letter is the right answer"),
+                        "{} leaves the right answer in the same place every time",
                         entry.id
                     );
                     assert!(
