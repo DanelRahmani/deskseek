@@ -5,6 +5,7 @@ import { quantities } from "../lib/quiz";
 import { when } from "../lib/time";
 import { Icon, IconButton } from "./Icon";
 import { MakeDialog } from "./MakeDialog";
+import { MakePanel } from "./MakePanel";
 import { Markdown } from "./Markdown";
 import { StudySetDialog } from "./StudySetDialog";
 import type {
@@ -78,6 +79,8 @@ export function NotebookShell({
   const [taking, setTaking] = useState<StudySetRow | null>(null);
   /** The entry whose options are open, if one is. */
   const [making, setMaking] = useState<Generator | null>(null);
+  /** The panel offering the entries, while it is open. */
+  const [picking, setPicking] = useState(false);
 
   const load = useCallback(async () => {
     const next = await api.openNotebook(notebookId);
@@ -472,34 +475,20 @@ export function NotebookShell({
 
         {/* What it produced. */}
         <div className="flex w-56 shrink-0 flex-col border-l border-neutral-800/80">
-          <div className="flex items-center gap-1 border-b border-neutral-800/60 px-3 py-2">
-            <span className="flex-1 text-[12px] tracking-wide text-neutral-500 uppercase">
-              Make
-            </span>
-          </div>
-          {/* Each of the three lists has a ceiling and scrolls inside it, and none of
-              them is pinned: a menu that grows until the window runs out takes the
-              column with it, and the documents are at the bottom of it. */}
-          <div className="max-h-40 overflow-y-auto border-b border-neutral-800/60 p-2">
-            {generators.map((entry) => (
-              <button
-                key={entry.id}
-                onClick={() => setMaking(entry)}
-                disabled={busy}
-                className="mb-0.5 w-full rounded-lg px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
-              >
-                {entry.title}
-                {entry.formats.length > 0 && (
-                  // The format the entry really writes rather than a promise about
-                  // it: an entry that writes no file has none to name.
-                  <span className="ml-1 text-[11px] text-neutral-600">.{entry.formats[0]}</span>
-                )}
-              </button>
-            ))}
-            <p className="px-1 pt-1 text-[11px] leading-relaxed text-neutral-600">
-              Every entry opens a form first: how many, from which sources, and anything you want
-              it to aim at.
-            </p>
+          {/* What it can make, behind one button rather than under a heading: the rail
+              is 224 px, so eight rows of text sat above the two lists that also live
+              here and pushed the documents out of the window. The entries have a panel
+              of their own now, where each one has room to say what it makes. */}
+          <div className="shrink-0 border-b border-neutral-800/60 p-2">
+            <button
+              onClick={() => setPicking(true)}
+              disabled={busy}
+              className="flex w-full items-center gap-2 rounded-xl bg-sky-600 px-3 py-2 text-[13px] font-medium text-white transition duration-150 hover:bg-sky-500 disabled:opacity-40"
+            >
+              <Icon name="sparkle" size={14} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate text-left">Make something</span>
+              <Icon name="chevron" size={13} className="shrink-0 opacity-70" />
+            </button>
           </div>
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Study
@@ -567,6 +556,16 @@ export function NotebookShell({
       {reading && <SourceRead source={reading} onClose={() => setReading(null)} />}
       {taking && (
         <StudySetDialog set={taking} sources={sourceNames} onClose={() => setTaking(null)} />
+      )}
+      {picking && (
+        <MakePanel
+          entries={generators}
+          onPick={(entry) => {
+            setPicking(false);
+            setMaking(entry);
+          }}
+          onClose={() => setPicking(false)}
+        />
       )}
       {making && (
         <MakeDialog

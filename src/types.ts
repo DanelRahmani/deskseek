@@ -144,6 +144,9 @@ export interface Count {
 export interface Generator {
   id: string;
   title: string;
+  /** One line saying what it makes, for the tile that offers it: the entry's own
+   *  words, so a tile describes itself and nothing here captions an entry by name. */
+  note: string;
   /** `document` | `table` | `set` | `exam` */
   action: string;
   /** The formats it writes, the first being the default — empty when it writes no

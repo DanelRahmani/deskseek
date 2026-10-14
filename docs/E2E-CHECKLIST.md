@@ -394,6 +394,10 @@ the parts only a person can see.
       in Excel with the rows as a real table
 - [ ] A table answer whose citation column is fiddled with (a row naming a file that is not a
       source) writes **nothing** and says which row was wrong — the same for a source switched off
+- [ ] *Make something* is one accent-coloured button where the list of entries used to be: it opens a panel
+      of tiles, each tile says what it makes and the format it writes, and picking a tile closes the panel
+      and opens that entry's form. Escape and a click on the backdrop close it, and the rail is left showing
+      *Study* and *Outputs* rather than eight rows of menu
 - [ ] Each document entry in *Make* produces something — a briefing, a timeline, a study guide and a
       mind map — and each lands under *Outputs* as a `.md` or `.docx` that opens
 - [ ] *Quiz* and *Flashcards* name **no** format in the menu and write **no** file: the set appears

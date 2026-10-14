@@ -18,6 +18,7 @@ export type IconName =
   | "restore"
   | "split"
   | "book"
+  | "sparkle"
   | "close";
 
 const PATHS: Record<IconName, string> = {
@@ -33,6 +34,8 @@ const PATHS: Record<IconName, string> = {
   split: "M4 4.5h16a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-13a1 1 0 0 1 1-1ZM12 4.5v15",
   // An open book: two pages meeting at a spine.
   book: "M12 7.2C10.6 5.9 8.5 5.2 5.8 5.2H4.2v12.1h1.6c2.7 0 4.8.7 6.2 2 1.4-1.3 3.5-2 6.2-2h1.6V5.2h-1.6c-2.7 0-4.8.7-6.2 2ZM12 7.2v12.1",
+  // A four-pointed star: the sparkle that says "make something".
+  sparkle: "M12 3.5 13.8 9.2 19.5 11 13.8 12.8 12 18.5 10.2 12.8 4.5 11 10.2 9.2Z",
   close: "M6.5 6.5l11 11M17.5 6.5l-11 11",
 };
 

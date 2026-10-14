@@ -124,6 +124,7 @@ Changing behaviour in this app is usually changing one of these.
 | The paper's front page: the cover is the app's to write (the subject is the notebook's title, the date is now, the sources are the list this generation was scoped to), the break before it is the document reader's own line, and a title the model wrote anyway is dropped | `conversation/notebook.rs`, `commands.rs`, `tools/docs.rs` |
 | The sidebar's third view: notebooks are listed in the same slot the chats are, the *section* is left alone when they are showing, and the notebook open in the focused pane is the one the list marks | `src/App.tsx`, `src/components/Sidebar.tsx` |
 | The form the Make column opens, drawn from what an entry declares — so the window knows no entry by name | `src/components/MakeDialog.tsx` |
+| The panel the Make button opens: a chooser, not a second form — and why its bento spans and tints are lookups **with fallbacks**, so an entry added in Rust still gets a correct tile | `src/components/MakePanel.tsx`, `conversation/notebook.rs` |
 | What a study set is and what makes one usable — a quiz item's answer spelled exactly as one of its options, so the choice can be marked — and where the items live | `conversation/notebook.rs`, `store/db.rs` |
 | Which choice is right, what a half-finished set has scored, and what order it is dealt in: the window's half of the same feature, and nothing of its vocabulary | `src/lib/quiz.ts` |
 | Whether a finish becomes an OS toast | `notify.rs` |

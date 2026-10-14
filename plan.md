@@ -3153,6 +3153,102 @@ All three items are built and have their ✅ and their records.
 
 ---
 
+## Phase 18: The bento and the symbol (planned 2026-10-14, **not built**)
+
+**The thing you came to do is the least inviting control on the surface.** *Make* is a heading, eight plain text
+rows and a paragraph of explanation, wedged above two other lists in a 224 px column. Every entry gets one
+line and a `.docx` after its name, so what a briefing *is* has nowhere to be said — and the rail's job
+(the entries) looks like a menu of settings. The owner asked for a coloured button that opens a panel, and
+the panel is the room the entries never had: a **bento** of tiles, each one saying what it makes.
+
+**Every notebook looks like every other notebook.** The identity is a text title and the same open-book
+glyph in all of them, so a list of six is six identical rows. The owner asked for a **symbol** — an emoji —
+chosen from the common educational ones or from their own emoji keyboard.
+
+**And the name in the pane can disagree with the name in the list.** Renaming a notebook in its own header
+leaves the sidebar list and the tab strip showing the old title until something else re-reads the map: the
+list 17.3 added did not create that staleness, it made it visible.
+
+Nothing in this phase is built except 18.1, which has its ✅ and its record; 18.2's Test line still says what a
+check *will* be.
+
+### 18.1 [M] Make is a button, and it opens a bento panel ✅
+- **Why**: the entry you want should be the biggest, most inviting thing on the rail, and it should have
+  room to say what it makes.
+- **Files**: `src/components/MakePanel.tsx` (new — the panel and its two lookups);
+  `src/components/NotebookShell.tsx` (one button where the heading and eight rows were, plus the panel
+  among the dialogs); `src/components/Icon.tsx` (a `sparkle`: one union member and one path);
+  `src-tauri/src/conversation/notebook.rs` (a `note` on `Generator`, eight notes, and one assertion in the
+  menu test); `src/types.ts`; `docs/E2E-CHECKLIST.md`, `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`;
+  `plan.md`.
+- **Why**: the entry you want should be the biggest, most inviting thing on the rail, and it should have
+  room to say what it makes.
+- **Files**: `src/components/MakePanel.tsx` (new); `src/components/NotebookShell.tsx` (one button instead of
+  a heading and eight rows); `src/components/Icon.tsx` (a `sparkle`); `docs/E2E-CHECKLIST.md`,
+  `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`; `plan.md`.
+- **Shape**: one accent-coloured button — `bg-sky-600`, the same accent the *Ask* button already uses —
+  where the heading and its eight rows were, and it opens a dialog drawn the way Settings is (a centred
+  panel over a scrim, `role="dialog"`, `aria-modal`, Escape and the backdrop both close). Inside is a
+  **bento**: tiles of two sizes, tinted by what the entry *is* (a set, a document, a workbook, an exam), each
+  carrying the title, the format it writes and the count it will ask for — so the four kinds read at a glance
+  rather than as eight identical lines. Choosing a tile closes the panel and opens **the form that entry
+  already had**: the panel is a chooser, not a second form, and `MakeDialog` is untouched. The spans and
+  tints are lookup tables **with defaults** (`SPANS[id] ?? ""`), which is deliberate: an entry added in Rust
+  appears as a plain tile rather than not appearing at all, and a table TypeScript had to hold against
+  Rust's list is the drift `tray.check.ts` exists to catch — here it is not needed, because the fallback is
+  correct rather than merely quiet.
+- **Test**: `cargo test` stays at **490 passed** — no new test, because the rule this item adds to Rust is
+  one assertion inside the menu test that already walks every entry: `!entry.note.trim().is_empty()`, so an
+  entry without a line is a failed test rather than a blank tile. Then `npm run typecheck`, all **19** checks
+  and `npm run build`: `a11y.check.ts` now walks **42** components (the panel is the new one) and reports
+  the dialog named and modal, and `cargo test` ran in full because Rust did change. **Falsified**: emptying
+  the briefing's note fails exactly that assertion — `MUT=101`, `briefing has no note` at
+  `src\conversation\notebook.rs:1660:13`, `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured;
+  489 filtered out` — with the needle confirmed on disk first and the original confirmed back afterwards,
+  then the whole gate re-run green at `GATE OK`.
+- **Four things worth saying out loud**: the entries needed a **one-line description** to caption a tile, so
+  `Generator` gained `note` — the entry's own words in Rust, which is the difference between a panel that
+  *describes* the entries and one that captions them in TypeScript; **17.2's ceiling on the Make list is
+  superseded** rather than contradicted, because there is no Make list any more — the button is a fixed
+  height, so the rail now spends less of its column on the menu than the cap allowed, and `Study` keeps the
+  ceiling that mattered; the **header's own notebook `<select>` stays** beside the new sidebar list, since
+  it is how a reader switches without leaving the pane (and 18.2 gives it the symbol); and the panel is a
+  **chooser, not a second form** — `MakeDialog` is untouched, so the form is still drawn from what the entry
+  declares and a new entry still needs no TypeScript at all.
+- **Stop**: pressing *Make* opens a panel of tiles, every tile opens the same form it did before, and the
+  rail carries one button where eight rows and a paragraph used to be.
+
+### 18.2 [M] The notebook's symbol, and a name that keeps up
+- **Why**: a list of notebooks you cannot tell apart is not a list you can choose from, and the name in the
+  pane and the name in the list must be the same name.
+- **Files**: `store/db.rs` (the column, the guarded `ALTER`, the row, `set_notebook_symbol`, the copy path,
+  the round-trip and upgrade tests); `conversation/notebook.rs` (`symbol()` and its cap, with tests);
+  `commands.rs` and `lib.rs` (`set_notebook_symbol`); `src/api.ts`, `src/types.ts`;
+  `src/components/NotebookShell.tsx` (the picker, and telling the app when the row changed),
+  `src/components/Sidebar.tsx` (the symbol in the row); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
+  `docs/E2E-CHECKLIST.md`; `plan.md`.
+- **Shape**: a notebook's **symbol** is one emoji stored on its own row (`notebooks.symbol`, added to
+  `SCHEMA` **and** as a guarded `ALTER`, because an existing database has the table already), shown
+  wherever the name already is — the sidebar row, the header's own picker, the tab beside it. The picker is
+  a small popover on the pane's title: **the educational ones** as buttons (📚 📝 🎓 🧪 🧬 🧠 💡 🗺️ ⚖️ 🌍 🧮 🎼
+  — a dozen rather than a keyboard of three thousand), a **free-text field** for anything typed from the
+  operating system's own emoji keyboard, and *None* to clear it. Rust owns the rule that makes it a symbol
+  rather than a second title: trimmed, refused when it is longer than the cap or contains a letter or a
+  digit, and an empty field *clears* rather than refuses — so a stray paste cannot become the notebook's
+  name. Finally the pane reports a changed row through the `onChanged` it already has, so a rename reaches
+  the sidebar list and the tab at once instead of waiting for the next unrelated refresh.
+- **Test**: `cargo test` — the store round trip (set, read back, cleared, and **carried by a copy**), the
+  upgrade test proving the column exists on a database the previous build created, and `symbol()`: an
+  ordinary emoji is kept; a *sequence* (a joined or skin-toned one) is kept whole rather than cut to a
+  character; surrounding space is trimmed; `""` clears; and a word, a 200-character paste and anything
+  containing a letter or a digit are each refused with a sentence the window can show the reader.
+  `npm run typecheck`, the 19 checks and `npm run build`. **Falsified**: the refusal rule removed, watched
+  failing on the word case.
+- **Stop**: a notebook can be given one of the offered emoji or one typed by hand, it shows in the list and
+  the header, *None* takes it away, and renaming in the pane updates the list immediately.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
 The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left

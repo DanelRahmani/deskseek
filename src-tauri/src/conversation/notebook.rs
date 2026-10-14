@@ -630,6 +630,10 @@ pub struct Count {
 pub struct Generator {
     pub id: &'static str,
     pub title: &'static str,
+    /// One line saying what this makes, for the tile that offers it. The entry's own
+    /// words, so a tile describes itself and nothing in the window has to know an entry
+    /// by name to caption it.
+    pub note: &'static str,
     pub action: Action,
     /// The formats it will write, the first being the default — **empty** for an
     /// entry that writes no file, which is how the menu stops claiming a format an
@@ -656,6 +660,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "flashcards",
         title: "Flashcards",
+        note: "Flip a card, see the back, and the source it came from",
         action: Action::Set,
         // No format at all: what this makes is a set the window flips, and the
         // label saying `.docx` was the menu promising something it does not write.
@@ -677,6 +682,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "quiz",
         title: "Quiz",
+        note: "Questions with four options each, marked as you go",
         action: Action::Set,
         formats: &[],
         // No number in the instruction itself — and no answer key, because the
@@ -702,6 +708,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "briefing",
         title: "Briefing",
+        note: "What the sources say, in a page or two",
         action: Action::Document,
         formats: &["docx"],
         prompt: "Write a one-page briefing on these sources: what they are, the five things that \
@@ -713,6 +720,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "timeline",
         title: "Timeline",
+        note: "Events in the order the sources put them in",
         action: Action::Document,
         formats: &["md"],
         prompt: "Build a timeline of what these sources describe, earliest first, as a Markdown \
@@ -725,6 +733,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "study-guide",
         title: "Study guide",
+        note: "What to know, and which source each part came from",
         action: Action::Document,
         formats: &["md"],
         prompt: "Write a study guide for these sources: what to know, what to practise, and the \
@@ -736,6 +745,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "mind-map",
         title: "Mind map",
+        note: "The shape of it, as a diagram the document carries",
         action: Action::Document,
         formats: &["md"],
         prompt: "Draw the structure of these sources as a mind map: a fenced ```mermaid mindmap \
@@ -747,6 +757,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "exam",
         title: "Exam",
+        note: "A paper to sit, and the key that answers it",
         action: Action::Exam,
         // Word or PDF, chosen in the form: a paper is something you print and hand
         // out, and which of the two you hand out is the reader's call.
@@ -778,6 +789,7 @@ pub const GENERATORS: [Generator; 8] = [
     Generator {
         id: "fact-table",
         title: "Fact table",
+        note: "One row per fact, with the source in the last column",
         // In the menu like everything else now that every entry takes the same
         // options — it was a button of its own only while an entry was a fixed
         // prompt and a format, which is exactly what it is not.
@@ -1643,6 +1655,9 @@ That is everything the sources settle.";
                 }
             }
             assert!(!entry.title.trim().is_empty(), "{} has no title", entry.id);
+            // A tile offers the entry by its own line, so an entry without one is a
+            // blank tile in the panel rather than a missing one.
+            assert!(!entry.note.trim().is_empty(), "{} has no note", entry.id);
             assert!(!entry.prompt.trim().is_empty(), "{} asks for nothing", entry.id);
             // A count the form cannot draw a field for, or a default outside its own
             // bounds, is a number nobody could ever ask for — and the default is what

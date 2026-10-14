@@ -317,7 +317,9 @@ Both sections are functional:
     written document is set in **Times New Roman 11** with bold headings, an exam's questions bold at
     14 over their options, and the model's `**bold**` rendered as bold rather than as asterisks. A
     paper's cover — the subject, the date and the sources — is written by the app rather than by the
-    model, and its options are indented under their question rather than flush with it. The
+    model, and its options are indented under their question rather than flush with it. *Make* is one
+    button on the rail that opens a **panel of tiles**: each entry says what it makes and what it writes,
+    and picking one opens its form. The
     list is Rust rather than TypeScript, so the menu, the prompts and the form each press opens are
     one list; a mind map is a `mermaid` fence inside the document rather than a second renderer, and
     a quiz is no longer a worksheet with a key at the end — it is the thing you take
