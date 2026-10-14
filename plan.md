@@ -41,7 +41,7 @@ photographed, a tray whose left click brings the window back, and a browser whos
 console and network log only exist while a real page is running. Phase 11 added
 thirteen, and they are the least reachable yet: a folder that has to be written to
 while the app watches it, a page that has to change, and a server that has to push
-something it almost certainly never pushes.
+something it almost certainly never pushes. Phase 12 added a handful of its own, and Phase 13 seventeen — which are the ones a window is most likely to *change* rather than confirm, because a notebook shell is new UI and three of its parts can only be settled by hand: the ask loop actually reaching `source_search` against a live model, a digest written with no endpoint configured at all, and an `.xlsx` opened in Excel with its citation column intact.
 
 Each item is independently shippable and the order is the author's own priority,
 not a schedule. A `✅` on an item means its Stop condition is met and its Test
