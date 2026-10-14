@@ -422,6 +422,7 @@ pub fn run() {
             commands::save_notebook_output,
             commands::notebook_generators,
             commands::run_notebook_generator,
+            commands::run_notebook_table,
             commands::copy_notebook,
             commands::list_parked,
             commands::dismiss_parked,

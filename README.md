@@ -309,6 +309,10 @@ Both sections are functional:
     folder as a `.md` or `.docx`. The list is Rust rather than TypeScript, so the menu and the
     prompts are one list; a mind map is a `mermaid` fence inside the document rather than a second
     renderer, and a quiz ships with its key rather than marking itself
+  - **Fact table**: the same idea across sources rather than within one — a row per comparable fact,
+    the source it came from in the last column, exported as a `.xlsx`. **Nothing is written unless
+    every row names a source the notebook holds**, and a cell that begins with `=` is written as
+    text, because a fact out of a document is never something the spreadsheet should evaluate
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
   fix is next to the warning rather than a command you have to remember. Past 90% a run folds the

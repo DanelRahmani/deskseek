@@ -1948,6 +1948,75 @@ pub async fn run_notebook_generator(
     .await
 }
 
+/// Builds a fact table across a notebook's sources and exports it.
+///
+/// The answer is asked for as a Markdown table and then read as *rows* — the same
+/// block parser the document writer uses — because a spreadsheet is rows, and
+/// pasting prose into one would be a table nobody could filter. Two rules decide
+/// whether it is written at all: every row has to name a source the notebook
+/// holds, and a cell that begins with `=` is written as text, since a fact out of
+/// a document is never something the workbook should evaluate.
+#[tauri::command]
+pub async fn run_notebook_table(
+    state: State<'_, AppState>,
+    notebook_id: String,
+) -> Result<db::NotebookOutputRow, String> {
+    let notebook = {
+        let conn = state.db.lock().unwrap();
+        db::get_notebook(&conn, &notebook_id)
+            .map_err(|e| e.to_string())?
+            .ok_or("That notebook has been deleted.")?
+    };
+    let names: Vec<String> = crate::conversation::notebook::enabled_sources(&state, &notebook_id)?
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    if names.is_empty() {
+        return Err("This notebook has no sources switched on.".to_string());
+    }
+
+    let asked = crate::conversation::notebook::ask(&state, &notebook_id, crate::conversation::notebook::TABLE_PROMPT).await?;
+    let rows = crate::conversation::notebook::table_rows(&asked.answer.content)
+        .ok_or("The answer came back without a table — try again.")?;
+    let (header, body) = rows.split_first().ok_or("That table was empty.")?;
+    let unlabelled = crate::conversation::notebook::unlabelled_rows(body, &names);
+    if !unlabelled.is_empty() {
+        let rows: Vec<String> = unlabelled.iter().map(|i| (i + 1).to_string()).collect();
+        // Counted from the first *data* row, because the header is not a row a
+        // reader counts when they are looking for the one that is wrong.
+        return Err(format!(
+            "Nothing was written: data row {} does not name a source this notebook holds.",
+            rows.join(" and ")
+        ));
+    }
+    if header.len() != body.first().map(Vec::len).unwrap_or(0) {
+        return Err("That table's rows do not line up with its header.".to_string());
+    }
+
+    let cells: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|row| {
+            serde_json::Value::Array(
+                row.iter()
+                    .map(|cell| serde_json::Value::String(crate::conversation::notebook::cell_text(cell)))
+                    .collect(),
+            )
+        })
+        .collect();
+    let dir = state.paths.notebook_dir(&notebook_id);
+    let browser = state.settings.lock().unwrap().browser_path.clone();
+    let args = serde_json::json!({
+        "name": format!("{} facts", notebook.title),
+        "sheet": "Facts",
+        "rows": cells,
+    });
+    let (_, path) = crate::tools::docs::execute("sheet_create", &args, &dir, &browser).await?;
+    let path = path.ok_or("the spreadsheet writer did not say where it wrote")?;
+    let conn = state.db.lock().unwrap();
+    db::add_notebook_output(&conn, &notebook_id, "xlsx", "Fact table", &path.display().to_string())
+        .map_err(|e| e.to_string())
+}
+
 /// Copies a notebook: its rules, its model, its sources and what it produced —
 /// and, deliberately, not its questions.
 ///

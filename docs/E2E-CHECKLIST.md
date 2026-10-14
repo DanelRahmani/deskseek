@@ -390,6 +390,10 @@ the parts only a person can see.
 
 ## Notebooks
 
+- [ ] *Fact table* produces a `.xlsx` under *Outputs* whose last column names sources, and it opens
+      in Excel with the rows as a real table
+- [ ] A table answer whose citation column is fiddled with (a row naming a file that is not a
+      source) writes **nothing** and says which row was wrong — the same for a source switched off
 - [ ] Each entry in *Make* produces something: flashcards, a quiz with a key, a briefing, a
       timeline, a study guide and a mind map, and each lands under *Outputs* as a `.md` or `.docx`
       that opens

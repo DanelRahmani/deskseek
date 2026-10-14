@@ -23,10 +23,9 @@ archive item, **9.4**, is deliberately not here: it is "V1 once 6.3 exists", and
 reached through 6.2's plugin bundles — does not. One commit in Phase 11 covers two items, **7.3 and
 3.3 together**, because they are the same enum, the same form and the same panel row: splitting them
 would have meant hand-reverting a file twice, and a commit that does not build is a worse break of the
-one-item rule than a commit that names two items. **Phase 13 (4.1, 5.4, 8.2, 8.3, 8.4)** is written
-up below and is being built now: the archive's last phase, and its sixth item, **5.3**, is
-deliberately left unbuilt with the reason given. The next release is **0.5.0**, and `CHANGELOG.md`'s
-top section is what its tag will print.
+one-item rule than a commit that names two items. **Phase 13 (4.1, 5.4, 8.2, 8.3, 8.4)** is written up below and is done: the archive's last phase, and
+its sixth item, **5.3**, is deliberately left unbuilt with the reason given in its own block. The next
+release is **0.5.0**, and `CHANGELOG.md`'s top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
 end in a real window since Phase 1, so the newer lines (the crash screen and its
@@ -2257,7 +2256,7 @@ than a module.
 
 ---
 
-## Phase 13: Grounded research
+## Phase 13: Grounded research ✅ done, not yet pushed
 
 Planned 2026-10-14, from [`ReverseEngineering.md`](ReverseEngineering.md). The archive's last phase,
 and the largest single product surface in it. The order is the argument: **4.1 is the model and 5.4
@@ -2501,18 +2500,41 @@ and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not 
 - **Stop**: a notebook produces a flashcard set, a quiz, a briefing, a timeline and a study guide,
   each from its sources.
 
-### 8.4 [S] Data tables over sources
+### 8.4 [S] Data tables over sources ✅
 - **Why**: synthesising facts across sources into a table and exporting it is the one notebook output
   this app can already produce, because the `.xlsx` writer is here.
-- **Files**: `conversation/notebook.rs` (the generator and the per-row rule),
-  `tools/docs.rs::sheet_create` reused unchanged, `src/components/NotebookShell.tsx`, the
-  `types`/`api` pair.
-- **Shape**: the generator asks for a table whose last column is each row's source label. Cells carry
-  text and never a live formula — `sheet_create` already writes a formula as text, so that rule is
-  inherited rather than re-implemented — and every row's label must resolve to a source the notebook
-  actually holds, which is the same checkability rule 5.4 owns.
-- **Test**: a row citing a source the notebook does not hold is caught, and a cell beginning with `=`
-  is exported as text rather than as a formula.
+- **Files**: `conversation/notebook.rs` (`TABLE_PROMPT`, `table_rows`, `cell_text`,
+  `unlabelled_rows`, and `enabled_sources` made public); `commands.rs` (`run_notebook_table`);
+  `lib.rs`; `src/components/NotebookShell.tsx` (the *Fact table* button); `src/api.ts`.
+- **Shape**: the answer is asked for as a Markdown table and then read as **rows**, through the
+  document writer's own block parser — so "what a table is" has one answer in this app, and a table
+  inside a fence is an example rather than the result. Two rules decide whether anything is written:
+  every row's last cell has to name a source the notebook holds — held against the *same* rule an
+  answer's citations go through, because a table's citation column is the only thing that makes it a
+  fact table rather than a list of claims — and a cell beginning with `=` is written as text, since a
+  fact copied out of a document is never something the workbook should evaluate. Cells carry the
+  source's own words in a column; nothing is a live formula, and nothing is a comment either, because
+  a comment is invisible to the reader who has to check the row.
+- **Test**: `cargo test` 473 → **475**. `conversation::notebook::tests::a_fact_table_has_to_say_which_source_each_row_came_from`
+  — a three-row answer parses into header plus two facts, a header is not asked to cite, a row naming
+  a stranger and a row naming nothing at all are both reported **with the row number a reader
+  counts**, prose with no table is no table, a header alone is no table, and a table inside a fence
+  is not the result. And `a_cell_that_begins_with_an_equals_sign_is_text_not_a_formula` — `=1+1` and
+  a leading-whitespace `=SUM(...)` are both escaped, while a number, a date, a cell that merely
+  mentions an equals sign and an empty cell are left exactly as they were.
+  **Falsified**: removing the escape (`return format!("'{cell}")` → `return cell.to_string()`) fails
+  that test on `assertion left == right failed` for `cell_text("=1+1")` — a document's text arriving
+  as something the spreadsheet runs — after checking the mutation reached the disk, and restoring
+  passes. **Three deviations, said out loud**: the table is **not an entry in `GENERATORS`**, because
+  its answer is read as rows and written by `sheet_create` rather than `doc_create`, which is a
+  different path through the writers and would have broken the invariant that holds every generator
+  to a document format; cells carry the source's words rather than a comment column, because a
+  comment is invisible to the person checking the row, and the plan's own wording ("a citation per
+  cell") is what a column already is; and the row/header width check is there because a ragged table
+  is the one malformed shape the writer would happily write. One limit named: every cell is **text**,
+  including a cell that happens to be a bare number, because the cell holds the source's own words —
+  so a column of figures arrives in Excel as text and will not sum until it is converted. That is the
+  price of a table you can check against the document rather than one you have to trust.
 - **Stop**: a fact table can be built across sources and exported to `.xlsx`.
 
 ### 5.3 [M] Semantic memory lookup — decided, not built
@@ -2525,6 +2547,10 @@ and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not 
   real download, and a provider is a decision about which endpoint serves embeddings, which the
   endpoint this app ships against does not — so building it now would reverse a recorded decision to
   satisfy a hunch. Left as a proposal, with the keyword path the one that exists.
+
+**So Phase 13 is five items, not six, and the sixth is the one thing this phase left undone** — with
+the reason written above rather than left out. Nothing else in the phase is deferred: every other
+block's Stop is met and its Test runs in the gate.
 
 ---
 

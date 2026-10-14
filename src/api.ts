@@ -357,6 +357,9 @@ export const api = {
   /** Runs one: a grounded question in that shape, saved as a document. */
   runNotebookGenerator: (notebookId: string, generator: string) =>
     invoke<NotebookOutputRow>("run_notebook_generator", { notebookId, generator }),
+  /** Builds a fact table across the sources and exports it as a workbook. */
+  runNotebookTable: (notebookId: string) =>
+    invoke<NotebookOutputRow>("run_notebook_table", { notebookId }),
   /** Carries the sources and the outputs, and deliberately not the questions. */
   copyNotebook: (id: string) => invoke<NotebookRow>("copy_notebook", { id }),
 

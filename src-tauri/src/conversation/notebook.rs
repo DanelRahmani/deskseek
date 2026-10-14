@@ -385,12 +385,16 @@ async fn run_tool(
     }
 }
 
-/// The notebook's enabled sources, as `(name, path)`.
+/// The notebook's enabled sources.
 ///
 /// The filter is applied where the search happens as well as where the catalogue
 /// is built, because a switch that took a source out of the prompt but left it
-/// answering tool calls would not be a switch.
-fn enabled_sources(state: &AppState, notebook_id: &str) -> Result<Vec<db::SourceRow>, String> {
+/// answering tool calls would not be a switch. Shared with the fact table, which
+/// has to hold every row's citation against the same set.
+pub fn enabled_sources(
+    state: &AppState,
+    notebook_id: &str,
+) -> Result<Vec<db::SourceRow>, String> {
     let conn = state.db.lock().unwrap();
     let rows = db::list_sources(&conn, notebook_id).map_err(|e| e.to_string())?;
     Ok(rows.into_iter().filter(|s| s.enabled).collect())
@@ -578,6 +582,71 @@ pub const GENERATORS: [Generator; 6] = [
 /// rather than guessed at.
 pub fn generator(id: &str) -> Option<&'static Generator> {
     GENERATORS.iter().find(|g| g.id == id)
+}
+
+/// The question that builds a fact table across a notebook's sources.
+///
+/// Its own constant rather than a seventh entry in `GENERATORS`, because its
+/// answer is not a document: it is read as rows and written as a workbook, and
+/// that is a different path through the writers.
+pub const TABLE_PROMPT: &str = "\
+Build a fact table across these sources. One row per fact that can be compared between them, under \
+a header row. The last column is the source each row came from, written as its name exactly as the \
+source list spells it. Where the sources disagree, add a row saying so rather than picking one; \
+where a number has a unit or a date, put it in the cell as the source states it.";
+
+/// The first table in an answer, as its rows of cells.
+///
+/// The reader is the document writer's own block parser, so "what a table is" has
+/// one answer in this app rather than two — and a fence is handled by that parser
+/// too, which matters because an answer about a Markdown source may contain a
+/// table inside a code block that is an example rather than the result.
+pub fn table_rows(markdown: &str) -> Option<Vec<Vec<String>>> {
+    crate::tools::docs::parse_blocks(markdown)
+        .into_iter()
+        .find_map(|block| match block {
+            crate::tools::docs::Block::Table(rows) if rows.len() > 1 => Some(rows),
+            _ => None,
+        })
+}
+
+/// One cell as a workbook should hold it.
+///
+/// Excel treats a string beginning with `=` as a formula, and a fact copied out of
+/// a document is never a formula to run: a source whose text contains `=1+1`, or
+/// something worse, would otherwise arrive in the spreadsheet as an instruction.
+/// The apostrophe is the marker Excel itself uses for "this is text", so the cell
+/// reads as what the document said rather than as arithmetic.
+pub fn cell_text(cell: &str) -> String {
+    if cell.trim_start().starts_with('=') {
+        return format!("'{cell}");
+    }
+    cell.to_string()
+}
+
+/// The rows whose last cell does not name a source the notebook holds.
+///
+/// The same rule the answer's own citations go through — a citation naming
+/// something that was never there is the bug this feature is built to catch — and
+/// it is applied per row because a table's citation column is *the* thing that
+/// makes it a fact table rather than a list of claims.
+pub fn unlabelled_rows(rows: &[Vec<String>], sources: &[String]) -> Vec<usize> {
+    rows.iter()
+        .enumerate()
+        .filter(|(_, row)| {
+            let Some(cell) = row.last() else {
+                return true;
+            };
+            let cell = cell.trim();
+            // Empty, or naming something no source goes by — including a cell
+            // that names nothing at all, which `cited` reports as no citations
+            // and which is exactly as unusable as an invented name.
+            cell.is_empty()
+                || crate::retrieval::cited(cell).is_empty()
+                || !crate::retrieval::unresolved(cell, sources).is_empty()
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Asks a notebook a question, from its enabled sources, and records both halves.
@@ -776,6 +845,57 @@ mod tests {
         assert_eq!(state_of(Some(&file), &second), "missing");
         assert_eq!(state_of(None, &second), "missing");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_fact_table_has_to_say_which_source_each_row_came_from() {
+        let answer = "\
+Here it is:\n\n\
+| Fact | Value | Source |\n\
+| --- | --- | --- |\n\
+| Revenue | 12.4m | [q3.pdf#Revenue] |\n\
+| Headcount | 40 | [notes.md] |\n\n\
+That is everything the sources settle.";
+        let rows = table_rows(answer).unwrap();
+        assert_eq!(rows.len(), 3, "the header and two facts: {rows:?}");
+        assert_eq!(rows[0][0], "Fact");
+        // The header row is not a fact, so it is not asked to cite anything — the
+        // check runs over the rows below it.
+        let sources = vec!["q3.pdf".to_string(), "notes.md".to_string()];
+        assert!(unlabelled_rows(&rows[1..], &sources).is_empty());
+
+        // A row naming a source the notebook does not hold, and a row naming
+        // nothing at all, are both caught — with the row number a reader counts.
+        let bad = vec![
+            vec!["Revenue".to_string(), "12.4m".to_string(), "[q3.pdf]".to_string()],
+            vec!["Headcount".to_string(), "40".to_string(), "[somewhere-else.docx]".to_string()],
+            vec!["Costs".to_string(), "3m".to_string(), "".to_string()],
+        ];
+        assert_eq!(unlabelled_rows(&bad, &sources), vec![1, 2]);
+
+        // An answer with no table at all is not a fact table, and one whose only
+        // table is inside a fence is an example rather than the result.
+        assert!(table_rows("no table here, just prose").is_none());
+        assert!(table_rows("| A | B |\n| --- | --- |\n").is_none(), "a header alone is no table");
+        let fenced = format!("```\n{}\n```\n\nNothing outside it.", answer);
+        assert!(
+            table_rows(&fenced).is_none(),
+            "a table inside a fence is an example, not the answer"
+        );
+    }
+
+    #[test]
+    fn a_cell_that_begins_with_an_equals_sign_is_text_not_a_formula() {
+        // The one thing a fact out of a document must never become: something the
+        // spreadsheet runs when it is opened.
+        assert_eq!(cell_text("=1+1"), "'=1+1");
+        assert_eq!(cell_text("  =SUM(A1:A9)"), "'  =SUM(A1:A9)");
+        // Everything else is left exactly as the source wrote it, including a
+        // number, a date and a cell that merely mentions an equals sign.
+        assert_eq!(cell_text("12.4m"), "12.4m");
+        assert_eq!(cell_text("2026-03-01"), "2026-03-01");
+        assert_eq!(cell_text("A = B"), "A = B");
+        assert_eq!(cell_text(""), "");
     }
 
     #[test]

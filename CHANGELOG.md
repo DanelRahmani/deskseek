@@ -14,6 +14,7 @@ one.
 
 ## 0.5.0 — unreleased
 
+- A notebook can build a **fact table** across its sources and export it as a spreadsheet: one row per fact with the source it came from in the last column, and nothing is written at all unless every row names a source the notebook holds
 - A notebook can be asked for the things a source set is actually for: flashcards, a quiz with an answer key, a briefing, a timeline, a study guide and a mind map — each written from its sources, cited like any other answer, and saved as a document in the notebook's folder
 - A notebook opens as its own surface — the sources on the left, the questions in the middle, what it produced on the right — and sits in a pane beside a chat, coming back with it on the next launch. Copying one carries its sources and its outputs and deliberately not its conversation
 - Asking about something in a chat's folder now answers from the file itself: the passages that match the question are read into the prompt and cited by file and heading, so a document does not have to be attached to every question about it

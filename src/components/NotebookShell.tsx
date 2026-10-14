@@ -440,6 +440,20 @@ export function NotebookShell({
                 <span className="ml-1 text-[11px] text-neutral-600">.{generator.format}</span>
               </button>
             ))}
+            {/* Not a generator: its answer is read as rows and written as a
+                workbook, which is a different path through the writers. */}
+            <button
+              onClick={() =>
+                void act(
+                  () => api.runNotebookTable(notebookId),
+                  "Fact table — every row cites a source, exported as a .xlsx.",
+                )
+              }
+              disabled={busy}
+              className="mt-1 w-full rounded-lg border-t border-neutral-800/60 px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
+            >
+              Fact table<span className="ml-1 text-[11px] text-neutral-600">.xlsx</span>
+            </button>
           </div>
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Outputs

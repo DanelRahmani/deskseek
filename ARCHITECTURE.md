@@ -117,6 +117,7 @@ Changing behaviour in this app is usually changing one of these.
 | What a chat reads out of its own folder, what a document becomes as chunks, and the budget the excerpts stay inside | `retrieval.rs`, `conversation/assemble.rs` |
 | Which tools a notebook's question may use, as opposed to a chat's | `tools/mod.rs` |
 | What a notebook can be asked to produce, and which formats a document writer really takes | `conversation/notebook.rs`, `tools/docs.rs` |
+| What makes a row of a fact table a fact — a source that exists in the last cell — and why a cell beginning with `=` is text | `conversation/notebook.rs` |
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |
