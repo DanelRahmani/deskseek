@@ -283,11 +283,26 @@ export interface Instruction {
   enabled: boolean;
 }
 
+/**
+ * Where a voice comes from: one endpoint, and what to ask it for. Not a third
+ * dialect — the speech API is one shape whatever the endpoint speaks.
+ */
+export interface Speech {
+  /** The id of an endpoint that serves audio. Empty means none is configured. */
+  endpoint: string;
+  ttsModel: string;
+  voice: string;
+  /** Published USD per minute of speech. 0 records the clip and says "unknown". */
+  usdPerMinute: number;
+}
+
 export interface Settings {
   /** Every endpoint the user can switch between. */
   endpoints: Endpoint[];
   /** Which endpoint a new turn uses. An id that names nothing falls back to the first. */
   defaultEndpoint: string;
+  /** Where a voice comes from. */
+  speech: Speech;
   chatModel: string;
   codingModel: string;
   systemPrompt: string;
@@ -761,6 +776,38 @@ export interface ArtifactDetail {
 export interface ArtifactEvent {
   chatId: string;
   artifact: ArtifactDetail;
+}
+
+/** What a script will cost, before a word of it is spoken. */
+export interface SpeechEstimate {
+  chars: number;
+  /** Whole seconds, rounded up. */
+  seconds: number;
+  usd: number;
+  /** False when the endpoint publishes no per-minute rate. */
+  priced: boolean;
+  /** The most characters one request reads out, so the caller need not know it. */
+  limit: number;
+}
+
+/** A written script, and who will read it out. */
+export interface AudioScript {
+  script: string;
+  /** The label of the endpoint that will speak, so the dialog can name it. */
+  endpoint: string;
+  model: string;
+  voice: string;
+}
+
+/** The clip, and where it went. */
+export interface AudioClip {
+  name: string;
+  path: string;
+  /** The bytes again, so the dialog can play it without reading the file back. */
+  dataUrl: string;
+  seconds: number;
+  usd: number;
+  priced: boolean;
 }
 
 /** A read-only peek at one file. */

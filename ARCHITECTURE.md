@@ -123,6 +123,7 @@ Changing behaviour in this app is usually changing one of these.
 | The quick-entry chord: how the string in Settings becomes a shortcut the OS registers, and the one spelling that says which shortcut fired | `quick.rs` |
 | Capturing a window as a PNG: which window is remembered and when, and the alpha byte GDI leaves at zero | `tools/desktop.rs` |
 | The tray menu, and which half of it the window runs rather than this process | `tray.rs` |
+| What a script costs before it is spoken, what one request will read out, and how a written script becomes speech — a wire beside the dialects rather than a third one | `api/speech.rs` |
 
 The frontend has the same shape: a small pure module per rule, each with a
 `*.check.ts` beside it that `npm run check` runs (the README lists what each one
@@ -139,6 +140,7 @@ pins).
 | The file tree's rows, and what each arrow key moves | `src/lib/tree.ts` |
 | Reading one version out of the changelog | `src/lib/changelog.ts` |
 | The composer draft that survives a crash | `src/lib/draft.ts` |
+| How a clip's length and price read, and why an unknown rate is not zero | `src/lib/audio.ts` |
 
 ## Tests and the gate
 

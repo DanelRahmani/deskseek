@@ -46,6 +46,7 @@ one.
 - A screenshot now goes to the model as well as to you, when the model you are running on can see: `ui_screenshot` photographs the window in front — for the canvases and custom-drawn apps whose controls report nothing — and `browser_screenshot` sends the page it captured, both scaled to 1280px on the longest side. A text-only endpoint is sent the words instead, and a desktop screenshot keeps its full-size file
 - A window with no controls to press can be driven by **clicking a pixel in that picture** — `ui_click_at` aims at the screenshot you were last shown, so the coordinates mean what you can see rather than a place on the screen — and `ui_windows` lists what is open, and which window has focus, so the agent names a window instead of guessing at one
 - When a cheaper model of the same endpoint would have done the same work for noticeably less, the chat says what the turn would have cost there and offers the switch — a number and a suggestion, never a downgrade you did not ask for. The task form's model list shows each model's published rate
+- `/audio` turns a conversation into an **audio overview**: a spoken script read out loud by a voice endpoint, saved as `audio-overview.mp3` in the chat's own folder and played in place. It is quoted before it runs — the script, the voice, about how long it is and what it costs, with the script editable and the price following it — and it refuses rather than guessing when no speech endpoint is set in **Settings → Access → Voice**
 
 ## 0.4.0 — 2026-10-12
 

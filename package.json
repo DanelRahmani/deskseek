@@ -10,7 +10,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "check": "node src/lib/shell.check.ts && node src/lib/transcript.check.ts && node src/lib/filing.check.ts && node src/lib/tasks.check.ts && node src/lib/artifact.check.ts && node src/lib/chart.check.ts && node src/lib/docs.check.ts && node src/lib/shortcuts.check.ts && node src/lib/commands.check.ts && node src/lib/snippet.check.ts && node src/lib/theme.check.ts && node src/lib/motion.check.ts && node src/lib/tree.check.ts && node src/lib/a11y.check.ts && node src/lib/tray.check.ts && node src/lib/changelog.check.ts",
+    "check": "node src/lib/shell.check.ts && node src/lib/transcript.check.ts && node src/lib/filing.check.ts && node src/lib/tasks.check.ts && node src/lib/artifact.check.ts && node src/lib/chart.check.ts && node src/lib/docs.check.ts && node src/lib/shortcuts.check.ts && node src/lib/commands.check.ts && node src/lib/snippet.check.ts && node src/lib/theme.check.ts && node src/lib/motion.check.ts && node src/lib/tree.check.ts && node src/lib/a11y.check.ts && node src/lib/tray.check.ts && node src/lib/changelog.check.ts && node src/lib/audio.check.ts",
     "preview": "vite preview",
     "tauri": "tauri"
   },

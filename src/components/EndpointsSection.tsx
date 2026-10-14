@@ -1,7 +1,7 @@
 import { useState } from "react";
 
 import { api } from "../api";
-import type { Dialect, Endpoint, ModelInfo, ModelPrice } from "../types";
+import type { Dialect, Endpoint, ModelInfo, ModelPrice, Speech } from "../types";
 
 const DIALECTS: { id: Dialect; label: string }[] = [
   { id: "openai-compatible", label: "OpenAI-compatible" },
@@ -108,14 +108,18 @@ function blankModel(): ModelInfo {
 export function EndpointsSection({
   endpoints,
   defaultEndpoint,
+  speech,
   onChange,
+  onSpeechChange,
   save,
   onStatus,
   busy,
 }: {
   endpoints: Endpoint[];
   defaultEndpoint: string;
+  speech: Speech;
   onChange: (endpoints: Endpoint[], defaultEndpoint: string) => void;
+  onSpeechChange: (speech: Speech) => void;
   /** Persists the whole settings form, which a test has to do before it runs. */
   save: () => Promise<void>;
   onStatus: (message: string) => void;
@@ -441,6 +445,71 @@ export function EndpointsSection({
             Empty
           </button>
         </div>
+      </div>
+
+      {/* Voice is endpoint configuration, so it lives with the endpoints rather
+          than in a section of its own. It is deliberately not a third dialect:
+          the speech API is one shape whatever the endpoint speaks, so this
+          names an endpoint, a model and a voice, and nothing more. */}
+      <div className="space-y-2 border-t border-neutral-800 pt-3">
+        <p className="text-[11px] font-medium tracking-wide text-neutral-400 uppercase">Voice</p>
+        <p className="text-[11px] text-neutral-600">
+          Audio overviews and dictation go to an endpoint that serves audio: OpenAI, Groq, or a
+          local server. Leave the endpoint empty and both refuse rather than guess.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-[10px] text-neutral-600">Endpoint</label>
+            <select
+              className={smallCls}
+              value={speech.endpoint}
+              onChange={(e) => onSpeechChange({ ...speech, endpoint: e.target.value })}
+            >
+              <option value="">None</option>
+              {endpoints.map((endpoint) => (
+                <option key={endpoint.id} value={endpoint.id}>
+                  {endpoint.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] text-neutral-600">Speaks with (model)</label>
+            <input
+              className={smallCls}
+              value={speech.ttsModel}
+              placeholder="tts-1"
+              onChange={(e) => onSpeechChange({ ...speech, ttsModel: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-neutral-600">Voice</label>
+            <input
+              className={smallCls}
+              value={speech.voice}
+              placeholder="alloy"
+              onChange={(e) => onSpeechChange({ ...speech, voice: e.target.value })}
+            />
+          </div>
+          <div>
+            <label className="block text-[10px] text-neutral-600">Published $ per minute</label>
+            <input
+              className={smallCls}
+              type="number"
+              step="0.001"
+              value={speech.usdPerMinute}
+              onChange={(e) =>
+                onSpeechChange({ ...speech, usdPerMinute: Number(e.target.value) })
+              }
+            />
+          </div>
+        </div>
+        {speech.usdPerMinute <= 0 && speech.endpoint !== "" && (
+          <p className="text-[11px] text-amber-500/80">
+            With no rate the clip is made and its cost is recorded as unknown, because a price
+            nobody published is not zero.
+          </p>
+        )}
       </div>
     </div>
   );

@@ -61,6 +61,7 @@ import { TabStrip } from "./components/TabStrip";
 import { CommandPalette } from "./components/CommandPalette";
 import { ContextMenu } from "./components/ContextMenu";
 import { ShortcutSheet } from "./components/ShortcutSheet";
+import { AudioOverviewDialog } from "./components/AudioOverviewDialog";
 import {
   loadShell,
   openChatIn,
@@ -110,7 +111,7 @@ const IDLE: SessionRuntime = {
 };
 
 const HELP =
-  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /prompts · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /rewind · /help";
+  "/mode ask|standard|plan|agent · /summarise review what is worth remembering · /skill switch a skill on · /compact summarise and reset the context · /files · /memory · /skills · /mcp · /prompts · /projects · /artifacts · /scheduled · /spend · /setup · /folder · /new · /export · /audio · /rewind · /help";
 
 /** Bytes as something a person reads: whole KB below a megabyte, one decimal above. */
 function fileSize(bytes: number): string {
@@ -159,6 +160,12 @@ export default function App() {
   // The shortcut list, on top of everything: `?` is the one chord nothing else
   // in the UI advertises.
   const [sheet, setSheet] = useState(false);
+  /**
+   * The chat an audio overview is being made for, or null. Opened by `/audio`
+   * rather than by a button: it is a chat-level action like `/export` and
+   * `/compact`, and the composer already is where a chat's actions live.
+   */
+  const [audioOverview, setAudioOverview] = useState<string | null>(null);
   // A right-clicked conversation's menu, at the cursor. `fixed` at the root so
   // the scrolling sidebar cannot clip it.
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
@@ -795,6 +802,10 @@ export default function App() {
           case "/export":
             if (chatId) await exportChat(chatId);
             else setError("Open a chat to export.");
+            return;
+          case "/audio":
+            if (chatId) setAudioOverview(chatId);
+            else setError("Open a chat to make an audio overview of.");
             return;
           case "/rewind":
             if (chatId) await rewind(chatId);
@@ -2027,6 +2038,14 @@ export default function App() {
       )}
 
       {sheet && <ShortcutSheet onClose={() => setSheet(false)} />}
+
+      {audioOverview && (
+        <AudioOverviewDialog
+          chatId={audioOverview}
+          onNotice={setNotice}
+          onClose={() => setAudioOverview(null)}
+        />
+      )}
 
       {menu &&
         (() => {

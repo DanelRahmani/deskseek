@@ -233,6 +233,18 @@ Both sections are functional:
 - `/export` — write the whole conversation to a Markdown file in the chat's own folder; the
   palette also offers **Export this chat as a PDF**, printed by the browser on this machine
   through the same pipeline `doc_create` uses rather than a second implementation of its own
+- `/audio` — an **audio overview**: the conversation is written into a short spoken script and
+  read out loud, saved as `audio-overview.mp3` in the chat's own folder and played right there.
+  It is the one action in the app that can cost real money by the minute, so it is a **quote
+  before it is an action**: you are shown the script, who will read it, about how long it is and
+  what that costs, and the script can be edited before you press *Create the clip* — the price
+  follows what you typed, because it is recomputed by the same code that records it. Nothing is
+  sent until you say so, and with no speech endpoint configured it refuses rather than guessing.
+  Honest limits: **one voice and one request** — the script is capped at what a speech API will
+  read out at once (about four minutes), and a longer one is refused rather than cut short or
+  silently joined from two clips. **Settings → Endpoints → Voice** names the endpoint, the model,
+  the voice and the published rate; with no rate the clip is still made and its cost is recorded
+  as unknown rather than as zero
 - **Duplicate a conversation** — *Duplicate* in a sidebar row's right-click menu. The copy gets
   its own transcript and, for a chat-mode conversation, its own copy of the folder; a coding
   chat shares the project's folder, because duplicating a conversation is not a reason to copy a
@@ -871,6 +883,7 @@ quietly leaving them broken:
 | --- | --- | --- |
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the setup screen can build one on Docker, and the other browsing tools work without it |
+| A speech endpoint (OpenAI, Groq, or a local server) | `/audio` | No — with none configured the audio overview says so and stops |
 | Docker or WSL2 | running commands in a container instead of directly | No |
 | *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_screenshot`, `ui_windows`, `ui_click`, `ui_click_at`, `ui_type`) | No — off by default |
 

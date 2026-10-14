@@ -2199,15 +2199,51 @@ than a module.
   canvas, so that is on `docs/E2E-CHECKLIST.md`.
 - **Stop**: a canvas window can be driven by coordinate, behind the same rails as every other action.
 
-### 8.5 [M] Audio Overview (text to speech)
+### 8.5 [M] Audio Overview (text to speech) ✅
 - **Why**: the most-loved notebook feature is two voices discussing the sources. It is also the one
   that needs a paid third-party service, so it has to be an explicit, priced action.
-- **Files**: new `src-tauri/src/tools/audio.rs` (a script over the chat or folder, then a TTS call,
-  then the clip saved beside the sources), an endpoint for speech (`key_ref`), `artifact` /
-  `ArtifactPanel.tsx` (a player), `commands.rs`.
-- **Shape**: the estimate shows before it runs, per minute, and the clip is a file like any other so
-  it can be reopened. It refuses rather than runs when no speech endpoint is configured.
-- **Test**: the script shape and the refusal when no speech endpoint exists; the call itself is E2E.
+- **Files**: `api/speech.rs` (new — the one audio wire, the estimate, the script prompt and the
+  spoken-script system prompt), `store/settings.rs` (a `Speech` block: the endpoint that speaks, the
+  model, the voice, the published rate), `commands.rs` (`audio_script`, `audio_estimate`,
+  `audio_overview`, and the one `speech_target` that resolves the endpoint and its key),
+  `components/AudioOverviewDialog.tsx` (new — the quote, the editable script and the player),
+  `components/EndpointsSection.tsx` (the Voice block, because voice *is* endpoint configuration),
+  `lib/audio.ts` + `lib/audio.check.ts` (new — how a length and a price read), `App.tsx` (`/audio`),
+  `ChatView.tsx` (the menu entry), and the `types`/`api` pairs for the three payloads.
+- **Shape**: the plan's two rules are the shape of it. **Priced before it runs**: the script is
+  written by one cheap call on the summariser's model (recorded on the same bill as everything else),
+  and the clip is a second, deliberate action behind a quote that names the voice, the length and
+  the money. **A file like any other**: the mp3 lands in the chat's own folder — where the file panel
+  already browses and 📁 opens — so it is reopened the way every other file in a chat is. It refuses
+  rather than guesses when no speech endpoint is named, and the script can be edited with the price
+  following it.
+- **Test**: `cargo test` — six in `api/speech.rs` (the estimate grows with the script, rounds *up*
+  rather than down, reports an unpublished rate as unknown rather than free, keeps the cap inside
+  what one request takes, and builds the body and the path this shape needs) and two in
+  `store/settings.rs` (`the_speech_endpoint_is_matched_by_id_or_not_at_all`,
+  `a_settings_file_written_before_voice_existed_still_loads`); `npm run check` gained
+  `audio.check.ts` (a length never reads as zero minutes, a fraction of a cent is not rounded away,
+  and an unknown rate never reads as `$0.00`), and `a11y.check.ts` now covers the new dialog. `cargo
+  test` 444 → 453. Falsified twice, on the two rules this item is about: `priced: usd_per_minute >
+  0.0` → `priced: true` fails `no_published_rate_is_unknown_money_rather_than_free` (an unpublished
+  rate reported as free is the one money bug this app refuses), and dropping the empty-id guard in
+  `speech_endpoint` so it falls back to `endpoints.first()` fails
+  `the_speech_endpoint_is_matched_by_id_or_not_at_all` (a script sent to whichever endpoint happens
+  to be first) — after checking each mutation reached the disk, and restoring passes. What needs a
+  real endpoint and a real screen is on `docs/E2E-CHECKLIST.md`; the script's own quality is not
+  asserted anywhere, because it is prose. **Five deviations, said out loud**: the archive's
+  `tools/audio.rs` is `api/speech.rs`, because `tools/` is what the *model* can call and neither of
+  these is — this is a wire beside the dialects and two commands, and the plan's Files list predates
+  that distinction; the clip is **not** an artifact, because an artifact's every version is text in a
+  table and an mp3 has no business in a text column, so the folder (this app's existing home for the
+  files a chat owns) took that job and no schema moved; it is **one voice, not two** — the archive's
+  inspiration is a two-voice discussion, and mixing two voices is an audio editor rather than a
+  setting, so the honest v1 is one voice reading a script and the deviation is named here rather
+  than discovered; the trigger is a **command** rather than a button, because a chat's own actions
+  (`/export`, `/compact`, `/rewind`) already live in the composer and the slash menu is where they
+  are found; and there is a **third command**, `audio_estimate`, which exists only because the
+  script is editable — the price has to follow the words, and computing it in TypeScript would be a
+  second copy of "how many characters is a minute" that could drift from the rate actually recorded.
 - **Stop**: an audio overview can be produced, with its price shown first.
 
 ### 10.3 [M] Dictation

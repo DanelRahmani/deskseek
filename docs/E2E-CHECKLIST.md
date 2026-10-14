@@ -653,3 +653,23 @@ the parts only a person can see.
       (`Ctrl+Alt+Esc`) is refused like any other action
 - [ ] The prompt's guidance is followed: with an MCP server for the app installed, the agent prefers
       the connector, then the browser, and reaches for the desktop last
+
+## Audio overview
+
+- [ ] With no speech endpoint chosen (*Settings → Access → Voice*), `/audio` says so — and no script
+      is written first, so the refusal costs nothing
+- [ ] With one chosen, `/audio` opens a dialog that shows the script, the endpoint, the model, the
+      voice, a length and a price
+- [ ] Editing the script moves the price with it, within about a quarter of a second
+- [ ] With the rate left at 0 the line reads *price unknown* rather than `$0.00`
+- [ ] *Create the clip* plays the audio in the dialog, and the file is in the chat's own folder (📁)
+- [ ] *Show in folder* opens the file manager on the clip
+- [ ] A second clip of the same chat is `audio-overview-2.mp3`, not an overwrite of the first
+- [ ] The spend view lists the clip under *By what spent it* as `speech`, with no tokens and the
+      per-minute cost the dialog quoted
+- [ ] A script edited past 3,500 characters warns before the button is pressed, and pressing it is
+      refused with the limit and the length of what was written
+- [ ] A voice the endpoint does not have reports the endpoint's own words rather than a generic
+      failure
+- [ ] The dialog closes on Escape and on the backdrop, and focus goes back to the composer
+- [ ] `/help` and the composer's `/` menu both list `/audio`

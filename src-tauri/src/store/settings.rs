@@ -24,6 +24,54 @@ web when the user has it switched on, documents and artifacts for anything worth
 per chat — the user's skills and MCP servers, whose contents appear in this prompt when active.\n\n\
 Be concise, say what you are about to do before you do it, and prefer asking over inventing.";
 
+/// Where a voice comes from, and what it costs.
+///
+/// One named endpoint plus what to ask it for, rather than a third dialect. The
+/// speech API is one shape whatever the endpoint speaks, so a dialect would be a
+/// trait implemented once and chosen nowhere — and the endpoint is already the
+/// thing that holds a base URL and a key.
+///
+/// The endpoint id is deliberately allowed to be empty *and* to name nothing: a
+/// fresh install has no speech provider, and both directions then refuse with a
+/// sentence about the setting rather than failing somewhere further in with a
+/// 404 that reads as a wrong key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Speech {
+    /// The id of an endpoint that serves audio. Empty means none is configured.
+    #[serde(default)]
+    pub endpoint: String,
+    /// The model that reads a script out. The vendor default, because it is the
+    /// name every endpoint that copies this shape accepts.
+    #[serde(default = "default_tts_model")]
+    pub tts_model: String,
+    #[serde(default = "default_voice")]
+    pub voice: String,
+    /// Published USD per minute of speech. 0 records the clip and reports its
+    /// money as unknown rather than as free.
+    #[serde(default)]
+    pub usd_per_minute: f64,
+}
+
+fn default_tts_model() -> String {
+    "tts-1".to_string()
+}
+
+fn default_voice() -> String {
+    "alloy".to_string()
+}
+
+impl Default for Speech {
+    fn default() -> Self {
+        Self {
+            endpoint: String::new(),
+            tts_model: default_tts_model(),
+            voice: default_voice(),
+            usd_per_minute: 0.0,
+        }
+    }
+}
+
 /// A named instruction block that is injected only in matching contexts, so
 /// "when you write a document, use this type" does not pollute every chat.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,6 +123,9 @@ pub struct Settings {
     /// first, so deleting an endpoint cannot leave the app unable to send.
     #[serde(default)]
     pub default_endpoint: String,
+    /// Where a voice comes from. See `Speech`.
+    #[serde(default)]
+    pub speech: Speech,
     /// The single base URL this app had before it knew about endpoints.
     ///
     /// Read once, folded into endpoint one and blanked — never a second answer to
@@ -238,6 +289,7 @@ impl Default for Settings {
         Self {
             endpoints: provider::seed(),
             default_endpoint: provider::SEED_ENDPOINT_ID.to_string(),
+            speech: Speech::default(),
             base_url: String::new(),
             chat_model: "deepseek-flash".to_string(),
             coding_model: "deepseek-v4-pro".to_string(),
@@ -296,6 +348,20 @@ impl Settings {
             .iter()
             .find(|endpoint| endpoint.id == self.default_endpoint)
             .or_else(|| self.endpoints.first())
+    }
+
+    /// The endpoint that speaks, if the user has named one that still exists.
+    ///
+    /// Same rule as `endpoint()` in one respect and deliberately not in another:
+    /// it matches by id rather than falling back to the first, because a chat
+    /// key pointed at a vendor with no audio API is a worse answer than "no
+    /// speech configured".
+    pub fn speech_endpoint(&self) -> Option<&Endpoint> {
+        let wanted = self.speech.endpoint.trim();
+        if wanted.is_empty() {
+            return None;
+        }
+        self.endpoints.iter().find(|endpoint| endpoint.id == wanted)
     }
 
     /// The model record for an id, searched in the default endpoint first and then
@@ -464,6 +530,42 @@ mod tests {
         assert_eq!(back.endpoint().unwrap().base_url, "https://gateway.internal/v1");
         assert_eq!(back.endpoints.len(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_speech_endpoint_is_matched_by_id_or_not_at_all() {
+        let mut s = Settings::default();
+        // A fresh install has no voice, and says so rather than picking the chat
+        // endpoint: a key pointed at a vendor with no audio API is a worse answer
+        // than "not configured".
+        assert!(s.speech_endpoint().is_none());
+        assert_eq!(s.speech.tts_model, "tts-1");
+        assert_eq!(s.speech.voice, "alloy");
+        assert_eq!(s.speech.usd_per_minute, 0.0);
+
+        s.speech.endpoint = provider::SEED_ENDPOINT_ID.to_string();
+        assert_eq!(s.speech_endpoint().unwrap().id, provider::SEED_ENDPOINT_ID);
+
+        // Deliberately *not* the fallback `endpoint()` makes: an id the user set
+        // and later deleted reads as unconfigured, because the alternative is
+        // sending a script to whichever endpoint happens to be first.
+        s.speech.endpoint = "deleted-this-morning".to_string();
+        assert!(s.speech_endpoint().is_none());
+        // Whitespace is not an endpoint either.
+        s.speech.endpoint = "   ".to_string();
+        assert!(s.speech_endpoint().is_none());
+    }
+
+    #[test]
+    fn a_settings_file_written_before_voice_existed_still_loads() {
+        // Written by serialising the real struct and dropping the field, which is
+        // what an older file looks like on disk.
+        let mut json = serde_json::to_value(Settings::default()).unwrap();
+        json.as_object_mut().unwrap().remove("speech");
+        let s: Settings = serde_json::from_value(json).unwrap();
+        assert_eq!(s.speech.tts_model, "tts-1");
+        assert!(s.speech.endpoint.is_empty());
+        assert!(s.speech_endpoint().is_none());
     }
 
     #[test]

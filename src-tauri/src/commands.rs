@@ -7,7 +7,8 @@ use chrono::Local;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 
-use crate::api::provider::Model;
+use crate::api::provider::{self, Model};
+use crate::api::speech;
 use crate::api::types::Attachment;
 use crate::approvals::Decision;
 use crate::backup;
@@ -21,7 +22,7 @@ use crate::searxng;
 use crate::skills;
 use crate::store::{
     db, keychain,
-    settings::{Instruction, Settings},
+    settings::{Instruction, Settings, Speech},
 };
 use crate::tools::{browse, desktop, exec, guard::{Egress, PermissionMode}, sandbox, sandbox_exec, walk};
 use crate::triggers;
@@ -2840,6 +2841,210 @@ fn mime_for(name: &str) -> String {
         _ => "application/octet-stream",
     }
     .to_string()
+}
+
+// ------------------------------------------------------------------ speech
+
+/// The sentence both speech commands start with, so an install with no voice
+/// configured reads the same wherever the user came in.
+const NO_SPEECH: &str = "No speech endpoint is configured — choose one, and its voice, in \
+Settings → Endpoints → Voice.";
+
+/// The endpoint that speaks, its key, and what to ask it for.
+///
+/// One place, because both directions need it and the *refusal* has to be the
+/// same one: a base URL and a key come from the endpoint, and a second copy of
+/// this is how one of the two ends up working while the other claims speech is
+/// not configured. This is also the whole reason the plan's "an endpoint for
+/// speech (`key_ref`)" needed no new machinery — an endpoint already is a base
+/// URL, a keychain account and a label.
+fn speech_target(state: &AppState) -> Result<(provider::Endpoint, Option<String>, Speech), String> {
+    let (endpoint, speech) = {
+        let settings = state.settings.lock().unwrap();
+        (
+            settings
+                .speech_endpoint()
+                .cloned()
+                .ok_or_else(|| NO_SPEECH.to_string())?,
+            settings.speech.clone(),
+        )
+    };
+    let key = keychain::get_key(&endpoint.key_ref)?;
+    Ok((endpoint, key, speech))
+}
+
+/// A script, and who will read it out.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioScript {
+    script: String,
+    /// The label of the endpoint that will speak, so the dialog can name the
+    /// vendor the user is about to pay.
+    endpoint: String,
+    model: String,
+    voice: String,
+}
+
+/// Writes the script for an audio overview, and prices it.
+///
+/// Two steps rather than one because the price has to be refused *before* the
+/// money is spent: the script is generated first (a cheap non-streaming call on
+/// the summariser's model, recorded on the same bill as everything else), then
+/// the clip is a second, deliberate action. The speech endpoint is checked
+/// before the script call for the same reason — a script nobody can read out is
+/// a call the user paid for and cannot use.
+#[tauri::command]
+pub async fn audio_script(
+    state: State<'_, AppState>,
+    chat_id: String,
+) -> Result<AudioScript, String> {
+    let (endpoint, _key, speech) = speech_target(&state)?;
+    let settings = state.settings.lock().unwrap().clone();
+    let rows = {
+        let conn = state.db.lock().unwrap();
+        db::list_messages(&conn, &chat_id).map_err(|e| e.to_string())?
+    };
+    let transcript = summarize::transcript(&rows);
+    if transcript.trim().is_empty() {
+        return Err("There is nothing in this conversation to read out yet.".to_string());
+    }
+
+    let client = crate::conversation::client(&state, &settings)?;
+    let model = settings.summary_model();
+    let (script, usage) = client
+        .complete(
+            &model,
+            speech::SCRIPT_SYSTEM,
+            &speech::script_prompt(&transcript, speech::MAX_SCRIPT_CHARS),
+            false,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    crate::conversation::record_overhead(&state, &settings, &chat_id, "audio-script", &model, &usage);
+
+    let script = script.trim().to_string();
+    if script.is_empty() {
+        return Err("The script came back empty — try again.".to_string());
+    }
+    Ok(AudioScript {
+        script,
+        endpoint: endpoint.label,
+        model: speech.tts_model,
+        voice: speech.voice,
+    })
+}
+
+/// What speaking this script will cost.
+///
+/// A command of its own, and pure — no model, no network, no money — for one
+/// reason: the dialog lets the script be edited, and the price has to follow it.
+/// Computed here rather than in the dialog because the arithmetic and the rate
+/// both live on this side, and a second copy of "how many characters is a
+/// minute" in TypeScript is exactly how the quoted price and the recorded one
+/// drift apart.
+#[tauri::command]
+pub fn audio_estimate(state: State<'_, AppState>, script: String) -> Result<speech::Estimate, String> {
+    let (_, _, speech) = speech_target(&state)?;
+    Ok(speech::estimate(script.chars().count(), speech.usd_per_minute))
+}
+
+/// A clip, and where it went.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioClip {
+    name: String,
+    path: String,
+    /// The bytes, for the player. The file is the copy that lasts; this is the
+    /// copy the dialog can play without a second round trip.
+    data_url: String,
+    seconds: u32,
+    usd: f64,
+    priced: bool,
+}
+
+/// Reads a script out loud and saves the clip into the chat's own folder.
+///
+/// The folder rather than the database, and not as an artifact: an artifact is a
+/// document whose every version is *text* in a table, and an mp3 has no business
+/// in a text column. The chat's folder is where this app already keeps the files
+/// a chat owns — the file panel browses it, and 📁 next to the title opens it —
+/// so the clip is a file like any other, which is what reopening one means.
+///
+/// The script is taken from the caller rather than regenerated, so what is
+/// spoken is exactly the text the user was shown the price for, edited or not.
+#[tauri::command]
+pub async fn audio_overview(
+    state: State<'_, AppState>,
+    chat_id: String,
+    script: String,
+) -> Result<AudioClip, String> {
+    let (endpoint, key, speech) = speech_target(&state)?;
+    let text = script.trim();
+    if text.is_empty() {
+        return Err("There is nothing to read out.".to_string());
+    }
+    let chars = text.chars().count();
+    let estimate = speech::estimate(chars, speech.usd_per_minute);
+    if !estimate.fits() {
+        // Refused rather than trimmed: the user was quoted a price and a length
+        // for this script, and half a script is neither of the things they were
+        // shown. The sentence says what would fit so the fix is obvious.
+        let minutes = speech::estimate(chars, 0.0).minutes().round() as u32;
+        return Err(format!(
+            "This script is {chars} characters (about {minutes} minutes) and one request reads out \
+             at most {} (about {} minutes) — shorten the script.",
+            speech::MAX_SCRIPT_CHARS,
+            speech::estimate(speech::MAX_SCRIPT_CHARS, 0.0).minutes().round() as u32
+        ));
+    }
+
+    let bytes = speech::speak(
+        &state.http,
+        &endpoint.base_url,
+        key.as_deref(),
+        &speech.tts_model,
+        &speech.voice,
+        text,
+    )
+    .await?;
+    let (path, name) = save_bytes(&state, &chat_id, "audio-overview.mp3", &bytes)?;
+
+    // Money, on the same table as every other call. Deliberately not
+    // `record_overhead`: that prices a *model* by the token from the rates the
+    // endpoint publishes, and speech has no tokens and is billed by the minute —
+    // so the rate comes from the settings and `priced` says whether there was
+    // one. A model with no published rate reads as unknown here too.
+    {
+        let conn = state.db.lock().unwrap();
+        let _ = db::record_turn_usage(
+            &conn,
+            &chat_id,
+            &format!("speech:{}", uuid::Uuid::new_v4()),
+            &db::TurnUsage {
+                model: &speech.tts_model,
+                kind: "speech",
+                priced: estimate.priced,
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
+                cost_usd: estimate.usd,
+            },
+            None,
+        );
+    }
+
+    Ok(AudioClip {
+        name,
+        path: path.display().to_string(),
+        data_url: format!(
+            "data:audio/mpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        ),
+        seconds: estimate.seconds,
+        usd: estimate.usd,
+        priced: estimate.priced,
+    })
 }
 
 // ------------------------------------------------------------------- files

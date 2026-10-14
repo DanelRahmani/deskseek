@@ -9,6 +9,8 @@ import type {
   ArtifactDetail,
   ArtifactEvent,
   Attachment,
+  AudioClip,
+  AudioScript,
   ChatRow,
   ComputerStateEvent,
   ContextBreakdown,
@@ -53,6 +55,7 @@ import type {
   ShotEvent,
   SkillImport,
   SkillView,
+  SpeechEstimate,
   SpendReport,
   TaskRun,
   ToolGrant,
@@ -230,6 +233,19 @@ export const api = {
    */
   reviseSelection: (input: ReviseRequest) =>
     invoke<string>("revise_selection", { ...input }),
+  /**
+   * Write the script for an audio overview of a chat, and price it. Two calls
+   * rather than one because the price comes before the money is spent.
+   */
+  audioScript: (chatId: string) => invoke<AudioScript>("audio_script", { chatId }),
+  /**
+   * What speaking this script costs. Pure on the other side, and called as the
+   * script is edited — the price has to follow the words.
+   */
+  audioEstimate: (script: string) => invoke<SpeechEstimate>("audio_estimate", { script }),
+  /** Read a script out loud and save the clip in the chat's folder. */
+  audioOverview: (chatId: string, script: string) =>
+    invoke<AudioClip>("audio_overview", { chatId, script }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
   mcpServers: () => invoke<McpServer[]>("mcp_servers"),
   mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),

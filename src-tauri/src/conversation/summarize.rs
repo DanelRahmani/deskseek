@@ -186,7 +186,12 @@ pub fn parse_summary(raw: &str) -> Result<Summary, String> {
     serde_json::from_str::<Summary>(body).map_err(|e| format!("the summariser returned invalid JSON: {e}"))
 }
 
-fn transcript(rows: &[db::MessageRow]) -> String {
+/// A chat's transcript as the lines a model reads: role, then what was said.
+///
+/// Shared rather than written twice, because the trimming rule is part of it —
+/// the tail is what a conversation arrived at — and a second copy of that is how
+/// one caller ends up summarising the beginning of a chat that has moved on.
+pub(crate) fn transcript(rows: &[db::MessageRow]) -> String {
     let mut out = String::new();
     for row in rows {
         let content = row.content.as_deref().unwrap_or("").trim();

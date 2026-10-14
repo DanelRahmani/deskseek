@@ -840,9 +840,11 @@ export function SettingsDialog({
               <EndpointsSection
                 endpoints={form.endpoints}
                 defaultEndpoint={form.defaultEndpoint}
+                speech={form.speech}
                 onChange={(endpoints, defaultEndpoint) =>
                   setForm((f) => ({ ...f, endpoints, defaultEndpoint }))
                 }
+                onSpeechChange={(speech) => setForm((f) => ({ ...f, speech }))}
                 save={saveAll}
                 onStatus={setStatus}
                 busy={busy}
