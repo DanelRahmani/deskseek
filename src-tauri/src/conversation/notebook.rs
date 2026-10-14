@@ -20,7 +20,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use crate::api::client::Client;
-use crate::api::types::Usage;
+use crate::api::types::{ChatMessage, ChatRequest, Content, StreamOptions, Usage};
 use crate::conversation::agent::push_instructions;
 use crate::retrieval;
 use crate::store::db;
@@ -48,12 +48,18 @@ pub const DIGEST_CHARS: usize = 16_000;
 
 /// The grounding contract, sent with every question.
 const GROUNDED: &str = "\
-The sources are listed above with what each one contains, and their text is given below.\n\n\
+The sources are listed above with what each one contains, and the text of the ones that matter is \
+given below.\n\n\
 Answer from them. Cite the source you used by writing its name in square brackets exactly as it \
 is written above — `[name]` for the whole of it, or `[name#Heading]` for one part. Never cite a \
 source that is not in that list: a citation the reader cannot look up is worse than no citation \
 at all. If the sources do not answer the question, say so plainly rather than filling the gap \
-from memory, and never present a guess as something a source said.";
+from memory, and never present a guess as something a source said.\n\n\
+When the list above is not enough, `source_search` finds the passages that bear on a question and \
+`read_source` reads one whole source. Those two, and reading the public web through \
+`fetch_url`/`web_search`, are the only ways you have of finding anything out — and when an answer \
+comes from the web rather than from a source, say so, because that is the difference between a \
+source you were given and something you looked up.";
 
 /// The instruction the digest call runs under.
 const DIGEST_SYSTEM: &str = "\
@@ -297,7 +303,8 @@ pub fn budget(items: &[(String, String)], total: usize, per_source: usize) -> Ve
 fn system_prompt(notebook: &db::NotebookRow, sources: &[db::SourceRow]) -> String {
     let mut base = format!(
         "# Notebook: {}\n\nYou answer questions about one notebook, from the sources it holds. \
-         Nothing else about this conversation exists — this is not a chat with a history.",
+         Earlier questions and their answers are part of this conversation, and a new question is \
+         answered the same way — from the sources.",
         notebook.title
     );
     push_instructions(&mut base, &mut Vec::new(), &notebook.instructions, "chat");
@@ -343,12 +350,161 @@ pub struct Asked {
     pub unresolved: Vec<String>,
 }
 
+/// How many tool rounds one question may take.
+///
+/// Four: enough for a search, a read, a second search and an answer, and few
+/// enough that a model which keeps looking cannot spend the user's money in a
+/// loop that never ends.
+const MAX_ROUNDS: usize = 4;
+
+/// How many earlier lines of a notebook's conversation travel with a new
+/// question, so that a follow-up is a follow-up rather than a fresh start.
+const HISTORY_MESSAGES: usize = 8;
+
+/// One tool call, run for a notebook.
+///
+async fn run_tool(
+    state: &AppState,
+    notebook_id: &str,
+    name: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    match name {
+        "source_search" => source_search(state, notebook_id, args).await,
+        "read_source" => read_source(state, notebook_id, args),
+        // The internet tools read the public web rather than a folder, and the
+        // app already owns how they are run — settings, the browser, the search
+        // provider — so this defers to that rather than a second copy.
+        "fetch_url" | "browser_read" | "web_search" => {
+            crate::conversation::agent::run_browse_tool(state, name, args).await
+        }
+        other => Err(format!(
+            "'{other}' is not available in a notebook. Its sources are the only files it can \
+             read."
+        )),
+    }
+}
+
+/// The notebook's enabled sources, as `(name, path)`.
+///
+/// The filter is applied where the search happens as well as where the catalogue
+/// is built, because a switch that took a source out of the prompt but left it
+/// answering tool calls would not be a switch.
+fn enabled_sources(state: &AppState, notebook_id: &str) -> Result<Vec<db::SourceRow>, String> {
+    let conn = state.db.lock().unwrap();
+    let rows = db::list_sources(&conn, notebook_id).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().filter(|s| s.enabled).collect())
+}
+
+/// The passages of this notebook's sources that match a query.
+async fn source_search(
+    state: &AppState,
+    notebook_id: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    let query = crate::conversation::agent::argument(args, "query");
+    if query.is_empty() {
+        return Err("source_search needs a query".to_string());
+    }
+    let sources = enabled_sources(state, notebook_id)?;
+    if sources.is_empty() {
+        return Err("This notebook has no sources switched on.".to_string());
+    }
+    let root = state.paths.notebook_sources_dir(notebook_id);
+    let roots = [root];
+    let hits = {
+        let conn = state.db.lock().unwrap();
+        crate::retrieval::index_roots(&conn, &roots, crate::retrieval::MAX_PASS_BYTES)?;
+        let found = crate::retrieval::search(&conn, &roots, &query, crate::retrieval::RECALL_CHUNKS)?;
+        live_hits(found, &sources)
+    };
+    if hits.is_empty() {
+        return Ok(format!(
+            "Nothing in this notebook's sources matches \"{query}\". The sources are: {}.",
+            sources
+                .iter()
+                .map(|s| s.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    let mut out = String::new();
+    for hit in &hits {
+        out.push_str(&format!(
+            "\n## [{}]\n\n{}\n",
+            crate::retrieval::label_for(&hit.root, &hit.path, &hit.heading),
+            hit.text.trim()
+        ));
+    }
+    Ok(out)
+}
+
+/// One source in full, by the name the catalogue shows.
+fn read_source(
+    state: &AppState,
+    notebook_id: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    let wanted = crate::conversation::agent::argument(args, "name");
+    if wanted.is_empty() {
+        return Err("read_source needs a name".to_string());
+    }
+    let sources = enabled_sources(state, notebook_id)?;
+    let found = sources
+        .iter()
+        .find(|s| s.name.eq_ignore_ascii_case(&wanted))
+        .ok_or_else(|| {
+            format!(
+                "This notebook has no source called '{wanted}'. Its sources are: {}.",
+                sources
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })?;
+    let text = found.extract.clone().unwrap_or_default();
+    if text.trim().is_empty() {
+        return Err(format!("'{}' has no readable text in it.", found.name));
+    }
+    Ok(format!("## [{}]\n\n{text}", found.name))
+}
+
+/// The hits that belong to a source the notebook still has switched on.
+///
+/// The switch has to hold here as well as in the catalogue, and this is the
+/// place it does: a source taken out of the prompt but still answering tool
+/// calls would not be switched off, it would be hidden. It takes the notebook's
+/// whole source list rather than a pre-filtered one, so a caller that forgets to
+/// filter cannot quietly re-enable a source — the filter is here, once.
+fn live_hits(hits: Vec<db::ChunkHit>, sources: &[db::SourceRow]) -> Vec<db::ChunkHit> {
+    let live: Vec<&str> = sources
+        .iter()
+        .filter(|s| s.enabled)
+        .filter_map(|s| s.path.as_deref())
+        .collect();
+    hits.into_iter()
+        .filter(|hit| live.contains(&hit.path.as_str()))
+        .collect()
+}
+
+/// One message of a notebook's own conversation, as the wire reads it.
+fn plain(role: &str, content: &str) -> ChatMessage {
+    ChatMessage {
+        role: role.to_string(),
+        content: Some(Content::text(content)),
+        ..Default::default()
+    }
+}
+
 /// Asks a notebook a question, from its enabled sources, and records both halves.
 ///
-/// Deliberately not a turn: no tools, no approvals and no chat row. A question
-/// here is a grounded read of a source set, and giving it the agent loop would
-/// make every surface that reads a chat — the sidebar, the spend rows, the
-/// scheduler, memory — learn about a second kind of conversation.
+/// A bounded read-only loop rather than a turn: the catalogue and the passages
+/// that match are in the prompt, the notebook's two tools and the internet ones
+/// are offered, and there are no writes, no approvals and no chat row. Giving
+/// this the agent loop instead would make every surface that reads a chat — the
+/// sidebar, the spend rows, the scheduler, memory — learn about a second kind of
+/// conversation to gain nothing a notebook needs.
 pub async fn ask(
     state: &AppState,
     notebook_id: &str,
@@ -379,15 +535,87 @@ pub async fn ask(
     };
     let client = crate::conversation::client(state, &settings)?;
     let system = system_prompt(&notebook, &enabled);
-    let (raw, usage) = client
-        .complete(&model, &system, question, false)
-        .await
-        .map_err(|e| e.to_string())?;
+    let tools: Vec<crate::api::types::Tool> = crate::tools::tools_for_notebook()
+        .into_iter()
+        .map(|(tool, _)| tool)
+        .collect();
+
+    // What was already asked and answered, so a follow-up lands on top of it.
+    let history: Vec<ChatMessage> = {
+        let conn = state.db.lock().unwrap();
+        let rows = db::list_notebook_messages(&conn, notebook_id).map_err(|e| e.to_string())?;
+        let start = rows.len().saturating_sub(HISTORY_MESSAGES);
+        rows[start..]
+            .iter()
+            .map(|row| plain(&row.role, &row.content))
+            .collect()
+    };
+
+    let cancel = crate::runs::Cancel::new();
+    let mut usage = Usage::default();
+    let mut turns: Vec<ChatMessage> = Vec::new();
+    let mut answer = String::new();
+    for _ in 0..MAX_ROUNDS {
+        let mut messages = vec![plain("system", &system)];
+        messages.extend(history.iter().cloned());
+        messages.extend(turns.iter().cloned());
+        messages.push(plain("user", question));
+        let request = ChatRequest {
+            model: model.clone(),
+            messages,
+            stream: true,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
+            // A grounded read of a folder is not the place to pay for reasoning,
+            // and the notebook has no effort control to consult.
+            thinking: None,
+            reasoning_effort: None,
+            max_tokens: None,
+            tools: Some(tools.clone()),
+        };
+        let outcome = client
+            .stream_chat(&request, &cancel, |_| {})
+            .await
+            .map_err(|failure| failure.message)?;
+        crate::api::provider::merge_usage(&mut usage, &outcome.usage);
+
+        let calls = outcome.message.tool_calls.clone().unwrap_or_default();
+        if calls.is_empty() {
+            answer = outcome
+                .message
+                .content
+                .as_ref()
+                .and_then(Content::as_text)
+                .unwrap_or_default()
+                .trim()
+                .to_string();
+            break;
+        }
+        // The assistant's call, then one result per call, is the shape every
+        // dialect reads back — the same pairing the agent loop sends.
+        turns.push(outcome.message);
+        for call in calls {
+            let args: serde_json::Value =
+                serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
+            let result = match run_tool(state, notebook_id, &call.function.name, &args).await {
+                Ok(text) => text,
+                // A refused or failed call is the model's to read and recover
+                // from, not an error that loses the question.
+                Err(reason) => format!("That call failed: {reason}"),
+            };
+            turns.push(ChatMessage {
+                role: "tool".to_string(),
+                content: Some(Content::text(result)),
+                tool_call_id: Some(call.id.clone()),
+                ..Default::default()
+            });
+        }
+    }
     // Priced like every other call nobody typed: the notebook id stands in the
     // chat column, and the kind is what the spend view groups it under.
     crate::conversation::record_overhead(state, &settings, notebook_id, "notebook", &model, &usage);
 
-    let answer = raw.trim().to_string();
     if answer.is_empty() {
         return Err("The answer came back empty — try again.".to_string());
     }
@@ -465,6 +693,38 @@ mod tests {
         assert_eq!(state_of(Some(&file), &second), "missing");
         assert_eq!(state_of(None, &second), "missing");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_source_that_is_switched_off_cannot_be_searched() {
+        let mut live = source("q3.pdf", "Numbers.", true);
+        live.path = Some("C:/sources/q3.pdf".to_string());
+        let mut off = source("secret.md", "Private.", false);
+        off.path = Some("C:/sources/secret.md".to_string());
+        // A hit with no source row at all — a file that was removed from the
+        // notebook while its chunks were still in the index.
+        let stray = db::ChunkHit {
+            root: "C:/sources".to_string(),
+            path: "C:/sources/gone.md".to_string(),
+            heading: String::new(),
+            text: "text".to_string(),
+            score: 1.0,
+        };
+        let hit = |path: &str| db::ChunkHit {
+            root: "C:/sources".to_string(),
+            path: path.to_string(),
+            heading: String::new(),
+            text: "text".to_string(),
+            score: 1.0,
+        };
+        let found = vec![
+            hit("C:/sources/q3.pdf"),
+            hit("C:/sources/secret.md"),
+            stray,
+        ];
+        let kept = live_hits(found, &[live, off]);
+        assert_eq!(kept.len(), 1, "only the switched-on source may answer");
+        assert!(kept[0].path.ends_with("q3.pdf"));
     }
 
     #[test]

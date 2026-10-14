@@ -522,6 +522,55 @@ CREATE TABLE IF NOT EXISTS notebook_outputs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notebook_outputs ON notebook_outputs(notebook_id, created_at);
+
+-- One chunk of one document, so a question can be answered from the part that
+-- bears on it rather than from everything in the folder.
+--
+-- `root` is the folder the walk started from, and it is what scopes a search: a
+-- chat searches its own folder and its workspace, a notebook searches its own
+-- sources folder, and neither can see the other's rows.
+--
+-- `text` is the one copy of the chunk. The FTS index beside it is external-content
+-- over this table, exactly like `messages_fts` over `messages`, so reindexing is
+-- always possible from the rows themselves and no trigger can leave the index
+-- saying something the table does not.
+--
+-- `fingerprint` is the file's size and mtime when these chunks were made, which is
+-- the same key a source's digest uses: one rule for "has this file moved", read by
+-- the index to decide whether a file is worth reading again.
+CREATE TABLE IF NOT EXISTS chunks (
+    id          TEXT PRIMARY KEY,
+    root        TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    -- The heading the chunk sits under, or '' for a document's preamble.
+    heading     TEXT NOT NULL DEFAULT '',
+    ordinal     INTEGER NOT NULL,
+    text        TEXT NOT NULL,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    indexed_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+CREATE INDEX IF NOT EXISTS idx_chunks_root ON chunks(root, path);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+    text,
+    content='chunks',
+    content_rowid='rowid'
+);
+
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+    INSERT INTO chunks_fts(chunks_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+    INSERT INTO chunks_fts(rowid, text) VALUES (new.rowid, new.text);
+END;
 "#;
 
 /// The column names of a table, or nothing when the table does not exist yet.
@@ -3599,6 +3648,120 @@ pub fn list_notebook_outputs(
 pub fn remove_notebook_output(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM notebook_outputs WHERE id = ?1", [id])?;
     Ok(())
+}
+
+// ------------------------------------------------------------------ chunks
+
+/// One indexed piece of one document, as a search returns it.
+#[derive(Debug, Clone)]
+pub struct ChunkHit {
+    pub root: String,
+    pub path: String,
+    /// The heading the chunk sits under, or empty for a document's preamble.
+    pub heading: String,
+    pub text: String,
+    /// `bm25`, which is lower for a better match. Carried because the caller
+    /// searches one root at a time and has to put the roots back in one order.
+    pub score: f64,
+}
+
+/// The fingerprint a file's chunks were made from, or `None` when it has none.
+///
+/// One row is enough: every chunk of a file is written in the same transaction
+/// from the same read, so they cannot disagree about what they were made from.
+pub fn chunk_fingerprint(conn: &Connection, path: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT fingerprint FROM chunks WHERE path = ?1 LIMIT 1",
+        [path],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// Every file the index holds under one root — so a file that has been deleted
+/// can be swept out of the index rather than answering questions forever.
+pub fn indexed_paths(conn: &Connection, root: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT DISTINCT path FROM chunks WHERE root = ?1")?;
+    let rows = stmt.query_map([root], |r| r.get(0))?;
+    rows.collect()
+}
+
+/// Replaces one file's chunks, and answers how many it now has.
+///
+/// A delete and an insert in one transaction rather than an update per chunk: a
+/// file that shrank would otherwise leave its old tail in the index, answering
+/// questions with text that is no longer in it.
+pub fn replace_chunks(
+    conn: &Connection,
+    root: &str,
+    path: &str,
+    fingerprint: &str,
+    chunks: &[(String, String)],
+) -> rusqlite::Result<usize> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM chunks WHERE path = ?1", [path])?;
+    let ts = now_ts();
+    for (ordinal, (heading, text)) in chunks.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO chunks (id, root, path, heading, ordinal, text, fingerprint, indexed_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                root,
+                path,
+                heading,
+                ordinal as i64,
+                text,
+                fingerprint,
+                ts
+            ],
+        )?;
+    }
+    tx.commit()?;
+    Ok(chunks.len())
+}
+
+pub fn delete_path_chunks(conn: &Connection, path: &str) -> rusqlite::Result<usize> {
+    conn.execute("DELETE FROM chunks WHERE path = ?1", [path])
+}
+
+/// The best chunks in **one** root for a query, best first.
+///
+/// One root at a time on purpose: `bm25` is only comparable between rows of the
+/// same search, so the alternative — one query filtered by a set of roots — would
+/// either need dynamic SQL or let a large corpus crowd out a small one. The caller
+/// asks per root and merges, which is a loop rather than a second rule.
+///
+/// The tiebreak is `path, ordinal` for the reason the message search has one:
+/// `bm25` alone leaves equally-scored rows in whatever order the query planner
+/// walks, and two runs of the same question would then cite different chunks.
+pub fn search_chunks(
+    conn: &Connection,
+    root: &str,
+    query: &str,
+    limit: i64,
+) -> rusqlite::Result<Vec<ChunkHit>> {
+    let Some(expr) = fts_query(query) else {
+        return Ok(Vec::new());
+    };
+    let mut stmt = conn.prepare(
+        "SELECT c.root, c.path, c.heading, c.text, bm25(chunks_fts)
+         FROM chunks_fts
+         JOIN chunks c ON c.rowid = chunks_fts.rowid
+         WHERE chunks_fts MATCH ?1 AND c.root = ?2
+         ORDER BY bm25(chunks_fts), c.path, c.ordinal
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![expr, root, limit.max(1)], |r| {
+        Ok(ChunkHit {
+            root: r.get(0)?,
+            path: r.get(1)?,
+            heading: r.get(2)?,
+            text: r.get(3)?,
+            score: r.get(4)?,
+        })
+    })?;
+    rows.collect()
 }
 
 #[cfg(test)]

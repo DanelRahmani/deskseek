@@ -2354,30 +2354,68 @@ and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not 
   copy when it is not, which is what copying it in was for.
 - **Stop**: sources, questions and outputs persist and can be added to later.
 
-### 5.4 [M] Grounded retrieval, and the two ways it is consumed
+### 5.4 [M] Grounded retrieval, and the two ways it is consumed ✅
 - **Why**: the cheapest way to make "answer from these documents, with citations" real, and the
   index a notebook cannot work without.
-- **Files**: `tools/walk.rs` (a chunk walk beside `find_named`), `store/db.rs` (a `chunks` table and
-  a `chunks_fts` built like `messages_fts`), `src-tauri/src/retrieval.rs` (**new** — the index, the
-  query, the label, and the rule that decides whether a citation resolves),
-  `conversation/assemble.rs` (`chunks_block`, beside `memory_block`), `conversation/agent.rs` (the
-  injection for a chat, beside the recalled-memory block), `src/lib/citation.ts` +
-  `citation.check.ts` (**new**), `src/components/Markdown.tsx`.
+- **Files**: `store/db.rs` (the `chunks` table, `chunks_fts` and its three triggers, `ChunkHit`,
+  `chunk_fingerprint`, `indexed_paths`, `replace_chunks`, `delete_path_chunks`, `search_chunks`);
+  `retrieval.rs` (the index and the query: `is_indexable`, `chunks_of`, `index_roots`, `search`,
+  `label_for`, and the four caps); `conversation/assemble.rs` (`chunks_block`, beside
+  `memory_block`); `conversation/agent.rs` (the injection in `system_prompt`, and two words:
+  `argument` and `run_browse_tool` are now `pub(crate)`); `conversation/notebook.rs` (the bounded
+  read-only loop, `run_tool`, `source_search`, `read_source`, `live_hits`, and the prompt's account
+  of what the model may do); `tools/mod.rs` (`is_notebook_tool`, `tools_for_notebook`, the two
+  declarations, and the filter in `tools_for`); new `src/lib/citation.ts` + `citation.check.ts`
+  (the 18th check script), `package.json`.
 - **Shape**: chunk by heading, falling back to fixed windows for a document without headings, and
-  label every chunk `source#Heading`. The index is external-content FTS5 over a `chunks` table, so
-  `sources.extract` stays the one copy of the text and a chunk row is always rebuildable — the same
-  relationship `messages_fts` has with `messages`. Freshness is per file, by fingerprint, so a
-  thousand unchanged files cost one `stat` each and no parsing. Two consumers, one index: a **chat**
-  has the top-k chunks injected into its prompt with their labels (the archive's 5.4 as written, over
-  the chat's own folder and the workspace), while a **notebook** is offered two tools instead —
-  `source_search(query)` across its enabled sources, and `read_source(label)`. A citation naming a
-  source that was not retrieved is a bug, and that rule is this module's, not the prompt's.
-- **Test**: chunking splits on headings and loses no line; an unchanged file is not re-indexed while
-  a changed one is; the file that contains the words outranks one that does not; the injected budget
-  holds; a citation naming a retrieved source resolves while one naming a stranger is caught; a
-  disabled source is not searchable; and `read_source` refuses a label the notebook does not hold.
-  `citation.check.ts` holds the frontend half — a citation that names something real reads as a
-  reference, and one that names nothing stays plain text rather than becoming a dead link.
+  label every chunk `path#Heading` relative to the root it was found under. The index is
+  external-content FTS5 over `chunks`, so a chunk is always rebuildable and the table is the one
+  copy — the same relationship `messages_fts` has with `messages`. Freshness is per file, by
+  fingerprint, and **one comparison answers two questions**: the rail's *stale* and "is this worth
+  reading again". Two consumers, one index: a **chat** has the top-k excerpts injected into its
+  prompt with their labels, and a **notebook** is offered `source_search` and `read_source` instead,
+  both scoped to the sources that are switched on. The citation rule is the module's, not the
+  prompt's: a citation naming a source that was not there to be read is a bug, and it is caught.
+- **Test**: `cargo test` 465 → **471**. `retrieval::tests` — `a_document_becomes_chunks_at_its_headings`
+  (the preamble is a chunk with no heading, a long section is split at a line boundary and keeps its
+  heading, nothing is lost in the split, and blank text is no chunk at all),
+  `only_markdown_is_chunked_by_its_hashes` (a Python file's `#` is a comment and stays one; the same
+  text read as markdown is two sections; a heading with nothing under it contributes nothing), and
+  `the_index_reads_a_file_once_and_again_only_when_it_moves` — the freshness rule and the sweep, on
+  a **real file-backed database and a real folder**: two files read and a picture skipped, a second
+  pass reading nothing, the words found and labelled `notes.md#Revenue`, a changed file re-read with
+  its old chunk gone rather than answering alongside the new one, a deleted file swept out, and a
+  spent budget stopping a pass that the next one finishes.
+  `conversation::notebook::tests` gained `a_source_that_is_switched_off_cannot_be_searched` (a
+  switched-off source and a file whose row is gone are both refused by the tool, not just hidden
+  from the catalogue). `conversation::assemble::tests` gained
+  `the_excerpts_block_labels_every_chunk_and_stays_in_its_budget` (no excerpts is no section; every
+  label is relative rather than a path; the contract travels with the excerpts; the budget stops a
+  chunk rather than half-including one). `tools::tests` gained
+  `the_notebooks_tools_are_offered_to_a_notebook_and_to_nothing_else` (neither section, in any mode,
+  is offered either tool; a notebook gets both plus the three internet ones; everything a notebook
+  is offered is `Read`, so the loop needs no approval path).
+  **Falsified**: inverting the citation predicate
+  (`filter(|c| !known(c))` → `filter(|c| known(c))`) fails `a_citation_that_names_nothing_is_caught`
+  with `left: ["q3.pdf", "notes.md#Costs"], right: ["strategy-2030.docx"]` — the two sources the
+  answer really used reported as the invented ones, and the fabricated citation waved through, which
+  is the exact bug this item's own spec names — after checking the mutation reached the disk, and
+  restoring passes. **Seven deviations, said out loud**: `tools/walk.rs` is **untouched**, because
+  `walk_files` and `should_skip` already are the walk and "how a document becomes chunks" is the
+  index's rule rather than the walker's; the corpus is **the one folder the chat works in**
+  (`agent::workspace_for`) rather than "its own folder and the workspace", because this app already
+  treats those as one thing for a chat and that function is the single answer the file tree uses
+  too; **only markdown is chunked by its hashes**, since a `#` in a `.py`, `.yml` or shell file is a
+  comment and would otherwise make every comment line a section; indexing happens **inside the
+  prompt build**, one `stat` per file per turn and at most 4 MB read per pass, with the ceiling and
+  the upgrade path written down at the constant; `Markdown.tsx` is **untouched** — an inline chip
+  needs an mdast plugin, and the honest v1 is a reference strip under the answer assembled from the
+  stored labels, which 8.2 draws and `citation.ts` describes; a **chat's** answer stores no citation
+  list, so a chat renders no chips yet and only a notebook does, the upgrade being one column on a
+  message the way `notebook_messages` already has one; and the notebook's question is now a **bounded
+  read-only loop** (its two tools, the three internet ones, no approvals, no browser session, no chat
+  row), which is what the owner asked for and is why two existing tool-count assertions were
+  rewritten to compare against a list rather than a number.
 - **Stop**: asking about a folder answers from it, and every citation names a file that was actually
   retrieved.
 

@@ -9,7 +9,7 @@ Tick a box only when the result matches. If something fails, note the step numbe
 ## Setup
 
 - [ ] `npm run typecheck` passes
-- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme / motion / tree / a11y / tray / changelog)
+- [ ] `npm run check` passes (shell / transcript / filing / tasks / artifact / chart / docs / shortcuts / commands / snippet / theme / motion / tree / a11y / tray / changelog / audio / citation)
 - [ ] `cd src-tauri; cargo test` passes
 - [ ] `npm run tauri build` produces an installer and the app launches from it
 - [ ] `CHANGELOG.md` has a dated section for the version being tagged, and `node scripts/release-notes.mjs v<version>` prints exactly it
@@ -390,6 +390,10 @@ the parts only a person can see.
 
 ## Notebooks
 
+- [ ] Asking about a document that is in this chat's folder answers from it, and the answer names
+      the file and the heading it used — with no attachment made to the message
+- [ ] The same chat, asked something unrelated to the folder, arrives with no excerpts (the
+      *Context* panel shows no *Files* part), and the answer is not worse for it
 - [ ] Adding a real `.pdf`/`.docx` copies it into the notebook's own folder and the source appears
       with a digest line saying what it contains
 - [ ] Adding a URL reads the page once and keeps it as a file beside the others; a page with

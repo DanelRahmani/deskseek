@@ -114,6 +114,8 @@ Changing behaviour in this app is usually changing one of these.
 | The profile (`MEMORY.md`) versus one file per category | `memory.rs`, `memory_files.rs` |
 | What a notebook is, what a source's `ok`/`stale`/`missing` means and when its digest is worth paying for again (one fingerprint answers both), and how much of a source reaches the model — a catalogue of the enabled ones, never the corpus | `conversation/notebook.rs`, `store/db.rs` |
 | What a citation is, and whether one names a source that was actually there | `retrieval.rs` |
+| What a chat reads out of its own folder, what a document becomes as chunks, and the budget the excerpts stay inside | `retrieval.rs`, `conversation/assemble.rs` |
+| Which tools a notebook's question may use, as opposed to a chat's | `tools/mod.rs` |
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |
@@ -143,6 +145,7 @@ pins).
 | Reading one version out of the changelog | `src/lib/changelog.ts` |
 | The composer draft that survives a crash | `src/lib/draft.ts` |
 | How a clip's length and price read, why an unknown rate is not zero, and where a dictation lands and what it is called on the wire | `src/lib/audio.ts` |
+| How a citation reads once it is stored — the file and the part of it — and whether the notebook still holds the source it names | `src/lib/citation.ts` |
 
 ## Tests and the gate
 

@@ -1180,7 +1180,48 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
             Tool::function("git_push", "Push the current branch to its remote.", params(json!({}), &[])),
             ToolClass::Command,
         ),
+        (
+            Tool::function(
+                "source_search",
+                "Search the sources of the notebook you are answering for, and get back the passages that match, each labelled with its source and heading. Use it when the one-line descriptions in the source list are not enough to answer.",
+                params(json!({"query": {"type": "string", "description": "What to look for — words or a question, not a single word if you can help it."}}), &["query"]),
+            ),
+            ToolClass::Read,
+        ),
+        (
+            Tool::function(
+                "read_source",
+                "Read one of the notebook's sources in full, when you need the whole of it rather than the passages that match a word.",
+                params(json!({"name": {"type": "string", "description": "The source's name, exactly as the source list spells it."}}), &["name"]),
+            ),
+            ToolClass::Read,
+        ),
     ]
+}
+
+/// The two tools a notebook's own questions may use. Nothing else does: they
+/// name a source set, and a chat has no source set — it has a folder, which its
+/// own file tools already read.
+pub fn is_notebook_tool(name: &str) -> bool {
+    matches!(name, "source_search" | "read_source")
+}
+
+/// The toolset for a notebook's question: its own two tools, and the internet
+/// ones so a fact can be checked against the web.
+///
+/// Read-only by construction, which is what makes the notebook's loop need no
+/// approval path at all — there is nothing here that can change anything.
+pub fn tools_for_notebook() -> Vec<(Tool, ToolClass)> {
+    builtin_tools()
+        .into_iter()
+        .filter(|(tool, _)| {
+            is_notebook_tool(&tool.function.name)
+                || matches!(
+                    tool.function.name.as_str(),
+                    "fetch_url" | "browser_read" | "web_search"
+                )
+        })
+        .collect()
 }
 
 /// The toolset for a section. Chat mode gets the document tools only — no
@@ -1188,6 +1229,10 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
 pub fn tools_for(section: &str) -> Vec<(Tool, ToolClass)> {
     builtin_tools()
         .into_iter()
+        // The notebook's two tools mean nothing outside a notebook: they take a
+        // source set, not a folder. `tools_for_notebook` is the only list that
+        // offers them, and this is what keeps them out of every chat.
+        .filter(|(tool, _)| !is_notebook_tool(&tool.function.name))
         .filter(|(tool, _)| {
             section == "coding"
                 || !matches!(
@@ -1221,6 +1266,42 @@ pub fn class_of(tool: &str) -> ToolClass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_notebooks_tools_are_offered_to_a_notebook_and_to_nothing_else() {
+        // A chat has a folder, not a source set, and its own file tools already
+        // read it — so `source_search` there would be a tool about nothing.
+        for section in ["chat", "coding"] {
+            for mode in [AgentMode::Agent, AgentMode::Plan, AgentMode::Standard] {
+                let offered = tools_for_mode(section, mode);
+                let names: Vec<&str> = offered
+                    .iter()
+                    .map(|(t, _)| t.function.name.as_str())
+                    .collect();
+                for tool in ["source_search", "read_source"] {
+                    assert!(
+                        !names.contains(&tool),
+                        "{section}/{mode:?} was offered {tool}"
+                    );
+                }
+            }
+        }
+        // A notebook gets its two, and the web ones, and nothing that can write.
+        let notebook = tools_for_notebook();
+        let names: Vec<&str> = notebook.iter().map(|(t, _)| t.function.name.as_str()).collect();
+        for tool in ["source_search", "read_source", "fetch_url", "web_search"] {
+            assert!(names.contains(&tool), "a notebook needs {tool}");
+        }
+        assert!(
+            notebook.iter().all(|(_, class)| *class == ToolClass::Read),
+            "a notebook must be offered nothing that can change anything"
+        );
+        // And every one of them is a real declaration rather than a name in a
+        // list: `class_of` would answer `Command` for a tool nobody declared.
+        for (tool, _) in &notebook {
+            assert_eq!(class_of(&tool.function.name), ToolClass::Read);
+        }
+    }
 
     #[test]
     fn the_mode_decides_which_tools_are_offered_at_all() {
@@ -1260,14 +1341,16 @@ mod tests {
         assert!(plan.len() < builtin_tools().len());
 
         // Standard and agent differ in whether they ask, not in what they may
-        // reach, so both offer the section's whole list.
+        // reach, so both offer the section's whole list — the notebook's own two
+        // are not part of a section's list at all, which is what `section_tools`
+        // counts.
         assert_eq!(
             tools_for_mode("coding", AgentMode::Standard).len(),
-            builtin_tools().len()
+            section_tools().len()
         );
         assert_eq!(
             tools_for_mode("coding", AgentMode::Agent).len(),
-            builtin_tools().len()
+            section_tools().len()
         );
         // A permissive mode does not erase the section's own limit.
         assert!(tools_for_mode("chat", AgentMode::Agent).len() < builtin_tools().len());
@@ -1656,9 +1739,21 @@ mod tests {
         assert!(!names.iter().any(|n| n.starts_with("git_")));
     }
 
+    /// Every built-in a *section* may be offered: all of them but the notebook's
+    /// own two, which take a source set rather than a folder and are offered by
+    /// `tools_for_notebook` alone. Written as a list rather than as a count so
+    /// that adding a notebook tool cannot make these tests wrong by arithmetic.
+    fn section_tools() -> Vec<String> {
+        builtin_tools()
+            .into_iter()
+            .map(|(t, _)| t.function.name)
+            .filter(|name| !is_notebook_tool(name))
+            .collect()
+    }
+
     #[test]
     fn coding_mode_has_everything() {
-        assert_eq!(tools_for("coding").len(), builtin_tools().len());
+        assert_eq!(tools_for("coding").len(), section_tools().len());
     }
 
     #[test]

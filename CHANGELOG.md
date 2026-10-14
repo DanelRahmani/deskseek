@@ -14,6 +14,7 @@ one.
 
 ## 0.5.0 — unreleased
 
+- Asking about something in a chat's folder now answers from the file itself: the passages that match the question are read into the prompt and cited by file and heading, so a document does not have to be attached to every question about it
 - A **notebook** holds its own sources instead of a chat holding a folder: add a file or a page, switch any of them on or off, and each is listed with a line saying what it contains. Questions are answered from those sources and cite them, so an answer names the document it came from rather than describing one you cannot find
 - Skills move in and out: import a folder of `SKILL.md` directories written for Claude or Gemini, or export the whole library in that same open shape
 - Another assistant's memory file or prompt folder imports into editable categories and saved prompts — additive, with nothing already written overwritten

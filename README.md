@@ -280,6 +280,15 @@ Both sections are functional:
     are left out, and a document whose words are a picture (a scan) says so rather than coming
     back empty. Revising a document means reading it and creating it again, not editing the
     original in place
+- **Grounded answers in a chat** — a question about something in this chat's folder is answered
+  from the file itself: the passages that match are read into the turn and the answer cites the
+  file and the heading it used, so a report does not have to be attached to every question about
+  it. The folder is indexed as it is asked about, one `stat` per file per turn, and a question
+  that matches nothing gets no excerpts at all
+  - Honest limits: what is read is text the app can extract — a scan with no text in it is not
+    indexed — and the index reaches a few dozen documents per turn, so a very large folder fills
+    in over the first few questions rather than all at once. Above a megabyte a file is left out
+    rather than read into every prompt
 - **Notebooks** — a notebook is its own place for a set of sources and the questions asked of them:
   add a file or a page and it is copied into the notebook's own folder, listed with a line saying
   what it contains, and switchable on or off. The model is sent that *catalogue* — the names and
