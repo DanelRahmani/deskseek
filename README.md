@@ -305,6 +305,10 @@ Both sections are functional:
     readable, because the notebook keeps its own copy. An output is a document in the notebook's
     folder rather than an artifact, because an artifact belongs to a chat and a notebook has none
     — a question asked of a source set is not a turn
+  - **A symbol of its own**: one emoji — a dozen educational ones are offered and any other can be typed
+    from the emoji keyboard — drawn beside the name in the list, the tab and the notebook's own header,
+    so a list of notebooks is not six identical rows. The name is edited where it is shown, and a rename
+    reaches the list at once
   - **Reading a source**: the card has room for a name, a state and three lines of description, so
     *Read* opens the whole thing beside the facts the rail cannot hold — where the file came from, the
     copy the notebook keeps, how much text was read out of it, and when it was described

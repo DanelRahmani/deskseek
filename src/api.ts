@@ -328,6 +328,10 @@ export const api = {
   listNotebooks: () => invoke<NotebookRow[]>("list_notebooks"),
   createNotebook: (title: string) => invoke<NotebookRow>("create_notebook", { title }),
   renameNotebook: (id: string, title: string) => invoke<void>("rename_notebook", { id, title }),
+  /** The one emoji beside a notebook's name: what was stored comes back, because the
+   *  rule trims and can refuse. */
+  setNotebookSymbol: (id: string, symbol: string) =>
+    invoke<string | null>("set_notebook_symbol", { id, symbol }),
   setNotebookModel: (id: string, model: string) =>
     invoke<void>("set_notebook_model", { id, model }),
   setNotebookInstructions: (id: string, instructions: Instruction[]) =>

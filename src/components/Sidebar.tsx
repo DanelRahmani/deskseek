@@ -218,7 +218,13 @@ export function Sidebar({
                   : "text-neutral-300 hover:bg-neutral-800/50"
               }`}
             >
-              <Icon name="book" size={13} className="shrink-0 text-sky-400" />
+              {book.symbol ? (
+                <span aria-hidden="true" className="shrink-0 text-[14px] leading-none">
+                  {book.symbol}
+                </span>
+              ) : (
+                <Icon name="book" size={13} className="shrink-0 text-sky-400" />
+              )}
               <span className="min-w-0 flex-1 truncate">{book.title}</span>
             </button>
           ))}

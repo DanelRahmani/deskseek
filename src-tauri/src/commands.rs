@@ -1614,6 +1614,25 @@ pub fn set_notebook_model(state: State<'_, AppState>, id: String, model: String)
     db::set_notebook_model(&conn, &id, &model).map_err(|e| e.to_string())
 }
 
+/// The one emoji drawn beside a notebook's name.
+///
+/// Returns what was **stored** rather than nothing, because the rule trims and can
+/// refuse: the window that drew the picker needs the value the notebook actually has,
+/// not the one it sent, or a symbol with a stray space in it would be shown as the
+/// reader typed it and stored as something else.
+#[tauri::command]
+pub fn set_notebook_symbol(
+    state: State<'_, AppState>,
+    id: String,
+    symbol: String,
+) -> Result<Option<String>, String> {
+    let checked = crate::conversation::notebook::symbol(&symbol)?;
+    let conn = state.db.lock().unwrap();
+    db::set_notebook_symbol(&conn, &id, checked.as_deref().unwrap_or(""))
+        .map_err(|e| e.to_string())?;
+    Ok(checked)
+}
+
 /// Replaces a notebook's rules — the same blocks a project and the settings use,
 /// edited by the same component in the window.
 #[tauri::command]

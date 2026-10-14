@@ -70,6 +70,11 @@ export function NotebookShell({
   const [question, setQuestion] = useState("");
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
+  /** The symbol this notebook carries, as the header draws it: held here because the
+   *  picker changes it and the view is only re-read on a reload. */
+  const [symbol, setSymbol] = useState("");
+  /** The symbol picker, while it is open. */
+  const [symbolOpen, setSymbolOpen] = useState(false);
   /** The menu of things this notebook can make, read from Rust rather than
    *  spelled again here. */
   const [generators, setGenerators] = useState<Generator[]>([]);
@@ -86,6 +91,7 @@ export function NotebookShell({
     const next = await api.openNotebook(notebookId);
     setView(next);
     setTitle(next.notebook.title);
+    setSymbol(next.notebook.symbol);
     // Returned as well as stored, so a caller can see what changed: an answer that
     // made a study set is the one thing here the reader has to be *told* about,
     // because it appears in a list rather than in the reply.
@@ -218,16 +224,56 @@ export function NotebookShell({
   const sourceNames = view.sources.map((s) => s.name);
   const notebook = view.notebook;
 
+  /**
+   * Give this notebook a symbol, or take one away.
+   *
+   * The value shown is the one Rust stored rather than the one that was sent: the rule
+   * trims what it is given, and a picker that drew back the raw text would disagree
+   * with the notebook the rest of the app is reading. A refusal is shown where every
+   * other refusal here is — the status line — and it refuses before writing, so a
+   * rejected symbol leaves the notebook exactly as it was.
+   */
+  const chooseSymbol = async (next: string) => {
+    setSymbolOpen(false);
+    try {
+      const stored = await api.setNotebookSymbol(notebookId, next);
+      setSymbol(stored ?? "");
+      // The list, the picker in this header and the tab all draw the symbol from the
+      // app's own map, so it has to be told the row changed.
+      onChanged();
+      setStatus(stored ? `Symbol set to ${stored}.` : "Symbol taken off.");
+    } catch (e) {
+      setStatus(String(e));
+    }
+  };
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-neutral-950">
       <div className="flex shrink-0 items-center gap-2 border-b border-neutral-800/80 px-3 py-2">
-        <Icon name="book" size={14} className="shrink-0 text-sky-400" />
+        {/* The symbol is the button: what the notebook looks like in every list is what
+            you press to change it, so the header gains no control of its own. */}
+        <button
+          onClick={() => setSymbolOpen(true)}
+          aria-label="The notebook's symbol"
+          title="Give this notebook a symbol"
+          className="shrink-0 rounded-lg px-1 py-0.5 text-[15px] leading-none transition duration-150 hover:bg-neutral-800"
+        >
+          {symbol ? (
+            <span aria-hidden="true">{symbol}</span>
+          ) : (
+            <Icon name="book" size={14} className="text-sky-400" />
+          )}
+        </button>
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           onBlur={() => {
             if (title.trim() && title.trim() !== notebook.title) {
-              void act(() => api.renameNotebook(notebookId, title.trim()));
+              void act(() => api.renameNotebook(notebookId, title.trim())).then((ok) => {
+                // The name in every list comes from the app's map, so a rename has to
+                // reach it or the sidebar and the tab keep showing the old one.
+                if (ok) onChanged();
+              });
             }
           }}
           aria-label="Notebook title"
@@ -241,7 +287,7 @@ export function NotebookShell({
         >
           {notebooks.map((n) => (
             <option key={n.id} value={n.id}>
-              {n.title}
+              {n.symbol ? `${n.symbol} ${n.title}` : n.title}
             </option>
           ))}
         </select>
@@ -557,6 +603,13 @@ export function NotebookShell({
       {taking && (
         <StudySetDialog set={taking} sources={sourceNames} onClose={() => setTaking(null)} />
       )}
+      {symbolOpen && (
+        <SymbolPicker
+          current={symbol}
+          onPick={(next) => void chooseSymbol(next)}
+          onClose={() => setSymbolOpen(false)}
+        />
+      )}
       {picking && (
         <MakePanel
           entries={generators}
@@ -833,6 +886,138 @@ function Rules({
         <button onClick={() => setOpen(false)} className={quiet}>
           Done
         </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The symbols offered without reaching for a keyboard: the dozen a notebook of
+ * sources is most often about.
+ *
+ * A short list rather than a picker of three thousand, and deliberately the
+ * *educational* ones — a book, a pen, a graduation cap, a flask — because that is what
+ * a notebook is for. Anything else is typed instead: the operating system's own emoji
+ * keyboard is one chord away (Win + . on Windows), and a field that takes what is pasted
+ * beats a grid nobody can search.
+ */
+const SYMBOLS = [
+  "📚",
+  "📝",
+  "🎓",
+  "🧪",
+  "🧬",
+  "🔬",
+  "🧠",
+  "💡",
+  "🗺️",
+  "⚖️",
+  "🌍",
+  "🧮",
+  "🎼",
+  "🩺",
+  "🏛️",
+  "💻",
+];
+
+/**
+ * One emoji, chosen from the dozen or typed by hand, or taken off.
+ *
+ * The rule about what a symbol *is* — one emoji, not a word — is Rust's rather than
+ * this file's, so the field below does not try to be clever about what is typed: it
+ * sends it, and the refusal comes back as the status line, exactly where a refusal to
+ * make something already appears.
+ */
+function SymbolPicker({
+  current,
+  onPick,
+  onClose,
+}: {
+  current: string;
+  onPick: (symbol: string) => void;
+  onClose: () => void;
+}) {
+  const [typed, setTyped] = useState("");
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-950/60 pt-24"
+      onMouseDown={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="The notebook's symbol"
+        className="w-[24rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-2xl border border-neutral-800 bg-neutral-900 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
+          <span className="min-w-0 flex-1 text-sm font-medium text-neutral-200">
+            A symbol for this notebook
+          </span>
+          <button
+            autoFocus
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-lg p-1 text-neutral-500 transition duration-150 hover:bg-neutral-800 hover:text-neutral-200"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+
+        <div className="p-4">
+          <div className="grid grid-cols-8 gap-1">
+            {SYMBOLS.map((one) => (
+              <button
+                key={one}
+                onClick={() => onPick(one)}
+                title={`Use ${one}`}
+                className={`rounded-lg py-1.5 text-[17px] leading-none transition duration-150 hover:bg-neutral-800 ${
+                  one === current ? "bg-neutral-800 ring-1 ring-sky-600" : ""
+                }`}
+              >
+                <span aria-hidden="true">{one}</span>
+              </button>
+            ))}
+          </div>
+
+          <label className="mt-4 block">
+            <span className="text-[11px] tracking-wide text-neutral-500 uppercase">
+              Or any emoji
+            </span>
+            <input
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && typed.trim()) {
+                  e.preventDefault();
+                  onPick(typed.trim());
+                }
+              }}
+              placeholder="Type or paste one — Win + . opens the emoji keyboard"
+              aria-label="A symbol typed by hand"
+              className="mt-1 w-full rounded-lg bg-neutral-950 px-2.5 py-1.5 text-[13px] text-neutral-100 outline-hidden"
+            />
+          </label>
+
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => onPick(typed.trim())}
+              disabled={typed.trim().length === 0}
+              className="rounded-lg bg-sky-600 px-2.5 py-1.5 text-[12px] text-white transition duration-150 hover:bg-sky-500 disabled:opacity-40"
+            >
+              Use this
+            </button>
+            <button onClick={() => onPick("")} className={quiet}>
+              No symbol
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+            One emoji, beside the name rather than instead of it — a word here is refused.
+          </p>
+        </div>
       </div>
     </div>
   );

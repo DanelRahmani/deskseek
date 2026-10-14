@@ -121,6 +121,19 @@ function fileSize(bytes: number): string {
   return kb < 1024 ? `${Math.max(1, Math.round(kb))} KB` : `${(kb / 1024).toFixed(1)} MB`;
 }
 
+/**
+ * A notebook's name as every list draws it: its symbol, then its title.
+ *
+ * One function rather than a concatenation at each call site, because the tab, the
+ * sidebar and the pane's own picker have to agree about what a notebook is called —
+ * and "🦠 Biology" is the name when it has a symbol, not two things that happen to be
+ * printed next to each other.
+ */
+function notebookLabel(notebook: NotebookRow | undefined): string {
+  if (!notebook) return "Notebook";
+  return notebook.symbol ? `${notebook.symbol} ${notebook.title}` : notebook.title;
+}
+
 export default function App() {
   // A crash on demand, so the error boundary can be eyeballed without editing
   // code: `localStorage.setItem("deskseek.crash", "1")` then reload. It clears
@@ -1901,7 +1914,7 @@ export default function App() {
         <TabStrip
           tabs={tabs.map((id) => ({
             id,
-            title: chatsById[id]?.title ?? notebooksById[id]?.title ?? "Notebook",
+            title: chatsById[id]?.title ?? notebookLabel(notebooksById[id]),
             notebook: !chatsById[id] && !!notebooksById[id],
           }))}
           panes={panes}

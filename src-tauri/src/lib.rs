@@ -408,6 +408,7 @@ pub fn run() {
             commands::create_notebook,
             commands::rename_notebook,
             commands::set_notebook_model,
+            commands::set_notebook_symbol,
             commands::set_notebook_instructions,
             commands::delete_notebook,
             commands::open_notebook,

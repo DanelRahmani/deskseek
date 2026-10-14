@@ -425,6 +425,13 @@ the parts only a person can see.
       open in the focused pane marked, and picking a row opens that one there
 - [ ] *+ New notebook* makes a **second** notebook and opens it in the focused pane, and both are in the
       list with the new one marked — `/notebook` shows this list rather than opening a notebook by itself
+- [ ] A notebook can be given a **symbol**: the glyph in its header opens a picker of a dozen educational
+      emoji plus a field for any emoji typed from the OS keyboard, *No symbol* takes it off, and it then
+      shows in the sidebar row, the header's own picker and the tab
+- [ ] Typing a word into the symbol field is refused with a sentence the reader can act on, and the
+      notebook keeps the symbol it already had
+- [ ] Renaming a notebook in its header updates the sidebar list and the tab **at once**, rather than
+      keeping the old name until something else refreshes them
 - [ ] The message search box is not shown while the notebooks are listed, and switching back to *Chat*
       or *Coding* returns to the section you were in rather than resetting it
 - [ ] A notebook pane sits beside a chat (split), both answer, and both are still there after a

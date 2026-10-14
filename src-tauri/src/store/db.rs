@@ -454,7 +454,13 @@ CREATE TABLE IF NOT EXISTS notebooks (
     -- fresh one hold it in the same place.
     model        TEXT NOT NULL DEFAULT '',
     created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL
+    updated_at   INTEGER NOT NULL,
+    -- One emoji the reader picked, drawn beside the name wherever the name is.
+    -- Written **last** on purpose: this column was added after the table had shipped,
+    -- and `ALTER TABLE` can only append — so a fresh database has to hold it in the
+    -- same place as an upgraded one, or the row reader below reads whatever happens
+    -- to sit at that index.
+    symbol       TEXT NOT NULL DEFAULT ''
 );
 
 -- One document a notebook holds.
@@ -715,6 +721,12 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     );
     let _ = conn.execute(
         "ALTER TABLE scheduled_tasks ADD COLUMN model TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    // A notebook's one emoji, added in Phase 18 — so every database written before
+    // it needs the column, and the `CREATE TABLE` above puts it in the same place.
+    let _ = conn.execute(
+        "ALTER TABLE notebooks ADD COLUMN symbol TEXT NOT NULL DEFAULT ''",
         [],
     );
 
@@ -3266,6 +3278,11 @@ pub struct NotebookRow {
     /// a scheduled task carries, and blank for the same reason.
     #[serde(default)]
     pub model: String,
+    /// One emoji drawn beside the name, or `''` for none. One character's worth of
+    /// identity, so a list of notebooks can be told apart at a glance; the rule that
+    /// keeps it from becoming a second name lives in `conversation::notebook`.
+    #[serde(default)]
+    pub symbol: String,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -3363,7 +3380,7 @@ pub struct StudySetRow {
     pub created_at: i64,
 }
 
-const NOTEBOOK_COLS: &str = "id, title, instructions, model, created_at, updated_at";
+const NOTEBOOK_COLS: &str = "id, title, instructions, model, created_at, updated_at, symbol";
 const SOURCE_COLS: &str = "id, notebook_id, name, kind, origin, path, enabled, extract, digest, \
      digest_at, fingerprint, created_at";
 const NOTEBOOK_MESSAGE_COLS: &str = "id, notebook_id, seq, role, content, citations_json, created_at";
@@ -3381,6 +3398,7 @@ fn notebook_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookRow> {
         model: r.get(3)?,
         created_at: r.get(4)?,
         updated_at: r.get(5)?,
+        symbol: r.get(6)?,
     })
 }
 
@@ -3475,6 +3493,7 @@ pub fn create_notebook(conn: &Connection, title: &str) -> rusqlite::Result<Noteb
         title: title.to_string(),
         instructions: Vec::new(),
         model: String::new(),
+        symbol: String::new(),
         created_at: ts,
         updated_at: ts,
     })
@@ -3495,6 +3514,19 @@ pub fn set_notebook_model(conn: &Connection, id: &str, model: &str) -> rusqlite:
     conn.execute(
         "UPDATE notebooks SET model = ?2 WHERE id = ?1",
         params![id, model.trim()],
+    )?;
+    Ok(())
+}
+
+/// The one emoji drawn beside this notebook's name.
+///
+/// Deliberately does not touch `updated_at`, for the reason a rule edit does not
+/// either: the list is ordered by it, and choosing a symbol is not activity — it
+/// would reshuffle the sidebar under the reader's hand.
+pub fn set_notebook_symbol(conn: &Connection, id: &str, symbol: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE notebooks SET symbol = ?2 WHERE id = ?1",
+        params![id, symbol.trim()],
     )?;
     Ok(())
 }
@@ -3794,6 +3826,9 @@ pub fn fill_notebook_copy(
     };
     set_notebook_instructions(conn, to_id, &source.instructions)?;
     set_notebook_model(conn, to_id, &source.model)?;
+    // The symbol comes with it, like the title: it is the notebook's own identity
+    // rather than a fact about its contents.
+    set_notebook_symbol(conn, to_id, &source.symbol)?;
 
     let out = from_dir.display().to_string();
     let into = to_dir.display().to_string();
@@ -4113,7 +4148,22 @@ mod tests {    use super::*;
                 );
                 INSERT INTO scheduled_tasks
                     (id, title, prompt, freq, time, weekday, nth, enabled, next_run_at, created_at)
-                    VALUES ('task-1', 'Before triggers', 'p', 'daily', '09:00', 0, 1, 1, 1, 1);",
+                    VALUES ('task-1', 'Before triggers', 'p', 'daily', '09:00', 0, 1, 1, 1, 1);
+                -- And a notebook from before a notebook could carry a symbol. This is the
+                -- case the column's position is about: `SCHEMA` writes it last on a fresh
+                -- database and the ALTER appends it to one written earlier, so both paths
+                -- must land it at the same index or the row reader reads the wrong column
+                -- — which only a real file can prove, since either way the table is there.
+                CREATE TABLE notebooks (
+                    id           TEXT PRIMARY KEY,
+                    title        TEXT NOT NULL,
+                    instructions TEXT NOT NULL DEFAULT '[]',
+                    model        TEXT NOT NULL DEFAULT '',
+                    created_at   INTEGER NOT NULL,
+                    updated_at   INTEGER NOT NULL
+                );
+                INSERT INTO notebooks (id, title, created_at, updated_at)
+                    VALUES ('book-1', 'A notebook before symbols', 1, 1);",
             )
             .unwrap();
         }
@@ -4178,6 +4228,15 @@ mod tests {    use super::*;
                 "an upgraded database has no {table} table"
             );
         }
+
+        // The `symbol` ALTER ran on this file, and it ran into the *same place* the
+        // fresh `CREATE TABLE` puts it: the old notebook kept its title, reads with no
+        // symbol rather than with whatever sat at that index, and can be given one.
+        let book = get_notebook(&conn, "book-1").unwrap().expect("the old notebook");
+        assert_eq!(book.title, "A notebook before symbols");
+        assert_eq!(book.symbol, "");
+        set_notebook_symbol(&conn, "book-1", "🎓").unwrap();
+        assert_eq!(get_notebook(&conn, "book-1").unwrap().unwrap().symbol, "🎓");
 
         // The index that actually failed must really exist now. "Did not crash"
         // would also be satisfied by the batch silently skipping it.
@@ -5776,10 +5835,30 @@ mod tests {    use super::*;
     }
 
     #[test]
+    fn a_symbol_is_carried_by_a_copy_and_set_without_moving_the_notebook() {
+        let conn = mem();
+        let book = create_notebook(&conn, "Macro").unwrap();
+        assert_eq!(book.symbol, "", "a new notebook has no symbol");
+
+        // Stored trimmed, and stored *without* touching `updated_at`: the list is
+        // ordered by that, so picking an emoji must not reshuffle the sidebar.
+        set_notebook_symbol(&conn, &book.id, "  🎓  ").unwrap();
+        let after = get_notebook(&conn, &book.id).unwrap().unwrap();
+        assert_eq!(after.symbol, "🎓");
+        assert_eq!(after.updated_at, book.updated_at, "a symbol is not activity");
+
+        // Taking it away is a set to nothing rather than a delete: the notebook is
+        // the thing that is kept.
+        set_notebook_symbol(&conn, &book.id, "").unwrap();
+        assert_eq!(get_notebook(&conn, &book.id).unwrap().unwrap().symbol, "");
+    }
+
+    #[test]
     fn a_copy_carries_the_sources_and_the_outputs_but_not_the_questions() {
         let conn = mem();
         let original = create_notebook(&conn, "Thesis").unwrap();
         set_notebook_model(&conn, &original.id, "a-model").unwrap();
+        set_notebook_symbol(&conn, &original.id, "🎓").unwrap();
         set_notebook_instructions(
             &conn,
             &original.id,
@@ -5864,6 +5943,9 @@ mod tests {    use super::*;
         assert_eq!(copy.model, "a-model");
         assert_eq!(copy.instructions.len(), 1);
         assert_eq!(copy.instructions[0].name, "Cite everything");
+        // The symbol comes too: it is the notebook's own identity, like its title,
+        // rather than a fact about what it contains.
+        assert_eq!(copy.symbol, "🎓");
 
         // The sources come, in order, with their digests and their switches, and
         // every path now points inside the copy's own folder.

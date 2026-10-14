@@ -3169,8 +3169,7 @@ chosen from the common educational ones or from their own emoji keyboard.
 leaves the sidebar list and the tab strip showing the old title until something else re-reads the map: the
 list 17.3 added did not create that staleness, it made it visible.
 
-Nothing in this phase is built except 18.1, which has its ✅ and its record; 18.2's Test line still says what a
-check *will* be.
+Both items are built, each with its ✅ and its record.
 
 ### 18.1 [M] Make is a button, and it opens a bento panel ✅
 - **Why**: the entry you want should be the biggest, most inviting thing on the rail, and it should have
@@ -3218,15 +3217,16 @@ check *will* be.
 - **Stop**: pressing *Make* opens a panel of tiles, every tile opens the same form it did before, and the
   rail carries one button where eight rows and a paragraph used to be.
 
-### 18.2 [M] The notebook's symbol, and a name that keeps up
+### 18.2 [M] The notebook's symbol, and a name that keeps up ✅
 - **Why**: a list of notebooks you cannot tell apart is not a list you can choose from, and the name in the
   pane and the name in the list must be the same name.
-- **Files**: `store/db.rs` (the column, the guarded `ALTER`, the row, `set_notebook_symbol`, the copy path,
-  the round-trip and upgrade tests); `conversation/notebook.rs` (`symbol()` and its cap, with tests);
-  `commands.rs` and `lib.rs` (`set_notebook_symbol`); `src/api.ts`, `src/types.ts`;
-  `src/components/NotebookShell.tsx` (the picker, and telling the app when the row changed),
-  `src/components/Sidebar.tsx` (the symbol in the row); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
-  `docs/E2E-CHECKLIST.md`; `plan.md`.
+- **Files**: `store/db.rs` (the `symbol` column last in `SCHEMA`, the guarded `ALTER`, `NotebookRow`,
+  `NOTEBOOK_COLS`, `set_notebook_symbol`, the copy path, a round-trip test and the upgrade test extended);
+  `conversation/notebook.rs` (`symbol()`, `MAX_SYMBOL_CHARS`, and its test); `commands.rs`, `lib.rs`;
+  `src/api.ts`, `src/types.ts`; `src/components/NotebookShell.tsx` (the header button, the picker, the
+  header's own `<select>`, and the rename that now tells the app); `src/components/Sidebar.tsx` (the symbol
+  in the row); `src/App.tsx` (`notebookLabel`); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`,
+  `docs/E2E-CHECKLIST.md`; `plan.md`. No new dependency.
 - **Shape**: a notebook's **symbol** is one emoji stored on its own row (`notebooks.symbol`, added to
   `SCHEMA` **and** as a guarded `ALTER`, because an existing database has the table already), shown
   wherever the name already is — the sidebar row, the header's own picker, the tab beside it. The picker is
@@ -3237,13 +3237,33 @@ check *will* be.
   digit, and an empty field *clears* rather than refuses — so a stray paste cannot become the notebook's
   name. Finally the pane reports a changed row through the `onChanged` it already has, so a rename reaches
   the sidebar list and the tab at once instead of waiting for the next unrelated refresh.
-- **Test**: `cargo test` — the store round trip (set, read back, cleared, and **carried by a copy**), the
-  upgrade test proving the column exists on a database the previous build created, and `symbol()`: an
-  ordinary emoji is kept; a *sequence* (a joined or skin-toned one) is kept whole rather than cut to a
-  character; surrounding space is trimmed; `""` clears; and a word, a 200-character paste and anything
-  containing a letter or a digit are each refused with a sentence the window can show the reader.
-  `npm run typecheck`, the 19 checks and `npm run build`. **Falsified**: the refusal rule removed, watched
-  failing on the word case.
+- **Test**: `cargo test` 490 → **492**. `a_symbol_is_one_emoji_and_never_a_second_name` — an ordinary emoji
+  is kept with its surrounding space trimmed; a **joined** sequence (👨‍👩‍👧, 🧑🏽‍🎓) is kept whole, which is
+  the reason the cap is eight *characters* rather than one; `""` and `"   "` are a clear rather than an
+  error; and a word, a symbol with a word beside it, a bare digit and a paste past the cap are each
+  refused, with the refusal naming where the words belong. `a_symbol_is_carried_by_a_copy_and_set_without_moving_the_notebook`
+  — set, read back trimmed, cleared, and `updated_at` unchanged, because the list is ordered by it and picking
+  an emoji must not reshuffle the sidebar. The **copy** test now sets a symbol and asserts the copy carries
+  it, and `an_older_database_upgrades_instead_of_refusing_to_open` gained a `notebooks` table *without* the
+  column, then reads the old row (title kept, no symbol) and writes one — which is the only way to prove the
+  guarded `ALTER` and the fresh `CREATE TABLE` agree about where the column sits. Then `npm run typecheck`,
+  all **19** checks (`a11y.check.ts` over **42** components) and `npm run build`: green.
+  **Falsified, and the first attempt was not one.** Replacing the letter rule with
+  `if text.chars().any(|c| c.is_ascii_punctuation) {` — *without* the parentheses — does not compile
+  (`E0615: method, not a field`), and `cargo test` exits **101 for a build failure exactly as it does for a
+  failing test**: the `MUT=101` I read first proved nothing at all. With the parentheses the mutation
+  compiles and the test fails on the rule — `MUT=101`, `could not compile` **0**, and
+  `panicked at src\conversation\notebook.rs:1993:13: "🎓 Chem" should not be a symbol`,
+  `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 491 filtered out` (491 + 1 = 492). The
+  needle was confirmed on disk before the run and the original confirmed back after it, with the mutant
+  count 0 and the gate re-run green at `GATE OK`. One detail the mutation taught me about my own test: the
+  example word `Chemistry` is nine characters, so it is caught by the **cap** before the letter rule ever
+  sees it — the two rules are pried apart by the run, and each is guarded by at least one case. The full
+  suite caught that too: the first complete run failed on my own
+  `assert!(symbol("Chemistry").unwrap_err().contains("title"))`, because the cap's sentence is the one that
+  fires. The **test** was corrected (a shorter word trips the letter rule, a nine-character one trips the
+  cap, and the pair says the two rules are separate) rather than the rule, and the suite then ran
+  **492 passed; 0 failed** with no warnings.
 - **Stop**: a notebook can be given one of the offered emoji or one typed by hand, it shows in the list and
   the header, *None* takes it away, and renaming in the pane updates the list immediately.
 

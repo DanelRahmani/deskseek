@@ -88,6 +88,9 @@ export interface ProjectSpend {
 export interface NotebookRow {
   id: string;
   title: string;
+  /** One emoji drawn beside the name, or "" for none. The rule that keeps it from
+   *  becoming a second name is Rust's (`conversation/notebook.rs`). */
+  symbol: string;
   /** The notebook's own rules, in the same shape a project's take. */
   instructions: Instruction[];
   /** The model questions run on, or "" for the chat default. */

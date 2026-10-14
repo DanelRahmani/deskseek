@@ -1001,6 +1001,45 @@ pub fn without_title(markdown: &str) -> &str {
     }
 }
 
+// ------------------------------------------------------------------ the symbol
+
+/// How long a notebook's symbol may be, in characters.
+///
+/// Eight is not a tidy number picked for looks: a joined emoji — a family, a
+/// lecturer, a flag with a skin tone — is several code points, so the cap has to sit
+/// above the longest real one rather than above the longest that looks nice.
+pub const MAX_SYMBOL_CHARS: usize = 8;
+
+/// A notebook's symbol as it will be stored, or the reason it is not one.
+///
+/// The rule this enforces is that a symbol is **not a second name**. A value with a
+/// letter or a digit in it is a word, and a caption long enough to hold a sentence is
+/// a description; both would be the notebook's identity written in a field nobody
+/// reads as the title. Empty is `None` rather than a refusal, because taking a symbol
+/// off is something a reader does on purpose.
+///
+/// It lives here rather than in the command that calls it for the same reason the
+/// rest of the notebook's rules do: this is a rule *about notebooks*, and the window
+/// is one of several callers that will ever exist.
+pub fn symbol(text: &str) -> Result<Option<String>, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(None);
+    }
+    if text.chars().count() > MAX_SYMBOL_CHARS {
+        return Err(format!(
+            "A symbol is one emoji rather than a description — {MAX_SYMBOL_CHARS} characters at most."
+        ));
+    }
+    if text.chars().any(char::is_alphanumeric) {
+        return Err(
+            "A symbol is an emoji rather than a name: the words belong in the notebook's title."
+                .to_string(),
+        );
+    }
+    Ok(Some(text.to_string()))
+}
+
 /// A number an entry declares a field for, inside that field's own bounds.
 ///
 /// Zero is `None` rather than a refusal: "none of them" is a real answer for a
@@ -1934,6 +1973,34 @@ That is everything the sources settle.";
         assert_eq!(without_title("# Title"), "");
     }
 
+    #[test]
+    fn a_symbol_is_one_emoji_and_never_a_second_name() {
+        // An ordinary one, and the surrounding space a paste brings with it.
+        assert_eq!(symbol("  🎓  ").unwrap(), Some("🎓".to_string()));
+        // A joined sequence is *one* symbol although it is several characters: this is
+        // why the cap is eight rather than one, and why it is not a byte count.
+        assert_eq!(symbol("👨‍👩‍👧").unwrap(), Some("👨‍👩‍👧".to_string()));
+        assert_eq!(symbol("🧑🏽‍🎓").unwrap(), Some("🧑🏽‍🎓".to_string()));
+
+        // Taking one off is a thing a reader does on purpose, not an error.
+        assert_eq!(symbol("").unwrap(), None);
+        assert_eq!(symbol("   ").unwrap(), None);
+
+        // A word, a word with a symbol beside it, a bare digit, and a paste of emoji
+        // past what a symbol can hold. The last one is the case the cap exists for.
+        let pasted = "📚".repeat(MAX_SYMBOL_CHARS + 1);
+        for bad in ["Chemistry", "🎓 Chem", "2", pasted.as_str()] {
+            assert!(symbol(bad).is_err(), "{bad:?} should not be a symbol");
+        }
+        // And the refusal says which rule it was, because it is read by the reader
+        // rather than by us. The same word trips the *cap* first — `Chemistry` is
+        // nine characters — so the sentence about the title belongs to a shorter one;
+        // that the two rules are genuinely separate is what the pair asserts.
+        assert!(symbol("Chem").unwrap_err().contains("title"));
+        assert!(symbol("Chemistry").unwrap_err().contains("at most"));
+        assert!(symbol(&pasted).unwrap_err().contains("at most"));
+    }
+
     /// The call shape the two tests below are about, so that they are tests of the
     /// rules rather than of JSON plumbing.
     fn quiz_args() -> serde_json::Value {
@@ -2243,6 +2310,7 @@ That is everything the sources settle.";
         let notebook = db::NotebookRow {
             id: "n".to_string(),
             title: "Thesis".to_string(),
+            symbol: String::new(),
             instructions: vec![
                 Instruction {
                     id: "1".to_string(),
