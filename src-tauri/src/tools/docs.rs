@@ -3,10 +3,11 @@
 //! Everything the model writes arrives as Markdown, and one small line-based
 //! reader turns it into blocks. That is deliberately *not* a Markdown
 //! implementation: it reads the subset a model actually writes for a document —
-//! headings, bullets, numbered lists, tables, fenced code, paragraphs — and
-//! treats anything it does not recognise as a paragraph. Every writer consumes
-//! the same blocks, so `.docx` and `.pdf` cannot disagree about what the
-//! document says.
+//! headings, bullets, numbered lists, tables, fenced code, paragraphs, and the two
+//! things a paper needs that prose never did, an indented line for an option and a
+//! `\pagebreak` line so a cover is a page rather than a title — and treats
+//! anything it does not recognise as a paragraph. Every writer consumes the same
+//! blocks, so `.docx` and `.pdf` cannot disagree about what the document says.
 //!
 //! The PDF is rendered by the Chromium-family browser already on the machine
 //! (`--print-to-pdf`), the same binary `browse.rs` already finds — no second
@@ -23,10 +24,21 @@ pub enum Block {
     /// `depth` is the nesting level, 0 for a top-level bullet.
     Bullet { depth: u8, text: String },
     Numbered { text: String },
+    /// A line that arrived indented — an exam option under its question. The
+    /// indent is a fact about the line, not four characters kept in its text.
+    Indented(String),
     Paragraph(String),
     Table(Vec<Vec<String>>),
     Code(String),
+    /// A `\pagebreak` line: the block after it starts a page. A cover is only a
+    /// cover if what it covers opens on the next page.
+    Break,
 }
+
+/// The one line that means "start a page here". Exported because the cover that
+/// uses it is written in another module, and a second copy of the string is how
+/// the two would drift.
+pub const PAGE_BREAK: &str = "\\pagebreak";
 
 /// Caps, so one call cannot ask for a 200 MB spreadsheet or a 5,000-slide deck.
 const MAX_SLIDES: usize = 60;
@@ -47,6 +59,12 @@ const BODY_SIZE: usize = 11;
 const HEADING_SIZES: [usize; 3] = [16, 14, 12];
 const CODE_FONT: &str = "Consolas";
 const CODE_SIZE: usize = 10;
+
+/// How far an indented line sits in from the margin, in twips — twentieths of a
+/// point, which is what Word measures an indent in. Half an inch, Word's own step.
+/// The printed page uses the same distance derived from this rather than typed a
+/// second time.
+const INDENT_TWIPS: i32 = 720;
 
 /// A heading's size, by level.
 ///
@@ -104,6 +122,21 @@ fn numbered(line: &str) -> Option<String> {
     }
     let body = rest[digits..].strip_prefix(". ")?;
     Some(body.trim().to_string())
+}
+
+/// A line that arrives indented and is not a list item: how an exam option is
+/// written. The indent is read as a fact so the writers can set a real one — four
+/// leading spaces in a Word document are four characters wide, not four spaces of
+/// margin, which is what a paper indented by spaces looks like.
+fn indented(line: &str) -> Option<String> {
+    let rest = line.trim_start();
+    let lead = line.len() - rest.len();
+    // Four spaces, or a tab: a model that indents with a tab means the same thing,
+    // and a tab left in the text is a character Word will not print.
+    if lead < 4 && !line.starts_with('\t') {
+        return None;
+    }
+    Some(rest.to_string())
 }
 
 fn is_table_row(line: &str) -> bool {
@@ -176,12 +209,19 @@ pub fn parse_blocks(md: &str) -> Vec<Block> {
             continue;
         }
 
+        if trimmed.trim() == PAGE_BREAK {
+            out.push(Block::Break);
+            continue;
+        }
+
         if let Some((level, text)) = heading(trimmed) {
             out.push(Block::Heading { level, text });
         } else if let Some((depth, text)) = bullet(trimmed) {
             out.push(Block::Bullet { depth, text });
         } else if let Some(text) = numbered(trimmed) {
             out.push(Block::Numbered { text });
+        } else if let Some(text) = indented(trimmed) {
+            out.push(Block::Indented(text));
         } else {
             out.push(Block::Paragraph(trimmed.trim().to_string()));
         }
@@ -359,22 +399,44 @@ fn docx_bytes(blocks: &[Block]) -> Result<Vec<u8>, String> {
     // Word has no "list" here, so bullets and numbers are written into the
     // text. `number` resets whenever the run of numbered lines is broken.
     let mut number = 0usize;
+    // A break is a property of the block that follows it rather than a paragraph of
+    // its own: a paragraph holding a break would leave an empty line at the top of
+    // the page it had just started, which is the one thing a cover is for.
+    let mut fresh_page = false;
     for block in blocks {
         if !matches!(block, Block::Numbered { .. }) {
             number = 0;
         }
+        if matches!(block, Block::Break) {
+            fresh_page = true;
+            continue;
+        }
+        let start = |paragraph: Paragraph| {
+            if fresh_page {
+                paragraph.page_break_before(true)
+            } else {
+                paragraph
+            }
+        };
         doc = match block {
             Block::Heading { level, text } => {
-                doc.add_paragraph(paragraph(text, BODY_FONT, heading_size(*level), true))
+                doc.add_paragraph(start(paragraph(text, BODY_FONT, heading_size(*level), true)))
             }
-            Block::Bullet { depth, text } => doc.add_paragraph(body(&format!(
+            Block::Bullet { depth, text } => doc.add_paragraph(start(body(&format!(
                 "{}{text}",
                 "    ".repeat(*depth as usize + 1) + "• "
-            ))),
+            )))),
             Block::Numbered { text } => {
                 number += 1;
-                doc.add_paragraph(body(&format!("    {number}. {text}")))
+                doc.add_paragraph(start(body(&format!("    {number}. {text}"))))
             }
+            // An option is set in from the margin rather than written with the four
+            // spaces it arrived with: those are four characters wide in Word, which
+            // is what a paper indented by spaces looks like.
+            Block::Indented(text) => doc.add_paragraph(start(
+                paragraph(text, BODY_FONT, BODY_SIZE, false)
+                    .indent(Some(INDENT_TWIPS), None, None, None),
+            )),
             Block::Code(text) => {
                 let mut out = Paragraph::new();
                 for (i, line) in text.lines().enumerate() {
@@ -387,19 +449,30 @@ fn docx_bytes(blocks: &[Block]) -> Result<Vec<u8>, String> {
                 }
                 doc.add_paragraph(out)
             }
-            Block::Paragraph(text) => doc.add_paragraph(body(text)),
-            Block::Table(rows) => doc.add_table(Table::new(
-                rows.iter()
-                    .map(|row| {
-                        TableRow::new(
-                            row.iter()
-                                .map(|cell| TableCell::new().add_paragraph(body(cell)))
-                                .collect(),
-                        )
-                    })
-                    .collect(),
-            )),
+            Block::Paragraph(text) => doc.add_paragraph(start(body(text))),
+            Block::Table(rows) => {
+                // A table cannot carry the property itself, so a break before one is
+                // spent on an empty paragraph — otherwise it would be dropped and the
+                // table would quietly stay on the page before it.
+                if fresh_page {
+                    doc = doc.add_paragraph(Paragraph::new().page_break_before(true));
+                }
+                doc.add_table(Table::new(
+                    rows.iter()
+                        .map(|row| {
+                            TableRow::new(
+                                row.iter()
+                                    .map(|cell| TableCell::new().add_paragraph(body(cell)))
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                ))
+            }
+            // Handled above, before the match: it says where the *next* block starts.
+            Block::Break => unreachable!(),
         };
+        fresh_page = false;
     }
 
     let mut buf = Vec::new();
@@ -511,6 +584,16 @@ pub fn html_doc(title: &str, blocks: &[Block]) -> String {
                     Block::Paragraph(text) => {
                         body.push_str(&format!("<p>{}</p>", inline_html(text)))
                     }
+                    // The same distance the `.docx` indents an option by, in the
+                    // unit a stylesheet wants it: twips are twentieths of a point.
+                    Block::Indented(text) => body.push_str(&format!(
+                        "<p style=\"margin-left:{}pt\">{}</p>",
+                        INDENT_TWIPS / 20,
+                        inline_html(text)
+                    )),
+                    // A zero-height div pushes what follows onto a fresh page without
+                    // printing a line of its own.
+                    Block::Break => body.push_str("<div style=\"break-before:page\"></div>"),
                     // A code block is the one thing whose asterisks are text.
                     Block::Code(text) => {
                         body.push_str(&format!("<pre>{}</pre>", escape_html(text)))
@@ -1013,12 +1096,123 @@ mod tests {
     }
 
     #[test]
+    fn a_break_line_starts_a_page_and_an_indented_line_is_an_option() {
+        assert_eq!(
+            parse_blocks("A paragraph.\n\\pagebreak\n## 1. One?\n\n    A) an option"),
+            vec![
+                Block::Paragraph("A paragraph.".into()),
+                Block::Break,
+                Block::Heading {
+                    level: 2,
+                    text: "1. One?".into(),
+                },
+                Block::Indented("A) an option".into()),
+            ]
+        );
+
+        // The indent is read as a fact about the line rather than kept in its text,
+        // and a tab means what four spaces mean — a tab left in the text is a
+        // character Word will not print.
+        assert_eq!(
+            parse_blocks("        deeply indented"),
+            vec![Block::Indented("deeply indented".into())]
+        );
+        assert_eq!(
+            parse_blocks("\tA) an option"),
+            vec![Block::Indented("A) an option".into())]
+        );
+
+        // Three spaces is not an indent: it is a paragraph that happens to start
+        // shifted, and it is trimmed like every other paragraph.
+        assert_eq!(
+            parse_blocks("   three"),
+            vec![Block::Paragraph("three".into())]
+        );
+        // An indented *list* is still a list — this reader has always nested those.
+        assert_eq!(
+            parse_blocks("    - nested"),
+            vec![Block::Bullet {
+                depth: 2,
+                text: "nested".into(),
+            }]
+        );
+        // And the break is one exact line, so prose that mentions it is prose.
+        assert_eq!(
+            parse_blocks("written \\pagebreak in a sentence"),
+            vec![Block::Paragraph("written \\pagebreak in a sentence".into())]
+        );
+    }
+
+    /// The paragraph a piece of text is in, as the XML before it.
+    ///
+    /// Where `run_before` reads a *run*'s properties, this reads the paragraph's —
+    /// an indent and a page break are written there, before the runs.
+    fn paragraph_before<'a>(xml: &'a str, text: &str) -> &'a str {
+        let at = xml
+            .find(text)
+            .unwrap_or_else(|| panic!("{text:?} is not in the document"));
+        let before = &xml[..at];
+        &before[before.rfind("<w:p>").unwrap_or(0)..]
+    }
+
+    #[test]
+    fn a_break_starts_a_page_and_an_option_sits_in_from_the_margin() {
+        let md = [
+            "# Subject",
+            "",
+            "Made 14 October 2026",
+            "",
+            PAGE_BREAK,
+            "## 1. One?",
+            "",
+            "    A) an option",
+        ]
+        .join("\n");
+        let blocks = parse_blocks(&md);
+        let xml = document_xml(&docx_bytes(&blocks).unwrap());
+
+        // The break belongs to the block that follows it, not to a paragraph of its
+        // own — an empty paragraph would print a blank line at the top of the page it
+        // had just started. So between the break and the question there is no
+        // paragraph end, and the title is on the near side of it.
+        let at = xml
+            .find("<w:pageBreakBefore")
+            .unwrap_or_else(|| panic!("the break is not in the document: {xml}"));
+        let after = &xml[at..];
+        let question = after.find("1. One?").expect("the question follows the break");
+        assert!(
+            !after[..question].contains("</w:p>"),
+            "the break is in a paragraph of its own: {after}"
+        );
+        assert!(xml.find("Subject").unwrap() < at, "the title came after the break");
+
+        // The option is indented by half an inch of real margin — and the four
+        // spaces it arrived with are not in the text, because in Word those would be
+        // four characters wide rather than four spaces of margin.
+        let option = paragraph_before(&xml, "A) an option");
+        assert!(
+            option.contains("<w:ind w:left=\"720\""),
+            "the option is not indented: {option}"
+        );
+        assert!(!xml.contains("    A) an option"), "the option kept its spaces: {xml}");
+
+        // The printed page says the same two things in its own language, and indents
+        // an option by the same distance in the unit a stylesheet wants.
+        let html = html_doc("T", &blocks);
+        assert!(html.contains("break-before:page"), "{html}");
+        assert!(
+            html.contains("margin-left:36pt"),
+            "the option is not indented: {html}"
+        );
+    }
+
+    #[test]
     fn a_word_document_is_set_in_the_house_look() {
         let md = [
             "## 1. What is GDP?",
             "",
-            "A) A stock of assets",
-            "B) A flow of output",
+            "    A) A stock of assets",
+            "    B) A flow of output",
             "",
             "**Note**: the key is a separate sheet.",
         ]

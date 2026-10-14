@@ -751,12 +751,14 @@ pub const GENERATORS: [Generator; 8] = [
         // Word or PDF, chosen in the form: a paper is something you print and hand
         // out, and which of the two you hand out is the reader's call.
         formats: &["docx", "pdf"],
-        prompt: "Write an exam paper on these sources, to be printed and sat. Write each question \
-                 as a level-two heading — `## 1. …` — so it is set in bold at 14 point, with its \
-                 options as plain lines underneath, one per line, lettered A to D. Vary which \
-                 letter is the right answer rather than letting one letter be correct most of the \
-                 time: a paper nothing can shuffle has to vary in the writing. The paper carries no \
-                 answers anywhere — no key, no asterisk, no hint — because the key is written \
+        prompt: "Write an exam paper on these sources, to be printed and sat. The paper carries no \
+                 title of its own — a cover page naming the subject, the date and the sources is put \
+                 in front of it — so begin at question 1. Write each question as a level-two heading \
+                 — `## 1. …` — so it is set in bold at 14 point, and indent each of its options by \
+                 four spaces so they sit under their question, one per line, lettered A to D. Vary \
+                 which letter is the right answer rather than letting one letter be correct most of \
+                 the time: a paper nothing can shuffle has to vary in the writing. The paper carries \
+                 no answers anywhere — no key, no asterisk, no hint — because the key is written \
                  separately, and no citations either, because they belong on the key rather than on \
                  the paper a reader is sitting. Cover what the sources actually say, and leave out a \
                  question they cannot settle rather than inventing it.",
@@ -911,6 +913,80 @@ fn follow_up_for(entry: &Generator, open: Option<u32>) -> Option<String> {
         ));
     }
     Some(out)
+}
+
+// ------------------------------------------------------- the paper's front page
+
+/// The cover page that goes in front of an exam paper.
+///
+/// Written here rather than asked for in the prompt, because these are the three
+/// facts the *app* holds and a model does not: the subject is the notebook's own
+/// title, the date is the day the paper was made, and the sources are the ones this
+/// generation was scoped to — a list already decided by the time this is called,
+/// rather than the model's recollection of what it read. `PAGE_BREAK` is the
+/// document reader's own line, so the paper starts on the page after.
+pub fn exam_cover(subject: &str, sources: &[String], stamp: i64) -> String {
+    let mut out = format!(
+        "# {subject}\n\n## Examination paper\n\nMade {}\n\n**Sources**\n",
+        long_date(stamp)
+    );
+    for name in sources {
+        out.push_str(&format!("- {name}\n"));
+    }
+    out.push_str(&format!("\n{}\n", crate::tools::docs::PAGE_BREAK));
+    out
+}
+
+/// The day a stamp falls on, as `14 October 2026`.
+///
+/// Arithmetic rather than a date library: this app has no `chrono`, and this is the
+/// one place a date is printed into a document, so a formula that predates the epoch
+/// is cheaper than a dependency and the versions of it to keep up. The conversion is
+/// Howard Hinnant's days-to-civil, with the epoch shifted to March so that a leap day
+/// falls at the end of a cycle rather than in the middle of one.
+fn long_date(stamp: i64) -> String {
+    let z = stamp.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { era * 400 + yoe + 1 } else { era * 400 + yoe };
+    format!("{day} {} {year}", MONTHS[(month - 1) as usize])
+}
+
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// The paper without a title of its own, if the model wrote one anyway.
+///
+/// The cover *is* the title, so a `# Macroeconomics — Examination Paper` left at the
+/// top of the paper would be a second title on page two. Only a level-one heading is
+/// dropped, and only as the first thing in the document: `## 1.` is the paper, not a
+/// title, and a `#hashtag` is not a heading at all.
+pub fn without_title(markdown: &str) -> &str {
+    let text = markdown.trim_start();
+    let Some(rest) = text.strip_prefix("# ") else {
+        return text;
+    };
+    match rest.find('\n') {
+        Some(end) => rest[end + 1..].trim_start(),
+        None => "",
+    }
 }
 
 /// A number an entry declares a field for, inside that field's own bounds.
@@ -1549,6 +1625,21 @@ That is everything the sources settle.";
                         "{} declares only one of its two numbers",
                         entry.id
                     );
+                    // The options sit under their question, and that is a shape the prompt
+                    // has to ask for: the writer indents an indented line, it does not
+                    // guess which lines are options.
+                    assert!(
+                        entry.prompt.contains("indent each of its options by four spaces"),
+                        "{} does not say where its options sit",
+                        entry.id
+                    );
+                    // And it carries no title of its own, because the app writes a cover
+                    // in front of it — two titles is one too many.
+                    assert!(
+                        entry.prompt.contains("no title of its own"),
+                        "{} may write a second title under the cover",
+                        entry.id
+                    );
                 }
             }
             assert!(!entry.title.trim().is_empty(), "{} has no title", entry.id);
@@ -1766,6 +1857,66 @@ That is everything the sources settle.";
         // because a reader sent to the wrong switch has been told nothing.
         assert_eq!(no_sources(&[]), "This notebook has no sources switched on.");
         assert!(no_sources(&["c.pdf".to_string()]).contains("switched on: c.pdf"));
+    }
+
+    #[test]
+    fn a_stamp_becomes_the_day_it_falls_on() {
+        // The epoch, which needs no arithmetic at all, and the last second of a day
+        // being that day rather than the next one.
+        assert_eq!(long_date(0), "1 January 1970");
+        assert_eq!(long_date(86_399), "1 January 1970");
+        assert_eq!(long_date(86_400), "2 January 1970");
+        // Before the epoch, where the division has to round down rather than towards
+        // zero or the day comes out wrong by one.
+        assert_eq!(long_date(-86_400), "31 December 1969");
+        assert_eq!(long_date(-2_203_977_600), "28 February 1900");
+        // 1900 was *not* a leap year, which is the rule the shifted epoch exists for.
+        assert_eq!(long_date(-2_203_977_600 + 86_400), "1 March 1900");
+        // 2000 was, and 2100 is not.
+        assert_eq!(long_date(951_782_400), "29 February 2000");
+        assert_eq!(long_date(4_102_444_800), "1 January 2100");
+        // Every stamp above was read off a real calendar rather than worked out by
+        // hand; this one is the day this was written.
+        assert_eq!(long_date(1_791_936_000), "14 October 2026");
+    }
+
+    #[test]
+    fn the_cover_says_what_the_paper_is_and_sends_it_to_the_next_page() {
+        let sources = vec!["macro-slides.pdf".to_string(), "notes.md".to_string()];
+        let cover = exam_cover("Macroeconomics", &sources, 1_791_936_000);
+
+        // The subject, the date and the sources: the three things the owner asked a
+        // cover for, and the three the app knows rather than the model.
+        assert!(cover.contains("# Macroeconomics"), "{cover}");
+        assert!(cover.contains("14 October 2026"), "{cover}");
+        for name in &sources {
+            assert!(cover.contains(&format!("- {name}")), "{cover}");
+        }
+
+        // And it ends at a page break, which the reader turns into one: a cover that
+        // is still a heading on the paper's first page is not a cover page.
+        let docs = crate::tools::docs::parse_blocks(&cover);
+        assert_eq!(docs.last(), Some(&crate::tools::docs::Block::Break));
+        assert!(
+            !docs.iter().any(|block| matches!(block, crate::tools::docs::Block::Paragraph(text)
+                if text.contains("\\pagebreak"))),
+            "the break line reached the page as text: {cover}"
+        );
+    }
+
+    #[test]
+    fn a_title_the_model_wrote_anyway_is_dropped_but_a_question_is_not() {
+        // A model that ignores the instruction would put a second title on page two.
+        assert_eq!(
+            without_title("\n# Macroeconomics — Examination paper\n\n## 1. One?"),
+            "## 1. One?"
+        );
+        // The paper itself is a level-two heading, and that stays.
+        assert_eq!(without_title("## 1. One?"), "## 1. One?");
+        // `#hashtag` is not a heading, so it is not a title either.
+        assert_eq!(without_title("#hashtag"), "#hashtag");
+        // And a paper that is nothing but a title leaves nothing behind it.
+        assert_eq!(without_title("# Title"), "");
     }
 
     /// The call shape the two tests below are about, so that they are tests of the

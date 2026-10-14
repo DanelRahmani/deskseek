@@ -461,6 +461,10 @@ the parts only a person can see.
       both are named so the paper and the key can be told apart at a glance
 - [ ] The exam paper opens in Word as Times New Roman 11 with **each question bold at 14** and its
       options underneath, and there is no `**`, no `##` and no stray asterisk anywhere in it
+- [ ] The paper opens with a **cover page** naming the notebook's own title as the subject, the date
+      it was made and the sources it was written from, and the questions begin on the page after it
+- [ ] Each question's options are **indented under it** rather than starting at the question's own
+      left edge, and the paper carries one title — the cover's — not two
 - [ ] The same paper as `.pdf` looks the same — same font, same sizes — and the two are not a
       paragraph away from each other
 - [ ] A quiz item whose source has since been removed shows the source as gone rather than naming a

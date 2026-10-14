@@ -3002,6 +3002,134 @@ means — which is how a paper comes out as one undifferentiated wall.
 
 ---
 
+## Phase 17: The paper, the rail, and getting to a second notebook (planned 2026-10-14, **not built**)
+
+From the owner's second look at a real paper and a real notebook:
+
+**The paper is a wall of questions.** It has no front matter — nothing says what subject it is, when it was
+made, or what it was written from — and every option starts at the same left edge as the question above
+it, so the eye has nowhere to land between questions.
+
+**The rail has three lists fighting over one column.** *Make* grew from six entries to eight plus a line
+of explanation, and with *Study* under it the *Outputs* list — the documents the reader actually wants to
+open — is pushed off the bottom of the window.
+
+**There is no way to reach a second notebook, or even to see that there is more than one.** The sidebar
+button opens *a* notebook: the most recent one open, else the first, else a new one. Nothing lists them and
+nothing makes one, so a second notebook is unreachable by any route at all.
+
+17.1 is built and has its ✅ and its record; 17.2 and 17.3 are not, so their Test lines still say what a check
+*will* be.
+
+### 17.1 [M] A cover, and options that sit under their question ✅
+- **Why**: a paper handed to someone should say what it is, and its options should not read as more
+  questions.
+- **Files**: `tools/docs.rs` (two new blocks, `PAGE_BREAK`, `INDENT_TWIPS`, `indented()`, the parser, both
+  writers, and two tests plus a `paragraph_before` helper); `conversation/notebook.rs` (`exam_cover`,
+  `long_date`, `MONTHS`, `without_title`, two new sentences in the exam's prompt, three tests, and two
+  assertions in the menu test); `commands.rs` (the Exam arm writes the cover ahead of the paper and drops
+  a title the model wrote anyway); `CHANGELOG.md`, `README.md`, `ARCHITECTURE.md`, `docs/E2E-CHECKLIST.md`;
+  `plan.md`. No new dependency: the date is arithmetic, and `docx-rs` already had both the page-break
+  property and the indent the writer needs.
+- **Shape**: the document grammar gains the two things a paper needs and prose never did — a **page
+  break** (one line that is exactly `\pagebreak`, exported as `PAGE_BREAK` so the cover that writes it and
+  the reader that reads it cannot drift) and an **indented line**, which is read as a *fact* rather than
+  kept as the four spaces it arrived with. `Block::Indented` is set in Word as `w:ind w:left="720"` — half
+  an inch, Word's own indent step — and on the printed page as `margin-left:36pt`, which is the same
+  distance in the unit a stylesheet wants. `Block::Break` is not a paragraph: it is a property of the
+  block that **follows** it (`page_break_before`, `break-before:page`), because a paragraph holding a
+  break prints an empty line at the top of the page it has just started. The cover itself is the app's,
+  not the model's — `exam_cover(subject, sources, stamp)` — because the subject is the notebook's title,
+  the date is `now_ts()` and the sources are the list this generation was already scoped to, and a model
+  asked for those three gets them wrong about as often as right. The date is a days-to-civil formula from
+  the shifted-March epoch rather than a date library, and it is tested against stamps read off a real
+  calendar. Finally the paper is passed through `without_title`, which drops a level-1 heading at the top
+  of it: the exam prompt now says the paper carries no title of its own, and a model that writes one
+  anyway would otherwise put a second title on page two.
+- **Test**: `cargo test` 485 → **490**, no warnings. `a_break_line_starts_a_page_and_an_indented_line_is_an_option`
+  — a `\pagebreak` line is a break and not a paragraph, a line indented by four spaces is an option whose
+  text has no leading spaces, a **tab** means the same as those four spaces, three spaces is a paragraph,
+  an indented `- nested` is still the bullet it has always been, and `\pagebreak` inside a sentence is
+  prose. `a_break_starts_a_page_and_an_option_sits_in_from_the_margin` — the built `.docx` is unzipped and
+  the page break is asserted where it *is*: between `<w:pageBreakBefore />` and the question's own text
+  there is no `</w:p>`, so the break is a property of the question's paragraph rather than a paragraph of
+  its own, and the title is on the near side of it; the option's paragraph carries `<w:ind w:left="720"`
+  and the four spaces are nowhere in the XML; and the same two facts are asserted on the printed page
+  (`break-before:page`, `margin-left:36pt`). `a_word_document_is_set_in_the_house_look` now writes its
+  options the way the paper does. `a_stamp_becomes_the_day_it_falls_on` — 1 January 1970 at stamp 0 and at
+  86_399, 2 January at 86_400, **31 December 1969** at -86_400 (the negative side of the division),
+  28 February 1900 and **1 March 1900** for the day after it (1900 was not a leap year, which is what the
+  shifted epoch is for), 29 February 2000, 1 January 2100 and 14 October 2026. Every one of those stamps
+  was read off a real calendar by asking Node for the date rather than worked out by hand — two of my own
+  hand-derived values were wrong, which is exactly the failure my notes warn about.
+  `the_cover_says_what_the_paper_is_and_sends_it_to_the_next_page` — the cover names the subject, the
+  date and **every** source it was given, and the block parser's last block for it is a `Break`, with no
+  paragraph carrying the `\pagebreak` text. `a_title_the_model_wrote_anyway_is_dropped_but_a_question_is_not`
+  — a leading `#` title goes, a `## 1.` question stays, `#hashtag` is not a heading and so is not a title,
+  and a paper that is nothing but a title leaves nothing behind it. `npm run typecheck`, `npm run check`
+  and `npm run build` all pass untouched (the window changed only in 17.2's rail, which is not this item).
+  **Falsified twice, both verbatim.** *(a)* Stopping the parser reading an indented line as an option
+  (`} else if let Some(text) = indented(trimmed) {` → `indented("")`), the needle confirmed on disk and
+  restored afterwards, fails `a_break_starts_a_page_and_an_option_sits_in_from_the_margin` with
+  `MUT=101`, `test result: FAILED. 0 passed; 1 failed` and `the option is not indented:` followed by the
+  whole XML — in which the option is a plain `<w:p>` with no `w:ind` and its four spaces still in the run.
+  *(b)* Three independent rules at once — the break stops starting a page, the cover stops stating the
+  date, and the title guard stops caring whether the line was a heading — gives `MUT=101`,
+  `test result: FAILED. 487 passed; 3 failed`, and the three failures are exactly the three tests, with
+  `left: ""` for the dropped `#hashtag`, a cover printed without its date, and `the break is not in the
+  document:` followed by XML whose option paragraph **does** carry `<w:ind w:left="720" w:right="0" />`
+  — the indent proved independent of the break. All three lines were confirmed back on disk afterwards and
+  the whole suite re-ran green at **490 passed; 0 failed** with `GATE OK`.
+  **Three deviations, said out loud**: the cover is **written by the app rather than asked of the model**,
+  because the three facts on it are the app's to know; the break is **the grammar's own line** (`\pagebreak`)
+  rather than a `<w:br>` the model is asked to emit, so nothing about Word escapes into a prompt; and a
+  **table that follows a break** gets an empty paragraph carrying the property first, because a `Table` in
+  `docx-rs` cannot hold `page_break_before` and the alternative is a break that silently does nothing.
+  One lesson worth the ink: my first multi-line falsifier needle was joined with `\n` against a **CRLF**
+  file, so it matched nothing — and the mutator's own uniqueness check threw *before writing*, which is the
+  only reason a green suite after it was not mistaken for a passing falsification. The needles are now
+  given as lines and joined with the file's own ending.
+- **Stop**: a paper opens with a cover page naming the subject, the date and the sources, and its options
+  are indented under their question.
+
+### 17.2 [S] The rail stops eating the column
+- **Why**: *Outputs* is what a reader comes back for, and it is the section that gets pushed out.
+- **Files**: `src/components/NotebookShell.tsx`; `docs/E2E-CHECKLIST.md`.
+- **Shape**: *Make* gets a ceiling and scrolls inside it, *Study* keeps the one it has, and *Outputs*
+  takes what is left and scrolls — so all three are on screen together and the documents stay reachable
+  however many entries the menu grows. None of the three is pinned with `shrink-0` any longer: a box that
+  cannot shrink keeps its height while the window gets shorter, which is how the list at the bottom is the
+  one that goes.
+- **Test**: no new check, and said out loud rather than papered over: this is layout, and there is no rule
+  here that a Node script can hold — a pure helper written to have something to assert would be a check
+  on nothing. `a11y.check.ts` walks the component; the end-to-end line is where this is settled.
+- **Stop**: with eight menu entries, four sets and two documents, all three headings are on screen and
+  every output can be reached without a scroll fight.
+
+### 17.3 [M] A notebooks view, beside Chat and Coding
+- **Why**: the sidebar's *Notebooks* button is a sixth item in a list of settings, and it opens one
+  notebook without ever showing that there are others — which is why the owner could not find out how to
+  make a second one.
+- **Files**: `src/components/Sidebar.tsx` (a third segment and a notebook list); `src/App.tsx` (the view
+  state, the list, and one command that makes a notebook from it); `src/api.ts` (nothing new — the three
+  commands exist); `CHANGELOG.md`, `README.md`, `docs/E2E-CHECKLIST.md`; `plan.md`.
+- **Shape**: the segmented control becomes three — **Chat | Coding | Notebooks** — where the third shows
+  notebooks *in the sidebar* rather than in a panel, which is what makes it a peer of the other two
+  rather than a setting: the list of notebooks where the list of chats is, and **+ New notebook** where
+  **+ New chat** is. Picking one opens it in the focused pane; the one already open is marked, so the
+  list and the pane cannot disagree. The settings-list button goes: two ways into one thing is how the
+  second way comes to be the stale one. The *section* does not change — a notebook is not a third kind of
+  chat and the composer's toolset is not its business — so the view is remembered separately from the
+  section, and pressing Chat or Coding returns to the section you were in.
+- **Test**: `npm run check` — `shell.check.ts` already holds the shell's own rule about what a pane holds;
+  what is new here is the view, so the check is the accessibility walk over the new list and buttons plus
+  `typecheck`, and the end-to-end line covers the rest. No new `.check.ts`: the rule this item adds is
+  "the list shows what exists", and the list is `listNotebooks()`'s answer rendered.
+- **Stop**: pressing Notebooks shows every notebook, marks the one open, and makes a second one in one
+  press.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
 The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left

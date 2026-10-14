@@ -2063,12 +2063,25 @@ pub async fn run_notebook_entry(
         // answers at all.
         Action::Exam => {
             let then = plan.then.as_deref().ok_or("an exam needs its key question")?;
+            // The cover is the *app's*, not the model's: the subject is this notebook's
+            // own title, the date is now, and the sources are the ones this generation
+            // was scoped to — three facts a model asked for a cover gets wrong about as
+            // often as it gets them right. A title the model wrote anyway is dropped
+            // rather than printed under it a second time.
+            let subject = {
+                let conn = state.db.lock().unwrap();
+                db::get_notebook(&conn, &notebook_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or("this notebook is no longer here")?
+                    .title
+            };
+            let front = notebook::exam_cover(&subject, &given, db::now_ts());
             let paper = write_output(
                 &state,
                 &notebook_id,
                 "Exam paper",
                 &plan.format,
-                &asked.answer.content,
+                &format!("{front}{}\n", notebook::without_title(&asked.answer.content)),
             )
             .await?;
             let key = notebook::ask(&state, &notebook_id, then, &plan.sources).await?;
