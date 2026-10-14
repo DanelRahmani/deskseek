@@ -12,7 +12,7 @@ file to that shape — including that a section is marked `unreleased` only whil
 there is unreleased work, so a released top section is as valid as an unreleased
 one.
 
-## 0.6.0 — unreleased
+## 0.6.0 — 2026-10-14
 
 - A notebook can be given a **symbol**: one emoji, picked from a dozen of the common educational ones or typed from your own emoji keyboard (Win + .), drawn beside the name in the sidebar, the pane's own picker and its tab — so a list of notebooks can be told apart at a glance. Rust refuses anything that is not one emoji, because the symbol sits *beside* the name rather than replacing it. And renaming a notebook in its own header reaches the list at once instead of leaving the sidebar and the tab showing the old name
 - A notebook's **Make** is one accent-coloured button instead of eight rows of text competing with the two lists below it: it opens a **panel of tiles** — a bento, tinted by what each entry makes, each one saying in the entry's own words what it produces and which format it writes — and picking a tile opens the form that entry always opened. The one-line descriptions come from the Rust list, so a new entry describes itself rather than needing a caption in the window
