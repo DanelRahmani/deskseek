@@ -304,6 +304,9 @@ Both sections are functional:
     readable, because the notebook keeps its own copy. An output is a document in the notebook's
     folder rather than an artifact, because an artifact belongs to a chat and a notebook has none
     — a question asked of a source set is not a turn
+  - **Reading a source**: the card has room for a name, a state and three lines of description, so
+    *Read* opens the whole thing beside the facts the rail cannot hold — where the file came from, the
+    copy the notebook keeps, how much text was read out of it, and when it was described
   - **What it can make**: flashcards, a quiz (with its answer key), a briefing, a timeline, a study
     guide and a mind map, each one a grounded question in that shape, written into the notebook's
     folder as a `.md` or `.docx`. The list is Rust rather than TypeScript, so the menu and the

@@ -423,6 +423,11 @@ the parts only a person can see.
       restores it with its digest and its text intact
 - [ ] Editing a copy of a source in the notebook folder and pressing *Re-sync* marks it stale and
       produces a new digest; pressing *Re-sync* on an unchanged source does **not** spend a call
+- [ ] *Read* on a source card opens a named dialog holding the whole description — the text the card
+      clamps at three lines — beside where the source came from, the copy this notebook keeps, how
+      much was read out of it and when it was described. Escape and a click on the backdrop both close
+      it, a source with no description yet has no *Read* to press, and a source added from a URL reads
+      the same way
       (the spend panel shows no new `Notebook digests` row)
 - [ ] With no endpoint configured, adding a source still works and its digest reads as an outline
       of headings, words and size

@@ -2554,6 +2554,122 @@ block's Stop is met and its Test runs in the gate.
 
 ---
 
+## Phase 14: The notebook, followed through — two things using it made obvious (14.1 built, 14.2 not yet)
+
+Planned 2026-10-14, the same day Phase 13 was, out of the owner's first hour with 0.5.0 running. Not
+from the archive — the archive's phase plan ends at 13 and this file has taken all of
+it — but from two things that were plain the moment a real notebook had real documents in it:
+
+**A digest is clamped to three lines on a 288 px rail.** The rail has room for a name, a state and a
+line or two of description, and the description is the only thing in the app that says what a
+document *contains*. So the one sentence a reader needs to decide whether a source is worth switching
+on is the one sentence that gets cut, and reading the rest of it should not mean finding the file and
+opening it in something else.
+
+**The Make column can only produce documents.** Its six entries are fixed prompts whose answers are
+prose written to a file, which is right for a briefing and wrong for a quiz: a quiz you take has to be
+*structured* — a question, its options, which one is right, why — and prose cannot carry that reliably
+enough to grade. The model is the only part of the app that has read the sources, so the set has to
+come from a call it makes, in a shape the app declares; then the window can run it. That is the
+difference between a quiz you print and a quiz you take, and it is what NotebookLM's versions of these
+two features actually are.
+
+Both items were put to the owner as a choice between stated options rather than guessed at, and the
+owner was away, so **the recommended option was taken for each and is recorded here to be confirmed**:
+14.1 shows the whole description in a dialog rather than the document's own text as well, and 14.2
+adds the interactive sets *beside* the Make column rather than converting its Quiz and Flashcards
+entries, which keep writing printable files. Neither adds a dependency. The order is 14.1 then 14.2
+and they do not touch each other.
+
+**14.1 is built; 14.2 is not.** The rule at the top of this file is that a ✅ means the Stop is met
+and the Test runs in the gate, so 14.1 carries one and 14.2 does not — 14.2's Test and Falsified lines
+still say what a check *will* be rather than what it found.
+
+### 14.1 [S] A source's description can be read in full ✅
+- **Why**: the digest is clamped, the file name is truncated, and both are the rail's whole account of
+  what the notebook holds. The full description already travels in `NotebookView` — it is only the
+  card that has no room for it — so this is a reading surface, not a new pipeline.
+- **Files**: `src/components/NotebookShell.tsx` (the card's read control and the dialog);
+  `docs/E2E-CHECKLIST.md`, `CHANGELOG.md` and `README.md` (the line each one owes it); `plan.md`. **No
+  new file, no new command, no Rust, no dependency** — which is what the item is for.
+- **Shape**: the card gains one quiet *Read* control beside the digest, opening a dialog in the shape
+  this app already opens five of: backdrop at `fixed inset-0 z-50` that closes on mousedown, Escape to
+  close, `role="dialog"` with `aria-modal` and an `aria-label`, `autoFocus` on the close button — the
+  same overlay `AudioOverviewDialog` uses, and the shape `a11y.check.ts` exists to enforce. The dialog
+  holds the whole digest plus the facts the card has no space for: where the source came from, the copy
+  this notebook owns, how much text was read out of it, its sync state, and when the digest was
+  written. **No new command**, because every one of those fields is already on the wire.
+  The control is drawn whether or not the text overflows *on this machine*: "does it overflow" is a
+  layout question, and a `scrollHeight` guess would hide the control exactly when a different font or
+  a narrower window pushed the text past three lines. One rule, no measurement, nothing to disagree
+  with itself. Reading the *document's own text* inside the app is deliberately not built: the model
+  can already read it with `read_source`, the card can show the file, and putting a 120k-character
+  extract behind a dialog is a second reading surface for a need nobody has stated — the upgrade is
+  one command returning `extract`, and the reason it is not here is that nobody has asked yet.
+- **Test**: `npm run check` — `a11y.check.ts` walks the new overlay, so a dialog that shipped without
+  its name, or a glyph button without a label, fails the gate; it reports **39 components**, the count
+  it reported before, because this is a dialog inside a component that already existed rather than a
+  new file. `npm run typecheck` and `npm run build` are clean.
+  **No new `.check.ts`**, as the plan said: there is no pure rule here to own — the item renders data
+the app already has, and a script asserting a `<p>` is not a test. Its end-to-end line is where the
+  copy is checked, like every other line in the checklist.
+  **Falsified**: with the dialog's name taken away by a scratch mutator whose needle was confirmed on
+  disk and restored afterwards, `node src/lib/a11y.check.ts` exits **1** with
+  ``FAIL: 1 accessibility problem(s): src/components/NotebookShell.tsx: a dialog with no `aria-label`
+  or `aria-labelledby` is announced as "dialog" and nothing else.`` — the exact regression this item's
+  check exists for — and restoring passes again (`a11y.check.ts: all checks passed (39 components)`, A11Y=0).
+  **Two deviations, said out loud**: *Read* is drawn only when the source **has** a description, which
+  is a rule about emptiness rather than about overflow — a card reading "Not described yet." has
+  nothing to open, and drawing a control that opens an empty dialog is the kind of control this app
+  does not ship; and the facts line about the copy prints `none — nothing was copied in` for a source
+  with no path, because a blank row in a list of facts reads as a bug. `ARCHITECTURE.md` is
+  **untouched**: this item adds a surface and no mechanism, so its table has no new rule to hold.
+- **Stop**: the whole description of a source can be read without leaving the app.
+
+### 14.2 [M] The model can make a study set, and the window runs it
+- **Why**: the Make column's quiz is a document and cannot be taken; a set that can be taken has to be
+  structured, and the model is the only thing in the app that has read the sources. So the set is made
+  by a tool call in a shape the app declares, stored, and run by the window — question, options, the
+  right one, why, and a score at the end.
+- **Files**: `store/db.rs` (the `notebook_sets` table, its row, its CRUD, and the copy);
+  `conversation/notebook.rs` (the validator, and one sentence in the prompt);
+  `tools/mod.rs` (`make_study_set` and its schema); `commands.rs` (`remove_notebook_set`, and `sets` in
+  `NotebookView`); `lib.rs`; `src/types.ts`, `src/api.ts`; new `src/lib/quiz.ts` and
+  `quiz.check.ts` (the 19th check script); new `src/components/StudySetDialog.tsx`;
+  `NotebookShell.tsx` (the list); `package.json` (the chain); `docs/E2E-CHECKLIST.md`.
+- **Shape**: one tool, `make_study_set`, three arguments — `kind` (`quiz` | `flashcards`), `title`, and
+  `items`, each `{prompt, answer, options, why, source}`. **Options are what make it a quiz**: present,
+  there are 2–6 of them, no two the same, and `answer` has to be one of them (normalised to the option
+  as written, so the window can compare exactly); absent, it is a flashcard and the answer is the back.
+  Rust validates and **refuses with the reason**, so the model reads what was wrong and fixes its own
+  call inside the same question rather than the reader being handed a broken set. A set that arrives is
+  stored in `notebook_sets` and listed in the rail under *Study*; pressing one opens a dialog and the
+  window runs it — a quiz one question at a time with the right option marked and the `why` under it,
+  a score when the last one is answered; a flashcard shows its front, then its back.
+  `source` is optional and a name that does not resolve is **marked rather than refused**, which is the
+  *answer* path's rule and not the fact table's: a fact table without its source column is worthless,
+  and a ten-question quiz thrown away because one question misnamed a file is a worse trade — and the
+  resolve rule itself stays in `retrieval::unresolved` and `citation.ts`, not in a third copy.
+  The tool is `Internal` rather than `Read`, which is the class the app already uses for a call it
+  handles itself and stores itself: it is not a write to the disk, it needs no approval, and the
+  notebook's loop stays what 5.4 says it is — nothing in it can touch the machine.
+- **Test**: `cargo test` (475 today; the new cases are the delta) — `conversation::notebook::tests`:
+  the validator refuses a quiz whose answer is not one of its options, a flashcard that carries
+  options, two identical options and an empty set, and returns a good set normalised; `store::db::tests`:
+  the set's round trip, its place in a notebook copy, and the table asserted present on a database
+  written before it; `tools::tests`: the schema's contract (the kind is an enum, the items are objects,
+  what the validator needs is required) and that a notebook is still offered nothing that can change
+  the machine. `npm run check` — `quiz.check.ts` is new and asserts what the window decides: which
+  option is right, that an unanswered question is not a wrong one, the score over a partly-answered
+  quiz, and that every item of a sample set has its answer among its options.
+  **The falsification it needs**: inverting the answer check in the validator (`answer` must be one of
+  the options → must not be) must fail the validator test with the option list in the message, and
+  restoring must pass.
+- **Stop**: asking a notebook for a quiz gives one you can take, and the score is the one the answers
+  earned.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
 The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left

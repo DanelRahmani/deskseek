@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { citations } from "../lib/citation";
+import { when } from "../lib/time";
 import { Icon, IconButton } from "./Icon";
 import { Markdown } from "./Markdown";
-import type { Generator, Instruction, NotebookOutputRow, NotebookRow, NotebookView } from "../types";
+import type {
+  Generator,
+  Instruction,
+  NotebookOutputRow,
+  NotebookRow,
+  NotebookView,
+  SourceView,
+} from "../types";
 
 interface Props {
   /** The notebook this pane is showing. */
@@ -58,6 +66,8 @@ export function NotebookShell({
   /** The menu of things this notebook can make, read from Rust rather than
    *  spelled again here. */
   const [generators, setGenerators] = useState<Generator[]>([]);
+  /** The source whose full entry is open, if one is. */
+  const [reading, setReading] = useState<SourceView | null>(null);
 
   const load = useCallback(async () => {
     const next = await api.openNotebook(notebookId);
@@ -274,6 +284,15 @@ export function NotebookShell({
                   <span className="flex-1 text-[11px] text-neutral-600">
                     {source.chars > 0 ? `${source.chars.toLocaleString()} characters` : ""}
                   </span>
+                  {source.digest !== "" && (
+                    <button
+                      onClick={() => setReading(source)}
+                      title="Read the whole description of this source"
+                      className={quiet}
+                    >
+                      Read
+                    </button>
+                  )}
                   <button
                     onClick={() =>
                       void act(
@@ -485,6 +504,113 @@ export function NotebookShell({
         notebook={notebook}
         onSave={(instructions) => act(() => api.setNotebookInstructions(notebookId, instructions))}
       />
+      {reading && <SourceRead source={reading} onClose={() => setReading(null)} />}
+    </div>
+  );
+}
+
+/**
+ * One source read in full.
+ *
+ * The card holds a name, a state and three lines of description, which on a
+ * 288 px rail is most of a digest and none of the facts behind it — so the one
+ * thing that says what a document *contains* is the one thing that gets cut.
+ * This is the rest of the entry: the whole description, where the source came
+ * from, and the copy this notebook made of it.
+ *
+ * It reads the payload the rail already has and nothing else, which is why there
+ * is no command behind it: a dialog that needed its own query would be a second
+ * answer to "what does this notebook hold".
+ *
+ * Drawn whether or not the description overflows *here*. Whether it fits is a
+ * layout question, and asking it (`scrollHeight > clientHeight`) would hide the
+ * control exactly when a wider font or a narrower pane pushed the text past the
+ * clamp — one rule, nothing measured, nothing to disagree with itself.
+ */
+function SourceRead({ source, onClose }: { source: SourceView; onClose: () => void }) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-neutral-950/60 pt-16"
+      onMouseDown={onClose}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Source: ${source.name}`}
+        className="flex max-h-[calc(100vh-8rem)] w-[34rem] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900 shadow-2xl"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-3">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-neutral-200">
+            {source.name}
+          </span>
+          <State state={source.state} />
+          <button
+            autoFocus
+            onClick={onClose}
+            title="Close"
+            className="shrink-0 text-neutral-500 transition hover:text-neutral-200"
+          >
+            <Icon name="close" size={15} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          <div className="text-[11px] tracking-wide text-neutral-500 uppercase">
+            What it contains
+          </div>
+          <p className="mt-1 text-[13px] leading-relaxed whitespace-pre-wrap text-neutral-200">
+            {source.digest || "Not described yet."}
+          </p>
+
+          <dl className="mt-4 grid grid-cols-[6.5rem_1fr] gap-x-3 gap-y-1.5 text-[12px]">
+            <dt className="text-neutral-500">From</dt>
+            <dd className="break-words text-neutral-400">{source.origin || source.kind}</dd>
+            <dt className="text-neutral-500">Copy</dt>
+            <dd className="break-words font-mono text-[11px] text-neutral-500">
+              {source.path ?? "none — nothing was copied in"}
+            </dd>
+            <dt className="text-neutral-500">Read</dt>
+            <dd className="text-neutral-400">
+              {source.chars > 0
+                ? `${source.chars.toLocaleString()} characters`
+                : "nothing readable was found in it"}
+            </dd>
+            <dt className="text-neutral-500">Used</dt>
+            <dd className="text-neutral-400">
+              {source.enabled ? "yes — answers may read it" : "no — switched off"}
+            </dd>
+            <dt className="text-neutral-500">Described</dt>
+            <dd className="text-neutral-400">
+              {source.digestAt === null ? "not yet" : when(source.digestAt)}
+              {source.state === "stale" ? " — the file has changed since" : ""}
+            </dd>
+            <dt className="text-neutral-500">Added</dt>
+            <dd className="text-neutral-400">{when(source.createdAt)}</dd>
+          </dl>
+        </div>
+
+        <div className="flex items-center gap-2 border-t border-neutral-800 px-4 py-3">
+          {source.path && (
+            <button
+              onClick={() => source.path && void api.revealPath(source.path)}
+              className="rounded-lg border border-neutral-700 px-2.5 py-1 text-xs text-neutral-300 transition hover:border-neutral-600 hover:text-neutral-100"
+            >
+              Show the file
+            </button>
+          )}
+          <span className="flex-1" />
+          <button
+            onClick={onClose}
+            className="rounded-lg px-2.5 py-1 text-xs text-neutral-400 transition hover:text-neutral-200"
+          >
+            Done
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
