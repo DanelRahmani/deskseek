@@ -1504,6 +1504,365 @@ pub fn project_spend(state: State<'_, AppState>) -> Result<Vec<db::ProjectSpend>
     db::project_spend(&conn).map_err(|e| e.to_string())
 }
 
+// ---------------------------------------------------------------- notebooks
+
+/// Everything one notebook shows, in one read: its sources with their sync state,
+/// its questions and answers, and what it has produced.
+///
+/// One command rather than four because the shell draws all four at once, and a
+/// panel that opened in stages would draw a notebook with no sources for a frame.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookView {
+    notebook: db::NotebookRow,
+    sources: Vec<crate::conversation::notebook::SourceView>,
+    messages: Vec<db::NotebookMessageRow>,
+    outputs: Vec<db::NotebookOutputRow>,
+}
+
+/// The folder a notebook's own copies live in, created on demand.
+///
+/// The id is one this app generated, so it is a single path component by
+/// construction — nothing here takes a name from the window.
+fn notebook_dir(state: &AppState, notebook_id: &str) -> Result<PathBuf, String> {
+    let dir = state.paths.notebook_sources_dir(notebook_id);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not use {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// The readable text of a file: the extractor's when it is a document, the file's
+/// own bytes when it is not.
+///
+/// One reader, so "what is in this file" has one answer rather than one for a
+/// dropped attachment and another for a source.
+fn read_source_text(path: &Path, name: &str) -> Result<String, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("could not read {name}: {e}"))?;
+    if crate::tools::extract::is_extractable(name) {
+        return crate::tools::extract::text_of(name, &bytes);
+    }
+    Ok(String::from_utf8_lossy(&bytes).to_string())
+}
+
+/// A digest for a source, or the free outline when no model can be asked.
+///
+/// The fallback is the point, not a nicety: adding a document to a notebook must
+/// work on a machine with no endpoint configured and with no network, and the
+/// catalogue line it produces is still true.
+async fn digest_text(
+    state: &AppState,
+    settings: &Settings,
+    notebook_id: &str,
+    name: &str,
+    text: &str,
+    bytes: u64,
+) -> String {
+    let asked = match crate::conversation::client(state, settings) {
+        Ok(client) => {
+            let model = settings.summary_model();
+            match crate::conversation::notebook::digest(&client, &model, name, text).await {
+                Some((digest, usage)) => {
+                    // The one writer for a call nobody typed, exactly as the
+                    // summariser and the audio script use it. The notebook's id
+                    // stands in the chat column: there is no chat to bill, and a
+                    // second spend table is the one thing this app refuses.
+                    crate::conversation::record_overhead(
+                        state,
+                        settings,
+                        notebook_id,
+                        "notebook-digest",
+                        &model,
+                        &usage,
+                    );
+                    Some(digest)
+                }
+                None => None,
+            }
+        }
+        Err(_) => None,
+    };
+    asked.unwrap_or_else(|| crate::conversation::notebook::outline(text, bytes))
+}
+
+#[tauri::command]
+pub fn list_notebooks(state: State<'_, AppState>) -> Result<Vec<db::NotebookRow>, String> {
+    let conn = state.db.lock().unwrap();
+    db::list_notebooks(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn create_notebook(state: State<'_, AppState>, title: String) -> Result<db::NotebookRow, String> {
+    let conn = state.db.lock().unwrap();
+    db::create_notebook(&conn, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn rename_notebook(state: State<'_, AppState>, id: String, title: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::rename_notebook(&conn, &id, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_notebook_model(state: State<'_, AppState>, id: String, model: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_notebook_model(&conn, &id, &model).map_err(|e| e.to_string())
+}
+
+/// Replaces a notebook's rules — the same blocks a project and the settings use,
+/// edited by the same component in the window.
+#[tauri::command]
+pub fn set_notebook_instructions(
+    state: State<'_, AppState>,
+    id: String,
+    instructions: Vec<Instruction>,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_notebook_instructions(&conn, &id, &instructions).map_err(|e| e.to_string())
+}
+
+/// Deletes a notebook, its rows and its folder of copies.
+///
+/// The files go with it because they are copies this app made on its own behalf:
+/// leaving them behind would keep a document the user believes they deleted, in a
+/// folder they never chose.
+#[tauri::command]
+pub fn delete_notebook(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    {
+        let conn = state.db.lock().unwrap();
+        db::delete_notebook(&conn, &id).map_err(|e| e.to_string())?;
+    }
+    let dir = state.paths.notebook_dir(&id);
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).map_err(|e| format!("could not remove {}: {e}", dir.display()))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn open_notebook(state: State<'_, AppState>, id: String) -> Result<NotebookView, String> {
+    let conn = state.db.lock().unwrap();
+    let notebook = db::get_notebook(&conn, &id)
+        .map_err(|e| e.to_string())?
+        .ok_or("That notebook has been deleted.")?;
+    let sources = db::list_sources(&conn, &id).map_err(|e| e.to_string())?;
+    let messages = db::list_notebook_messages(&conn, &id).map_err(|e| e.to_string())?;
+    let outputs = db::list_notebook_outputs(&conn, &id).map_err(|e| e.to_string())?;
+    Ok(NotebookView {
+        notebook,
+        sources: crate::conversation::notebook::views(&sources),
+        messages,
+        outputs,
+    })
+}
+
+#[tauri::command]
+pub fn list_sources(
+    state: State<'_, AppState>,
+    notebook_id: String,
+) -> Result<Vec<crate::conversation::notebook::SourceView>, String> {
+    let conn = state.db.lock().unwrap();
+    let rows = db::list_sources(&conn, &notebook_id).map_err(|e| e.to_string())?;
+    Ok(crate::conversation::notebook::views(&rows))
+}
+
+/// Adds a file or a page to a notebook.
+///
+/// A file is **copied in**, so the notebook owns it and keeps working when the
+/// original moves or goes; a page is fetched once and its text written into the
+/// same folder, so a URL source is a file like any other and there is one rule
+/// for staleness rather than two. What the copy *is* is what the fingerprint
+/// describes: `Re-sync` re-copies from the original (or re-fetches) and re-reads
+/// the digest only if the text actually changed.
+#[tauri::command]
+pub async fn add_source(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    path: Option<String>,
+    url: Option<String>,
+) -> Result<crate::conversation::notebook::SourceView, String> {
+    let dir = notebook_dir(&state, &notebook_id)?;
+    let settings = state.settings.lock().unwrap().clone();
+
+    let (name, kind, origin, copy, text) = match (path, url) {
+        (Some(path), _) => {
+            let from = PathBuf::from(&path);
+            if !from.is_file() {
+                return Err(format!("{path} is not a file."));
+            }
+            let name = file_name_of(&from);
+            let target = free_path_for(&dir, &name);
+            std::fs::copy(&from, &target)
+                .map_err(|e| format!("could not copy {name} into this notebook: {e}"))?;
+            let stored = file_name_of(&target);
+            let text = read_source_text(&target, &stored)?;
+            (stored, "file".to_string(), path, target, text)
+        }
+        (None, Some(url)) => {
+            let fetched = browse::fetch_url(&state.http, &url).await?;
+            // A page with nothing readable in it is not a source; saying so now
+            // beats a catalogue entry that can never answer anything.
+            if fetched.trim().chars().count() < 40 {
+                return Err(format!("{url} had no readable text to add."));
+            }
+            let name = format!("{}.md", crate::tools::docs::slug_with(&url_slug(&url), "page"));
+            let target = free_path_for(&dir, &name);
+            std::fs::write(&target, &fetched)
+                .map_err(|e| format!("could not save {name} in this notebook: {e}"))?;
+            (name, "url".to_string(), url, target, fetched)
+        }
+        (None, None) => return Err("Pick a file or give a URL.".to_string()),
+    };
+
+    let fingerprint = crate::conversation::notebook::fingerprint_of(&copy)?;
+    let bytes = std::fs::metadata(&copy).map(|m| m.len()).unwrap_or(0);
+    let digest = digest_text(&state, &settings, &notebook_id, &name, &text, bytes).await;
+
+    {
+        let conn = state.db.lock().unwrap();
+        let row = db::create_source(
+            &conn,
+            &notebook_id,
+            &name,
+            &kind,
+            &origin,
+            Some(&copy.display().to_string()),
+            &text,
+            &fingerprint,
+        )
+        .map_err(|e| e.to_string())?;
+        db::set_source_digest(&conn, &row.id, &digest).map_err(|e| e.to_string())?;
+        db::touch_notebook(&conn, &notebook_id).map_err(|e| e.to_string())?;
+        let mut row = row;
+        row.digest = digest;
+        Ok(crate::conversation::notebook::view(&row))
+    }
+}
+
+/// A URL reduced to something that can be a file name.
+fn url_slug(url: &str) -> String {
+    let without_scheme = url
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
+    let host_and_path: String = without_scheme
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    host_and_path.trim_matches('-').chars().take(60).collect()
+}
+
+/// Switches a source on or off. The file, the text and the digest all stay, which
+/// is what makes the switch reversible.
+#[tauri::command]
+pub fn set_source_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::set_source_enabled(&conn, &id, enabled).map_err(|e| e.to_string())
+}
+
+/// Reads a source again — re-copying from the original, or re-fetching the page —
+/// and pays for a new digest **only if the text actually changed**.
+#[tauri::command]
+pub async fn resync_source(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<crate::conversation::notebook::SourceView, String> {
+    let (row, settings) = {
+        let conn = state.db.lock().unwrap();
+        let row = db::get_source(&conn, &id)
+            .map_err(|e| e.to_string())?
+            .ok_or("That source has been removed.")?;
+        let settings = state.settings.lock().unwrap().clone();
+        (row, settings)
+    };
+    let Some(copy) = row.path.as_deref().map(PathBuf::from) else {
+        return Err("That source has no copy to read.".to_string());
+    };
+
+    if row.kind == "url" {
+        let fetched = browse::fetch_url(&state.http, &row.origin).await?;
+        std::fs::write(&copy, &fetched).map_err(|e| e.to_string())?;
+    } else if !row.origin.trim().is_empty() {
+        let from = PathBuf::from(&row.origin);
+        // The original may be gone; that is exactly what copying it in was for, so
+        // the copy stays and is simply read again.
+        if from.is_file() {
+            std::fs::copy(&from, &copy).map_err(|e| e.to_string())?;
+        }
+    }
+
+    let text = read_source_text(&copy, &row.name)?;
+    let fingerprint = crate::conversation::notebook::fingerprint_of(&copy)?;
+    let bytes = std::fs::metadata(&copy).map(|m| m.len()).unwrap_or(0);
+    let changed = crate::conversation::notebook::needs_digest(&row.fingerprint, &fingerprint);
+
+    let digest = if changed {
+        Some(digest_text(&state, &settings, &row.notebook_id, &row.name, &text, bytes).await)
+    } else {
+        None
+    };
+
+    let conn = state.db.lock().unwrap();
+    db::set_source_extract(&conn, &id, &text, &fingerprint).map_err(|e| e.to_string())?;
+    if let Some(digest) = &digest {
+        db::set_source_digest(&conn, &id, digest).map_err(|e| e.to_string())?;
+    }
+    let row = db::get_source(&conn, &id)
+        .map_err(|e| e.to_string())?
+        .ok_or("That source has been removed.")?;
+    Ok(crate::conversation::notebook::view(&row))
+}
+
+/// Removes a source and the copy the notebook made of it.
+#[tauri::command]
+pub fn remove_source(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let path = {
+        let conn = state.db.lock().unwrap();
+        let path = db::get_source(&conn, &id)
+            .map_err(|e| e.to_string())?
+            .and_then(|s| s.path);
+        db::remove_source(&conn, &id).map_err(|e| e.to_string())?;
+        path
+    };
+    if let Some(path) = path {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(())
+}
+
+/// Asks a notebook a question and records both halves of the exchange.
+#[tauri::command]
+pub async fn ask_notebook(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    question: String,
+) -> Result<crate::conversation::notebook::Asked, String> {
+    crate::conversation::notebook::ask(&state, &notebook_id, &question).await
+}
+
+/// What a notebook has produced. `target` is a written file's path or an
+/// artifact's id, because both writers already exist.
+#[tauri::command]
+pub fn add_notebook_output(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    kind: String,
+    title: String,
+    target: String,
+) -> Result<db::NotebookOutputRow, String> {
+    let conn = state.db.lock().unwrap();
+    db::add_notebook_output(&conn, &notebook_id, &kind, &title, &target)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_notebook_output(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::remove_notebook_output(&conn, &id).map_err(|e| e.to_string())
+}
+
 /// The memory file a project owns, or `None` when it has no folder.
 ///
 /// The one place this is worked out: `project_category` in `memory_files.rs`

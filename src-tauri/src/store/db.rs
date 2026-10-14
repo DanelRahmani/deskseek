@@ -263,7 +263,6 @@ CREATE TABLE IF NOT EXISTS file_checkpoints (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checkpoints_chat ON file_checkpoints(chat_id, created_at);
-
 -- The run a chat has in flight right now, if any. `runs.rs` holds the same fact
 -- in memory so the stop button has something to pull, but memory dies with the
 -- process — a build that is killed mid-run would otherwise leave no trace of
@@ -435,6 +434,94 @@ CREATE TABLE IF NOT EXISTS parked_requests (
     status     TEXT NOT NULL DEFAULT 'pending',
     created_at INTEGER NOT NULL
 );
+
+-- A notebook: a title, its own rules, and its own folder of sources. It is not a
+-- chat and deliberately has no row in `chats` — a notebook's question is not a
+-- turn, and giving it a chat would make every surface that reads a chat (the
+-- sidebar, the spend rows, the scheduler, memory) learn about a second kind of
+-- thing for no gain. Its sources are files in `notebooks/<id>/sources`, so the
+-- notebook owns its copies and deleting it takes them with it.
+CREATE TABLE IF NOT EXISTS notebooks (
+    id           TEXT PRIMARY KEY,
+    title        TEXT NOT NULL,
+    -- The notebook's own instruction blocks, in the same shape a project's rules
+    -- take, so the same editor and the same rule about which of them apply are
+    -- reused rather than reinvented. A malformed blob reads as none.
+    instructions TEXT NOT NULL DEFAULT '[]',
+    -- The model a question in this notebook runs on, or '' for the chat default —
+    -- the same "a pin is a model id and nothing more" rule a scheduled task uses.
+    -- Appended last on purpose, so a database written before this column and a
+    -- fresh one hold it in the same place.
+    model        TEXT NOT NULL DEFAULT '',
+    created_at   INTEGER NOT NULL,
+    updated_at   INTEGER NOT NULL
+);
+
+-- One document a notebook holds.
+--
+-- `fingerprint` is what the *digest* describes — the file's size and mtime when
+-- the digest was made — and it is the single answer to two questions: whether the
+-- source has changed since (a changed file reads as stale rather than being
+-- silently reused) and whether the digest is worth paying for again. One column
+-- because it is one fact, and two would be two answers that can disagree.
+--
+-- `extract` is the source's text, and it is the one copy: the chunk index 5.4
+-- builds is derived from it and rebuildable, which is deliberately the same
+-- relationship `messages_fts` has with `messages`. `enabled` is filtered at read
+-- time and never deleted, which is what makes the switch reversible.
+CREATE TABLE IF NOT EXISTS sources (
+    id          TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    -- `file` | `url`
+    kind        TEXT NOT NULL DEFAULT 'file',
+    -- Where it came from: the path the user picked, or the URL it was read from.
+    origin      TEXT NOT NULL DEFAULT '',
+    -- The copy this notebook owns, under its own sources folder.
+    path        TEXT,
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    extract     TEXT,
+    -- What this source contains, in the model's words when one could be reached
+    -- and in the derived outline's when none could — never empty for a source
+    -- that has been added, because the catalogue line is what the model reads.
+    digest      TEXT NOT NULL DEFAULT '',
+    digest_at   INTEGER,
+    fingerprint TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sources_notebook ON sources(notebook_id, enabled, created_at);
+
+-- One question asked of a notebook and the answer it got. The answer's citations
+-- are stored as the labels that resolved, so a later reader sees what the model
+-- actually stood behind rather than re-parsing prose.
+CREATE TABLE IF NOT EXISTS notebook_messages (
+    id             TEXT PRIMARY KEY,
+    notebook_id    TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+    seq            INTEGER NOT NULL,
+    -- `user` | `assistant`
+    role           TEXT NOT NULL,
+    content        TEXT NOT NULL,
+    citations_json TEXT,
+    created_at     INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notebook_messages ON notebook_messages(notebook_id, seq);
+
+-- Something a notebook produced: a flashcard set, a briefing, a spreadsheet. The
+-- target is a written file's path or an artifact's id, because both writers
+-- already exist and a second kind of output store would be a second answer to
+-- where an output lives.
+CREATE TABLE IF NOT EXISTS notebook_outputs (
+    id          TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    target      TEXT NOT NULL DEFAULT '',
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notebook_outputs ON notebook_outputs(notebook_id, created_at);
 "#;
 
 /// The column names of a table, or nothing when the table does not exist yet.
@@ -3091,9 +3178,431 @@ pub fn audit(
     })
 }
 
+// --------------------------------------------------------------- notebooks
+
+/// A notebook: a title, its own rules, its own folder of sources, and the model
+/// its questions run on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookRow {
+    pub id: String,
+    pub title: String,
+    /// The notebook's own rules, in the same shape a project's take — so the
+    /// rule about which of them apply is the one `agent::push_instructions`
+    /// already owns, rather than a second answer here.
+    #[serde(default)]
+    pub instructions: Vec<Instruction>,
+    /// The model a question runs on, or `''` for the chat default — the same pin
+    /// a scheduled task carries, and blank for the same reason.
+    #[serde(default)]
+    pub model: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// One document a notebook holds.
+///
+/// Deliberately without a `state`: whether a source is current, stale or gone is
+/// a question about the file on disk, and `conversation::notebook` owns both that
+/// rule and the payload the window reads. A `state` field here would be a second
+/// copy of it, written by whichever reader remembered to.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceRow {
+    pub id: String,
+    pub notebook_id: String,
+    pub name: String,
+    /// `file` | `url`
+    pub kind: String,
+    pub origin: String,
+    pub path: Option<String>,
+    pub enabled: bool,
+    /// The source's text. Deliberately not serialised: it is the same field the
+    /// model is sent, capped and labelled, and a version of it on the wire would
+    /// be a second copy of every document in the window.
+    #[serde(skip)]
+    pub extract: Option<String>,
+    pub digest: String,
+    pub digest_at: Option<i64>,
+    /// The fingerprint the *digest* describes. See the table's comment.
+    pub fingerprint: String,
+    pub created_at: i64,
+}
+
+/// One question and one answer. The answer's citations are the labels that
+/// resolved, stored rather than re-parsed from the prose.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookMessageRow {
+    pub id: String,
+    pub notebook_id: String,
+    pub seq: i64,
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub citations: Vec<String>,
+    pub created_at: i64,
+}
+
+/// Something a notebook produced. `target` is a written file's path or an
+/// artifact's id, because both writers already exist.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotebookOutputRow {
+    pub id: String,
+    pub notebook_id: String,
+    pub kind: String,
+    pub title: String,
+    pub target: String,
+    pub created_at: i64,
+}
+
+const NOTEBOOK_COLS: &str = "id, title, instructions, model, created_at, updated_at";
+const SOURCE_COLS: &str = "id, notebook_id, name, kind, origin, path, enabled, extract, digest, \
+     digest_at, fingerprint, created_at";
+const NOTEBOOK_MESSAGE_COLS: &str = "id, notebook_id, seq, role, content, citations_json, created_at";
+const NOTEBOOK_OUTPUT_COLS: &str = "id, notebook_id, kind, title, target, created_at";
+
+fn notebook_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookRow> {
+    // A malformed blob reads as "no rules" rather than failing the whole list,
+    // the same way a project's does.
+    let raw: String = r.get(2)?;
+    Ok(NotebookRow {
+        id: r.get(0)?,
+        title: r.get(1)?,
+        instructions: serde_json::from_str(&raw).unwrap_or_default(),
+        model: r.get(3)?,
+        created_at: r.get(4)?,
+        updated_at: r.get(5)?,
+    })
+}
+
+fn source_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<SourceRow> {
+    Ok(SourceRow {
+        id: r.get(0)?,
+        notebook_id: r.get(1)?,
+        name: r.get(2)?,
+        kind: r.get(3)?,
+        origin: r.get(4)?,
+        path: r.get(5)?,
+        enabled: r.get::<_, i64>(6)? != 0,
+        extract: r.get(7)?,
+        digest: r.get(8)?,
+        digest_at: r.get(9)?,
+        fingerprint: r.get(10)?,
+        created_at: r.get(11)?,
+    })
+}
+
+fn notebook_message_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookMessageRow> {
+    let raw: Option<String> = r.get(5)?;
+    Ok(NotebookMessageRow {
+        id: r.get(0)?,
+        notebook_id: r.get(1)?,
+        seq: r.get(2)?,
+        role: r.get(3)?,
+        content: r.get(4)?,
+        citations: raw
+            .and_then(|json| serde_json::from_str(&json).ok())
+            .unwrap_or_default(),
+        created_at: r.get(6)?,
+    })
+}
+
+fn notebook_output_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookOutputRow> {
+    Ok(NotebookOutputRow {
+        id: r.get(0)?,
+        notebook_id: r.get(1)?,
+        kind: r.get(2)?,
+        title: r.get(3)?,
+        target: r.get(4)?,
+        created_at: r.get(5)?,
+    })
+}
+
+/// Newest activity first, like the sidebar: asking a notebook a question is
+/// activity, so it moves the row up.
+pub fn list_notebooks(conn: &Connection) -> rusqlite::Result<Vec<NotebookRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTEBOOK_COLS} FROM notebooks ORDER BY updated_at DESC, rowid DESC"
+    ))?;
+    let rows = stmt.query_map([], notebook_row)?;
+    rows.collect()
+}
+
+/// One notebook, or `None` when it has been deleted.
+pub fn get_notebook(conn: &Connection, id: &str) -> rusqlite::Result<Option<NotebookRow>> {
+    let mut stmt = conn.prepare(&format!("SELECT {NOTEBOOK_COLS} FROM notebooks WHERE id = ?1"))?;
+    stmt.query_row([id], notebook_row).optional()
+}
+
+/// An empty title would make a notebook unfindable in the list, so it falls back
+/// rather than being refused — the user can rename it straight after, exactly as
+/// a project does.
+pub fn create_notebook(conn: &Connection, title: &str) -> rusqlite::Result<NotebookRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let title = title.trim();
+    let title = if title.is_empty() { "New notebook" } else { title };
+    conn.execute(
+        "INSERT INTO notebooks (id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?3)",
+        params![id, title, ts],
+    )?;
+    Ok(NotebookRow {
+        id,
+        title: title.to_string(),
+        instructions: Vec::new(),
+        model: String::new(),
+        created_at: ts,
+        updated_at: ts,
+    })
+}
+
+pub fn rename_notebook(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<()> {
+    let title = title.trim();
+    let title = if title.is_empty() { "New notebook" } else { title };
+    conn.execute(
+        "UPDATE notebooks SET title = ?2, updated_at = ?3 WHERE id = ?1",
+        params![id, title, now_ts()],
+    )?;
+    Ok(())
+}
+
+/// The model this notebook's questions run on, or `''` for the chat default.
+pub fn set_notebook_model(conn: &Connection, id: &str, model: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE notebooks SET model = ?2 WHERE id = ?1",
+        params![id, model.trim()],
+    )?;
+    Ok(())
+}
+
+/// Replaces a notebook's rules.
+///
+/// Deliberately does not touch `updated_at`: the list is ordered by it, so
+/// editing a rule must not reshuffle the list — the same reason renaming a chat
+/// does not bump the chat's own timestamp.
+pub fn set_notebook_instructions(
+    conn: &Connection,
+    id: &str,
+    instructions: &[Instruction],
+) -> rusqlite::Result<()> {
+    let json = serde_json::to_string(instructions).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "UPDATE notebooks SET instructions = ?2 WHERE id = ?1",
+        params![id, json],
+    )?;
+    Ok(())
+}
+
+/// Removes the notebook and, by the foreign keys, its sources, its questions and
+/// its outputs. The files under `notebooks/<id>/` are removed by the caller,
+/// which is the one place that knows where they are.
+pub fn delete_notebook(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM notebooks WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Moves a notebook to the top of the list without changing its title or rules.
+pub fn touch_notebook(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE notebooks SET updated_at = ?2 WHERE id = ?1",
+        params![id, now_ts()],
+    )?;
+    Ok(())
+}
+
+/// Every source a notebook holds, in the order they were added — which is the
+/// order the rail shows them in and the order a catalogue reads in.
+///
+/// `rowid` rather than `created_at`: a timestamp here has one-second resolution, so
+/// adding three documents in a row ties, and the tiebreak then has to be something
+/// that is not the id — a uuid is random, and `ORDER BY created_at, id` shuffled a
+/// notebook's sources into an arbitrary order. SQLite's rowid is the insertion
+/// order, which is exactly what this is.
+pub fn list_sources(conn: &Connection, notebook_id: &str) -> rusqlite::Result<Vec<SourceRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {SOURCE_COLS} FROM sources WHERE notebook_id = ?1 ORDER BY rowid"
+    ))?;
+    let rows = stmt.query_map([notebook_id], source_row)?;
+    rows.collect()
+}
+
+pub fn get_source(conn: &Connection, id: &str) -> rusqlite::Result<Option<SourceRow>> {
+    let mut stmt = conn.prepare(&format!("SELECT {SOURCE_COLS} FROM sources WHERE id = ?1"))?;
+    stmt.query_row([id], source_row).optional()
+}
+
+/// Adds a source, already copied and already read. The digest arrives separately
+/// because generating it may need a model call, and a row that exists without one
+/// is still a source the user added.
+#[allow(clippy::too_many_arguments)]
+pub fn create_source(
+    conn: &Connection,
+    notebook_id: &str,
+    name: &str,
+    kind: &str,
+    origin: &str,
+    path: Option<&str>,
+    extract: &str,
+    fingerprint: &str,
+) -> rusqlite::Result<SourceRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    conn.execute(
+        "INSERT INTO sources
+            (id, notebook_id, name, kind, origin, path, enabled, extract, fingerprint, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7, ?8, ?9)",
+        params![id, notebook_id, name, kind, origin, path, extract, fingerprint, ts],
+    )?;
+    Ok(SourceRow {
+        id,
+        notebook_id: notebook_id.to_string(),
+        name: name.to_string(),
+        kind: kind.to_string(),
+        origin: origin.to_string(),
+        path: path.map(str::to_string),
+        enabled: true,
+        extract: (!extract.is_empty()).then(|| extract.to_string()),
+        digest: String::new(),
+        digest_at: None,
+        fingerprint: fingerprint.to_string(),
+        created_at: ts,
+    })
+}
+
+/// Switches a source on or off. Nothing else moves: the extract, the digest and
+/// the file all stay, which is what makes the switch reversible.
+pub fn set_source_enabled(conn: &Connection, id: &str, enabled: bool) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sources SET enabled = ?2 WHERE id = ?1",
+        params![id, enabled as i64],
+    )?;
+    Ok(())
+}
+
+/// Records what a source now holds, and the fingerprint the digest will describe.
+///
+/// Both in one statement because they are one fact: a fingerprint written without
+/// its text, or a text without its fingerprint, would read as a source that just
+/// changed when it did not — and that is a digest regenerated for nothing.
+pub fn set_source_extract(
+    conn: &Connection,
+    id: &str,
+    extract: &str,
+    fingerprint: &str,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sources SET extract = ?2, fingerprint = ?3 WHERE id = ?1",
+        params![id, extract, fingerprint],
+    )?;
+    Ok(())
+}
+
+/// Records the digest, and when it was made. Deliberately does not touch the
+/// fingerprint: that one belongs to the content, and this answers a question
+/// about it.
+pub fn set_source_digest(conn: &Connection, id: &str, digest: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE sources SET digest = ?2, digest_at = ?3 WHERE id = ?1",
+        params![id, digest, now_ts()],
+    )?;
+    Ok(())
+}
+
+pub fn remove_source(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM sources WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Appends one line to a notebook's conversation, at the end. `seq` is worked out
+/// here rather than by the caller so two appends cannot claim the same place.
+pub fn append_notebook_message(
+    conn: &Connection,
+    notebook_id: &str,
+    role: &str,
+    content: &str,
+    citations: &[String],
+) -> rusqlite::Result<NotebookMessageRow> {
+    let seq: i64 = conn.query_row(
+        "SELECT COALESCE(MAX(seq), 0) + 1 FROM notebook_messages WHERE notebook_id = ?1",
+        [notebook_id],
+        |r| r.get(0),
+    )?;
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let citations_json = (!citations.is_empty())
+        .then(|| serde_json::to_string(citations).unwrap_or_else(|_| "[]".to_string()));
+    conn.execute(
+        "INSERT INTO notebook_messages (id, notebook_id, seq, role, content, citations_json, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![id, notebook_id, seq, role, content, citations_json, ts],
+    )?;
+    Ok(NotebookMessageRow {
+        id,
+        notebook_id: notebook_id.to_string(),
+        seq,
+        role: role.to_string(),
+        content: content.to_string(),
+        citations: citations.to_vec(),
+        created_at: ts,
+    })
+}
+
+pub fn list_notebook_messages(
+    conn: &Connection,
+    notebook_id: &str,
+) -> rusqlite::Result<Vec<NotebookMessageRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTEBOOK_MESSAGE_COLS} FROM notebook_messages WHERE notebook_id = ?1 ORDER BY seq"
+    ))?;
+    let rows = stmt.query_map([notebook_id], notebook_message_row)?;
+    rows.collect()
+}
+
+pub fn add_notebook_output(
+    conn: &Connection,
+    notebook_id: &str,
+    kind: &str,
+    title: &str,
+    target: &str,
+) -> rusqlite::Result<NotebookOutputRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    conn.execute(
+        "INSERT INTO notebook_outputs (id, notebook_id, kind, title, target, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, notebook_id, kind, title, target, ts],
+    )?;
+    Ok(NotebookOutputRow {
+        id,
+        notebook_id: notebook_id.to_string(),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        target: target.to_string(),
+        created_at: ts,
+    })
+}
+
+pub fn list_notebook_outputs(
+    conn: &Connection,
+    notebook_id: &str,
+) -> rusqlite::Result<Vec<NotebookOutputRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTEBOOK_OUTPUT_COLS} FROM notebook_outputs WHERE notebook_id = ?1 \
+         ORDER BY created_at DESC, rowid DESC"
+    ))?;
+    let rows = stmt.query_map([notebook_id], notebook_output_row)?;
+    rows.collect()
+}
+
+pub fn remove_notebook_output(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM notebook_outputs WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests {    use super::*;
 
     /// A **fresh** database: `SCHEMA` and nothing else.
     ///
@@ -3308,6 +3817,17 @@ mod tests {
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].name, "Before 2.7");
         assert!(projects[0].instructions.is_empty());
+
+        // The notebook tables arrived whole in Phase 13, so there is nothing to
+        // carry over — but a database written before them must still open, and the
+        // four tables must really be there afterwards rather than the batch having
+        // silently skipped them.
+        for table in ["notebooks", "sources", "notebook_messages", "notebook_outputs"] {
+            assert!(
+                !table_columns(&conn, table).is_empty(),
+                "an upgraded database has no {table} table"
+            );
+        }
 
         // The index that actually failed must really exist now. "Did not crash"
         // would also be satisfied by the batch silently skipping it.
@@ -4903,6 +5423,131 @@ mod tests {
             .iter()
             .all(|row| row["argsDigest"].is_string()));
         assert_camel_case_keys(&shape, "audit");
+    }
+
+    #[test]
+    fn a_notebook_keeps_what_it_holds_and_a_delete_takes_it_all() {
+        let conn = mem();
+        let notebook = create_notebook(&conn, "Thesis").unwrap();
+        assert_eq!(notebook.title, "Thesis");
+        // An empty title falls back rather than making the row unfindable, the
+        // same rule a project follows.
+        assert_eq!(create_notebook(&conn, "   ").unwrap().title, "New notebook");
+
+        for (name, fingerprint) in [("a.pdf", "10-1"), ("b.md", "20-2"), ("c.txt", "30-3")] {
+            create_source(
+                &conn,
+                &notebook.id,
+                name,
+                "file",
+                "C:/origin",
+                Some("C:/copy"),
+                "body",
+                fingerprint,
+            )
+            .unwrap();
+        }
+        let sources = list_sources(&conn, &notebook.id).unwrap();
+        assert_eq!(sources.len(), 3, "all three are listed");
+        assert_eq!(sources[0].name, "a.pdf", "in the order they were added");
+        assert!(sources[0].enabled, "a new source is switched on");
+
+        // The switch is reversible and keeps everything else — which is the whole
+        // reason it is a column and not a delete.
+        set_source_enabled(&conn, &sources[1].id, false).unwrap();
+        let again = list_sources(&conn, &notebook.id).unwrap();
+        assert!(!again[1].enabled);
+        assert_eq!(
+            again[1].extract.as_deref(),
+            Some("body"),
+            "switching a source off kept its text"
+        );
+
+        // A question, an answer, and something produced.
+        append_notebook_message(&conn, &notebook.id, "user", "what changed?", &[]).unwrap();
+        let answer = append_notebook_message(
+            &conn,
+            &notebook.id,
+            "assistant",
+            "Revenue rose [a.pdf].",
+            &["a.pdf".to_string()],
+        )
+        .unwrap();
+        assert_eq!(answer.seq, 2, "the second line goes after the first");
+        assert_eq!(answer.citations, vec!["a.pdf".to_string()]);
+        add_notebook_output(&conn, &notebook.id, "markdown", "Cards", "C:/copy/cards.md").unwrap();
+
+        // The text and the fingerprint the digest describes are two facts, and
+        // both round-trip — the second is what says whether the digest is stale.
+        set_source_extract(&conn, &sources[0].id, "new body", "11-9").unwrap();
+        set_source_digest(&conn, &sources[0].id, "A quarter of numbers.").unwrap();
+        let row = get_source(&conn, &sources[0].id).unwrap().unwrap();
+        assert_eq!(row.extract.as_deref(), Some("new body"));
+        assert_eq!(row.fingerprint, "11-9");
+        assert_eq!(row.digest, "A quarter of numbers.");
+        assert!(row.digest_at.is_some(), "a digest records when it was made");
+
+        // Removing one source takes only itself.
+        remove_source(&conn, &sources[2].id).unwrap();
+        assert_eq!(list_sources(&conn, &notebook.id).unwrap().len(), 2);
+
+        // The notebook's own rows go together, by the foreign keys rather than by
+        // a sweep somebody has to remember to write.
+        delete_notebook(&conn, &notebook.id).unwrap();
+        assert!(list_sources(&conn, &notebook.id).unwrap().is_empty());
+        assert!(list_notebook_messages(&conn, &notebook.id).unwrap().is_empty());
+        assert!(list_notebook_outputs(&conn, &notebook.id).unwrap().is_empty());
+        assert!(get_notebook(&conn, &notebook.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_notebook_payloads_are_camel_case_and_never_carry_a_documents_text() {
+        let conn = mem();
+        let notebook = create_notebook(&conn, "Thesis").unwrap();
+        let source = create_source(
+            &conn,
+            &notebook.id,
+            "a.pdf",
+            "file",
+            "C:/a.pdf",
+            Some("C:/copy/a.pdf"),
+            "the whole document",
+            "10-1",
+        )
+        .unwrap();
+        let answer = append_notebook_message(
+            &conn,
+            &notebook.id,
+            "assistant",
+            "Yes [a.pdf].",
+            &["a.pdf".to_string()],
+        )
+        .unwrap();
+        let output =
+            add_notebook_output(&conn, &notebook.id, "markdown", "Cards", "C:/copy/cards.md")
+                .unwrap();
+
+        for (label, value) in [
+            ("notebook", serde_json::to_value(&notebook).unwrap()),
+            ("source", serde_json::to_value(&source).unwrap()),
+            ("message", serde_json::to_value(&answer).unwrap()),
+            ("output", serde_json::to_value(&output).unwrap()),
+        ] {
+            assert_camel_case_keys(&value, label);
+        }
+
+        // The names the window actually reads, spelled the way it reads them.
+        let shape = serde_json::to_value(&source).unwrap();
+        assert!(shape["notebookId"].is_string());
+        assert!(shape["digestAt"].is_null());
+        assert_eq!(shape["enabled"], serde_json::json!(true));
+        // And the document itself is not in it: a source's payload carries what it
+        // contains, never what it says.
+        assert!(shape.get("extract").is_none(), "{shape}");
+        assert!(!shape.to_string().contains("the whole document"));
+        // The citations a notebook's answer resolved ride with it, as a list.
+        let answered = serde_json::to_value(&answer).unwrap();
+        assert_eq!(answered["citations"], serde_json::json!(["a.pdf"]));
     }
 
     #[test]

@@ -257,7 +257,10 @@ pub(crate) fn part(label: impl Into<String>, group: &str, chars: usize) -> Promp
 ///
 /// One function so the global list and a project's list cannot drift apart: both
 /// apply the same rule — switched on, and scoped to this kind of chat or to both.
-fn push_instructions(
+/// A notebook's rules come through here too, with the measurements discarded,
+/// for the same reason: a second copy of "which blocks apply" is how one of them
+/// ends up including a block the others do not.
+pub(crate) fn push_instructions(
     base: &mut String,
     parts: &mut Vec<PromptPart>,
     instructions: &[Instruction],

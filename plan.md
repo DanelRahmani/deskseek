@@ -23,7 +23,9 @@ archive item, **9.4**, is deliberately not here: it is "V1 once 6.3 exists", and
 reached through 6.2's plugin bundles — does not. One commit in Phase 11 covers two items, **7.3 and
 3.3 together**, because they are the same enum, the same form and the same panel row: splitting them
 would have meant hand-reverting a file twice, and a commit that does not build is a worse break of the
-one-item rule than a commit that names two items. The next release is **0.5.0**, and `CHANGELOG.md`'s
+one-item rule than a commit that names two items. **Phase 13 (4.1, 5.4, 8.2, 8.3, 8.4)** is written
+up below and is being built now: the archive's last phase, and its sixth item, **5.3**, is
+deliberately left unbuilt with the reason given. The next release is **0.5.0**, and `CHANGELOG.md`'s
 top section is what its tag will print.
 
 What is *not* covered by those ✓s: the E2E checklist has not been walked end to
@@ -2255,22 +2257,210 @@ than a module.
 
 ---
 
+## Phase 13: Grounded research
+
+Planned 2026-10-14, from [`ReverseEngineering.md`](ReverseEngineering.md). The archive's last phase,
+and the largest single product surface in it. The order is the argument: **4.1 is the model and 5.4
+is the retrieval that reads it**, so the surface (8.2) is a view over both rather than a third way
+to hold sources; the output set (8.3) and the fact tables (8.4) are menus over that surface, not
+subsystems. The archive wanted this built on a settled memory and retrieval path rather than beside
+one, which is what Phases 8 through 11 were, and nothing here needs a server, an account or a new
+dependency.
+
+Two decisions were taken with the owner on 2026-10-14 and they shape every item, so they are written
+here rather than discovered later.
+
+**A source is a catalogue entry, not a prompt attachment.** Adding one runs a pipeline exactly once —
+copy the file into the notebook's own folder, extract its text, chunk and index it, and produce a
+**digest**: what that source contains. The notebook's prompt carries the *catalogue* — each enabled
+source's label and its digest — and never the extracts; the model pulls what it needs with two
+tools. That is the difference between a notebook that answers from forty documents and one that pays
+for forty documents on every question. The digest is a model call made **once, when the source is
+added**, with the free derived outline (headings, word count, size) as the fallback when no endpoint
+is reachable, so adding a source never fails for want of a model — and a re-sync regenerates it only
+when the content actually changed.
+
+**A notebook is a tab and a pane member**, so it sits beside a chat and comes back on the next
+launch. `Shell.tabs` and `Shell.panes` already hold opaque ids and `pruneShell` is already generic,
+so `lib/shell.ts` is **not** widened: what changes is the *resolver*, which must learn that a tab id
+is a chat, a notebook, or gone.
+
+The order inside the phase: 4.1 and 5.4 are the substrate and block everything; 8.2 needs both; 8.3
+and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not built** — see below.
+
+### 4.1 [L] A notebooks, sources and outputs model ✅
+- **Why**: the substrate for 8.2 and for every "answer only from these sources, with citations"
+  feature. A notebook is a title, a folder, an instruction block, a source list with a sync state, an
+  ask log and an output set.
+- **Files**: `store/db.rs` (the four tables plus their rows and CRUD); `store/paths.rs`
+  (`notebooks_dir`, `notebook_dir`, `notebook_sources_dir`); new `src-tauri/src/retrieval.rs` (the
+  label format and the rule that decides whether a citation resolves); new
+  `conversation/notebook.rs` (the fingerprint rule, the free outline, the digest call, the catalogue,
+  the budget, the system prompt and the ask); `commands.rs` (fifteen commands); `lib.rs` (`mod
+  retrieval`, and the handler list); `conversation/agent.rs` (one word: `push_instructions` is now
+  `pub(crate)`); `src/api.ts`, `src/types.ts`.
+- **Shape**: `notebooks(id, title, instructions, model, created_at, updated_at)`;
+  `sources(id, notebook_id, name, kind, origin, path, enabled, extract, digest, digest_at,
+  fingerprint, created_at)`; `notebook_messages(id, notebook_id, seq, role, content, citations_json,
+  created_at)`; `notebook_outputs(id, notebook_id, kind, title, target, created_at)`. Deletes cascade
+  by foreign key, as `messages` does to `chats`. A source's `state` is derived from its
+  `fingerprint` — the copy's size and mtime — so a document that changed reports *stale* rather than
+  being silently reused; a file that is gone reports *missing*, which is a different problem and does
+  not invite a re-sync that cannot work. One comparison answers both questions a source has —
+  "has this changed" and "is the digest worth paying for again" — because both are about the same
+  fact, so it is stored once. A disabled source is filtered at read time and never deleted, which is
+  what makes the switch reversible.
+- **Test**: `cargo test` 455 → **465**. `retrieval::tests` — `a_citation_names_its_source_and_the_part_it_used`,
+  `a_citation_that_names_nothing_is_caught` (two real citations and one invented, and only the
+  invented one is reported), and `prose_and_links_are_not_mistaken_for_citations` (a markdown link,
+  `[sic]`, a footnote `[1]` and a bracketed aside are none of them citations, and the real one
+  beside them still is).
+  `conversation::notebook::tests` — `a_digest_is_made_once_and_not_every_time` (the same comparison
+  is the rail's *stale*: a written file is `ok`, an edit of a different length is `stale` against the
+  old fingerprint, and a deleted one is `missing`), `the_free_outline_describes_the_shape_of_a_document`,
+  `only_the_sources_that_are_switched_on_are_offered` (a switched-off source is absent from both the
+  catalogue and the citable labels, and an empty set is said in words), `the_budget_is_shared_in_rounds_rather_than_divided_evenly`
+  (a small source gives all it has and the rest of the budget goes to the one that needs it, with
+  nothing invented), and `the_notebooks_own_rules_reach_its_prompt` (a disabled rule and a
+  coding-only rule stay out).
+  `store::db::tests` — `a_notebook_keeps_what_it_holds_and_a_delete_takes_it_all` (three sources in
+  the order they were added, the switch reversible with the text kept, the digest and the fingerprint
+  both round-tripping, one source removed without touching the others, and then the notebook's rows
+  gone together) and `the_notebook_payloads_are_camel_case_and_never_carry_a_documents_text` (all
+  four payloads walked for a `_`, the names the window reads asserted, and the extract — which the row
+  really does hold — asserted *absent* from the wire). `an_older_database_upgrades_instead_of_refusing_to_open`
+  now asserts all four tables exist after opening a database written before them.
+  **Falsified**: making `needs_digest` answer "yes, always" (`stored != current` →
+  `stored != current || !stored.is_empty()`) fails `a_digest_is_made_once_and_not_every_time` with
+  `assertion failed: !needs_digest("120-77", "120-77")` — a source that never moved paying for a
+  second digest, which is the bug the owner asked not to have — after checking the mutation reached
+  the disk, and restoring passes. **Six deviations, said out loud**: `retrieval.rs` is born here
+  rather than in 5.4, because a notebook's sources carry labels before anything is indexed and the
+  label format and the resolve rule are one rule — 5.4 grows the index and the query into the same
+  file; there is **no `folder` column**, because the notebook's folder is derived from its id in
+  `paths.rs` and a path written down twice can come to disagree with itself; a **`model` column was
+  added** that the plan did not have, so a notebook can be pinned to a model the way a scheduled task
+  is, blank meaning the chat default; a **URL source is a file**, fetched once and written into the
+  sources folder, so every source is a file and staleness has one rule rather than two; the output's
+  column is **`target`** rather than `ref`, which is a Rust keyword and the name `scheduled_tasks`
+  already uses for the same idea; and the source row **carries the extract but the wire never does**,
+  which is asserted rather than assumed. **Two things the tests found, both mine**: the outline
+  counted a markdown `#` as a word, which inflates the one figure a reader uses to guess how long a
+  document is — the marker is stripped before counting now; and the first version of `list_sources`
+  ordered by `created_at, id`, which has one-second resolution and a random uuid for a tiebreak, so
+  three documents added in a row came back in an arbitrary order — it orders by `rowid` now, which is
+  the insertion order this always meant. One limit named: a source's staleness is about **the copy
+  this notebook owns**, so re-sync re-copies from the original when it is still there and reads the
+  copy when it is not, which is what copying it in was for.
+- **Stop**: sources, questions and outputs persist and can be added to later.
+
+### 5.4 [M] Grounded retrieval, and the two ways it is consumed
+- **Why**: the cheapest way to make "answer from these documents, with citations" real, and the
+  index a notebook cannot work without.
+- **Files**: `tools/walk.rs` (a chunk walk beside `find_named`), `store/db.rs` (a `chunks` table and
+  a `chunks_fts` built like `messages_fts`), `src-tauri/src/retrieval.rs` (**new** — the index, the
+  query, the label, and the rule that decides whether a citation resolves),
+  `conversation/assemble.rs` (`chunks_block`, beside `memory_block`), `conversation/agent.rs` (the
+  injection for a chat, beside the recalled-memory block), `src/lib/citation.ts` +
+  `citation.check.ts` (**new**), `src/components/Markdown.tsx`.
+- **Shape**: chunk by heading, falling back to fixed windows for a document without headings, and
+  label every chunk `source#Heading`. The index is external-content FTS5 over a `chunks` table, so
+  `sources.extract` stays the one copy of the text and a chunk row is always rebuildable — the same
+  relationship `messages_fts` has with `messages`. Freshness is per file, by fingerprint, so a
+  thousand unchanged files cost one `stat` each and no parsing. Two consumers, one index: a **chat**
+  has the top-k chunks injected into its prompt with their labels (the archive's 5.4 as written, over
+  the chat's own folder and the workspace), while a **notebook** is offered two tools instead —
+  `source_search(query)` across its enabled sources, and `read_source(label)`. A citation naming a
+  source that was not retrieved is a bug, and that rule is this module's, not the prompt's.
+- **Test**: chunking splits on headings and loses no line; an unchanged file is not re-indexed while
+  a changed one is; the file that contains the words outranks one that does not; the injected budget
+  holds; a citation naming a retrieved source resolves while one naming a stranger is caught; a
+  disabled source is not searchable; and `read_source` refuses a label the notebook does not hold.
+  `citation.check.ts` holds the frontend half — a citation that names something real reads as a
+  reference, and one that names nothing stays plain text rather than becoming a dead link.
+- **Stop**: asking about a folder answers from it, and every citation names a file that was actually
+  retrieved.
+
+### 8.2 [L] The notebook shell
+- **Why**: the user-facing half — one surface holding its sources, a grounded conversation and a set
+  of outputs, which is the shape a notebook product has to have.
+- **Files**: `src/components/NotebookShell.tsx` (**new**); `src-tauri/src/conversation/notebook.rs`
+  (**new** — the ask, its prompt, the generator table); `tools/mod.rs` (`tools_for_notebook`, and the
+  two declarations); `src/App.tsx` (the startup id set, the pane dispatch, `/notebook`, the `Panel`
+  union), `src/components/TabStrip.tsx` and `Sidebar.tsx` (a notebook's title and its entry),
+  `src/lib/commands.ts`, `src/lib/shell.check.ts` (the resolver case), `src/api.ts`, `src/types.ts`,
+  `commands.rs` (the copy command), `ARCHITECTURE.md`, `README.md`.
+- **Shape**: three regions — a sources rail (add, enable and disable, sync state, stale, and each
+  source's digest line), the grounded chat, and the outputs list — with the notebook picker in the
+  rail's header so there is no second list panel. Outputs go through the **existing** writers
+  (`artifact_create`, `doc_create`, `sheet_create`): there is no second viewer and no second writer.
+  The ask is a bounded read-only loop rather than `agent::run` — the notebook's catalogue in the
+  system prompt, the two source tools, and the read-only and web tools so a fact can be verified
+  against the web — and it says plainly when an answer came from the web rather than from a source.
+  No writes, no approvals, no browser session and no chat row: a notebook's question is not a turn,
+  and pretending otherwise would be a second answer to "what is a chat". Copying a notebook carries
+  its sources and its outputs but **not** its messages.
+- **Test**: a tab id held only by the notebook list survives a prune while one held by neither list
+  is dropped; a copy carries outputs and no messages; every citation in a stored answer resolves; a
+  chat is not offered the notebook's two tools while a notebook is; and an ask records its spend
+  under a `notebook` kind.
+- **Stop**: one source set supports several questions and several outputs, durably, and a notebook
+  can sit beside a chat across a restart.
+
+### 8.3 [M] A study and briefing output set
+- **Why**: the generator menu is why a notebook is popular, and this app already has the writers and
+  the chart engine.
+- **Files**: `conversation/notebook.rs` (the generator table), `src/components/NotebookShell.tsx`
+  (the menu), `src/types.ts`.
+- **Shape**: **reuse, and no new artifact kind.** A flashcard set, a quiz, a briefing and a study
+  guide are `markdown` artifacts; a timeline and a mind map are `mermaid`, which already exists; an
+  infographic is `html`. Each generator is a title, a prompt and the kind it writes, so the table is
+  data rather than code. A quiz that marks its own answers would need a renderer *and* a grader,
+  which is a feature rather than a kind, so a v1 quiz ships with its answer key and the archive's own
+  V2 rating stands.
+- **Test**: an invariant over the whole table — every generator names a kind the app actually
+  accepts — because a suggestion naming a kind that does not exist is the failure this repo has
+  already been bitten by, and it is invisible until somebody presses the button.
+- **Stop**: a notebook produces a flashcard set, a quiz, a briefing, a timeline and a study guide,
+  each from its sources.
+
+### 8.4 [S] Data tables over sources
+- **Why**: synthesising facts across sources into a table and exporting it is the one notebook output
+  this app can already produce, because the `.xlsx` writer is here.
+- **Files**: `conversation/notebook.rs` (the generator and the per-row rule),
+  `tools/docs.rs::sheet_create` reused unchanged, `src/components/NotebookShell.tsx`, the
+  `types`/`api` pair.
+- **Shape**: the generator asks for a table whose last column is each row's source label. Cells carry
+  text and never a live formula — `sheet_create` already writes a formula as text, so that rule is
+  inherited rather than re-implemented — and every row's label must resolve to a source the notebook
+  actually holds, which is the same checkability rule 5.4 owns.
+- **Test**: a row citing a source the notebook does not hold is caught, and a cell beginning with `=`
+  is exported as text rather than as a formula.
+- **Stop**: a fact table can be built across sources and exported to `.xlsx`.
+
+### 5.3 [M] Semantic memory lookup — decided, not built
+- **Why** (the archive's): ranking is by shared words, so "the car" does not surface "vehicle".
+- **Decision, 2026-10-14**: **not built this phase, and not by accident.** This file already lists
+  *Embeddings for memory recall* under *Explicitly not doing (and why)*, and the README repeats the
+  trade at its honest limits: the price is a model download and network at query time, and it is
+  worth paying only if keyword recall actually fails in use. There is no evidence for that yet. Both
+  routes are also real commitments rather than one line — a local model is a new dependency and a
+  real download, and a provider is a decision about which endpoint serves embeddings, which the
+  endpoint this app ships against does not — so building it now would reverse a recorded decision to
+  satisfy a hunch. Left as a proposal, with the keyword path the one that exists.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
-The archive's phase plan runs **8 to 13**. This file has taken 8, 9, 10, 11 and 12; one phase is
-still a proposal in [`ReverseEngineering.md`](ReverseEngineering.md) and has never been written up
-here as items:
+The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left
+is the archive's own *Kept in reserve* list — sub-agents, the browser-extension bridge, the activity
+timeline, share snapshots, and the plugin and recording work — each of which wants either a real week
+of using the phases above or a task that actually needs it. 5.3 is the one item of Phase 13 that was
+planned and then deliberately not built, and the reason is written above rather than left out.
 
-- **Phase 13 — Grounded research.** Notebooks and sources, grounded retrieval, the notebook surface,
-  study outputs, data tables, semantic lookup. It wants the memory and retrieval path settled first,
-  which is what Phases 8 through 11 were.
-
-Plus the archive's own *Kept in reserve* list — sub-agents, the browser-extension bridge, the
-activity timeline, share snapshots, and the plugin and recording work — each of which wants either a
-real week of using the phases above or a task that actually needs it.
-
-So a ✅ on every item in this file means **the plan as written is built**, not that the roadmap is
-finished. Nothing in Phases 1 to 12 is waiting on Phase 13, and it is not started.
+So a ✅ on every item in this file means **the plan as written is built**. It does not mean the
+roadmap is finished.
 
 ---
 

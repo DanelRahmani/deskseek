@@ -72,6 +72,86 @@ export interface ProjectSpend {
 }
 
 /**
+ * A notebook: a title, its own rules, its own folder of sources, and the model
+ * its questions run on. Deliberately not a chat — a question asked of a source
+ * set is not a turn, and no chat row exists for one.
+ */
+export interface NotebookRow {
+  id: string;
+  title: string;
+  /** The notebook's own rules, in the same shape a project's take. */
+  instructions: Instruction[];
+  /** The model questions run on, or "" for the chat default. */
+  model: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * One source as the rail reads it. `digest` is what it contains, in the model's
+ * words when one could be reached and in the derived outline's when none could;
+ * `state` says whether the copy is still the file that digest describes.
+ */
+export interface SourceView {
+  id: string;
+  notebookId: string;
+  name: string;
+  /** `file` | `url` */
+  kind: string;
+  /** Where it came from: the path picked, or the URL read. */
+  origin: string;
+  /** The copy this notebook owns. */
+  path: string | null;
+  enabled: boolean;
+  digest: string;
+  digestAt: number | null;
+  /** `ok` | `stale` | `missing` */
+  state: string;
+  /** How much text was read out of it, so a source that extracted to nothing
+   *  says so rather than looking like one that answers everything. */
+  chars: number;
+  createdAt: number;
+}
+
+/** One question asked of a notebook, and the answer it got. */
+export interface NotebookMessageRow {
+  id: string;
+  notebookId: string;
+  seq: number;
+  /** `user` | `assistant` */
+  role: string;
+  content: string;
+  /** The citations in the answer that named a real source. */
+  citations: string[];
+  createdAt: number;
+}
+
+/** Something a notebook produced — a written file's path or an artifact's id. */
+export interface NotebookOutputRow {
+  id: string;
+  notebookId: string;
+  kind: string;
+  title: string;
+  target: string;
+  createdAt: number;
+}
+
+/** Everything one notebook shows, in one read. */
+export interface NotebookView {
+  notebook: NotebookRow;
+  sources: SourceView[];
+  messages: NotebookMessageRow[];
+  outputs: NotebookOutputRow[];
+}
+
+/** One question, its answer, and the citations that named nothing. */
+export interface Asked {
+  question: NotebookMessageRow;
+  answer: NotebookMessageRow;
+  unresolved: string[];
+}
+
+/**
  * One recurring task: a prompt and when to run it. The fields that describe the
  * schedule are `freq` and `time`, plus `weekday`/`nth` for the weekly and monthly
  * shapes, so "the first Wednesday of the month at 08:00" is one description

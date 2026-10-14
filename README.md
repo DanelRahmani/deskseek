@@ -280,6 +280,16 @@ Both sections are functional:
     are left out, and a document whose words are a picture (a scan) says so rather than coming
     back empty. Revising a document means reading it and creating it again, not editing the
     original in place
+- **Notebooks** — a notebook is its own place for a set of sources and the questions asked of them:
+  add a file or a page and it is copied into the notebook's own folder, listed with a line saying
+  what it contains, and switchable on or off. The model is sent that *catalogue* — the names and
+  what each holds — and not the documents, so a notebook of forty sources costs what one question
+  costs rather than what forty documents cost; answers cite the source they used by name. Its
+  sources are files you can open, so a changed one is reported as stale rather than silently reused
+  - Honest limits: the line saying what a source contains is written once when it is added, and a
+    document it describes as "40 pages" is summarised rather than read whole into every question.
+    Re-syncing re-reads it when it has actually changed; a source whose *original* moved is still
+    readable, because the notebook keeps its own copy
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
   fix is next to the warning rather than a command you have to remember. Past 90% a run folds the

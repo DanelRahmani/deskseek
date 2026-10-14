@@ -12,6 +12,7 @@ mod notify;
 mod prompts;
 mod questions;
 mod quick;
+mod retrieval;
 mod runs;
 mod schedule;
 mod searxng;
@@ -403,6 +404,21 @@ pub fn run() {
             commands::project_memory,
             commands::append_project_memory,
             commands::delete_project_memory,
+            commands::list_notebooks,
+            commands::create_notebook,
+            commands::rename_notebook,
+            commands::set_notebook_model,
+            commands::set_notebook_instructions,
+            commands::delete_notebook,
+            commands::open_notebook,
+            commands::list_sources,
+            commands::add_source,
+            commands::set_source_enabled,
+            commands::resync_source,
+            commands::remove_source,
+            commands::ask_notebook,
+            commands::add_notebook_output,
+            commands::remove_notebook_output,
             commands::list_parked,
             commands::dismiss_parked,
             commands::list_all_artifacts,

@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod assemble;
+pub mod notebook;
 pub mod review;
 pub mod summarize;
 

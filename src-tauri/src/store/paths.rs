@@ -102,6 +102,31 @@ impl AppPaths {
         self.root.join("shots")
     }
 
+    /// One folder per notebook, their own: a notebook's sources are copied in
+    /// beside each other, so deleting a notebook takes its copies with it and
+    /// nothing a notebook holds is confused with a chat's files.
+    pub fn notebooks_dir(&self) -> PathBuf {
+        self.root.join("notebooks")
+    }
+
+    /// The folder one notebook owns.
+    ///
+    /// Derived from the id rather than stored on the row. The id is a uuid this
+    /// app generated, so there is nothing for a user to choose here, and a path
+    /// written down twice is a path that can come to disagree with itself.
+    pub fn notebook_dir(&self, id: &str) -> PathBuf {
+        self.notebooks_dir().join(id)
+    }
+
+    /// Where a notebook's own copies of its sources live.
+    ///
+    /// Its own subfolder rather than the notebook's root, because books and PDFs
+    /// pile up quickly and the notebook will want room for its own files beside
+    /// them — the same reasoning that gave `memory/` a folder of its own.
+    pub fn notebook_sources_dir(&self, id: &str) -> PathBuf {
+        self.notebook_dir(id).join("sources")
+    }
+
     pub fn ensure(&self) -> io::Result<()> {
         std::fs::create_dir_all(&self.root)?;
         std::fs::create_dir_all(self.chatlog_dir())?;

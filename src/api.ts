@@ -8,6 +8,7 @@ import type {
   Artifact,
   ArtifactDetail,
   ArtifactEvent,
+  Asked,
   Attachment,
   AudioClip,
   AudioScript,
@@ -36,6 +37,9 @@ import type {
   MessagePage,
   MessageRow,
   ModelInfo,
+  NotebookOutputRow,
+  NotebookRow,
+  NotebookView,
   NotifyEvent,
   NotifyOpenEvent,
   ParkedRequest,
@@ -55,6 +59,7 @@ import type {
   ShotEvent,
   SkillImport,
   SkillView,
+  SourceView,
   SpeechEstimate,
   SpendReport,
   TaskRun,
@@ -314,6 +319,33 @@ export const api = {
   /** Forgets one entry from a project's own memory file. */
   deleteProjectMemory: (projectId: string, text: string) =>
     invoke<boolean>("delete_project_memory", { projectId, text }),
+
+  /** Notebooks: a title, its own rules, its own folder of sources, and the
+   *  questions asked of them. Nothing here is a chat. */
+  listNotebooks: () => invoke<NotebookRow[]>("list_notebooks"),
+  createNotebook: (title: string) => invoke<NotebookRow>("create_notebook", { title }),
+  renameNotebook: (id: string, title: string) => invoke<void>("rename_notebook", { id, title }),
+  setNotebookModel: (id: string, model: string) =>
+    invoke<void>("set_notebook_model", { id, model }),
+  setNotebookInstructions: (id: string, instructions: Instruction[]) =>
+    invoke<void>("set_notebook_instructions", { id, instructions }),
+  deleteNotebook: (id: string) => invoke<void>("delete_notebook", { id }),
+  /** Everything one notebook shows, in one read, so the shell never draws it in
+   *  stages. */
+  openNotebook: (id: string) => invoke<NotebookView>("open_notebook", { id }),
+  listSources: (notebookId: string) => invoke<SourceView[]>("list_sources", { notebookId }),
+  /** A file is copied in; a page is read once and kept as a file beside it. */
+  addSource: (notebookId: string, path: string | null, url: string | null) =>
+    invoke<SourceView>("add_source", { notebookId, path, url }),
+  setSourceEnabled: (id: string, enabled: boolean) =>
+    invoke<void>("set_source_enabled", { id, enabled }),
+  resyncSource: (id: string) => invoke<SourceView>("resync_source", { id }),
+  removeSource: (id: string) => invoke<void>("remove_source", { id }),
+  askNotebook: (notebookId: string, question: string) =>
+    invoke<Asked>("ask_notebook", { notebookId, question }),
+  addNotebookOutput: (notebookId: string, kind: string, title: string, target: string) =>
+    invoke<NotebookOutputRow>("add_notebook_output", { notebookId, kind, title, target }),
+  removeNotebookOutput: (id: string) => invoke<void>("remove_notebook_output", { id }),
 
   /** Design systems: their own store and their own switch, so neither list has
    *  to know the other one to avoid switching it off. */

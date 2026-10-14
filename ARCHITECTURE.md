@@ -112,6 +112,8 @@ Changing behaviour in this app is usually changing one of these.
 | The schema, and every upgrade — a new column is a `CREATE TABLE` entry *and* a guarded `ALTER` | `store/db.rs` |
 | The "one markdown file per named thing" store, including the id that may never climb out of its folder | `store/files.rs` |
 | The profile (`MEMORY.md`) versus one file per category | `memory.rs`, `memory_files.rs` |
+| What a notebook is, what a source's `ok`/`stale`/`missing` means and when its digest is worth paying for again (one fingerprint answers both), and how much of a source reaches the model — a catalogue of the enabled ones, never the corpus | `conversation/notebook.rs`, `store/db.rs` |
+| What a citation is, and whether one names a source that was actually there | `retrieval.rs` |
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |

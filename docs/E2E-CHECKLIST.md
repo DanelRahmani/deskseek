@@ -388,6 +388,20 @@ the parts only a person can see.
       JSON in the panel, and the tool result names what was wrong
 - [ ] A label containing markup (`<b>x</b>`) is shown as text, not drawn as markup
 
+## Notebooks
+
+- [ ] Adding a real `.pdf`/`.docx` copies it into the notebook's own folder and the source appears
+      with a digest line saying what it contains
+- [ ] Adding a URL reads the page once and keeps it as a file beside the others; a page with
+      nothing readable in it is refused with a message rather than added as an empty source
+- [ ] Switching a source off greys it and takes it out of the catalogue, and switching it back on
+      restores it with its digest and its text intact
+- [ ] Editing a copy of a source in the notebook folder and pressing *Re-sync* marks it stale and
+      produces a new digest; pressing *Re-sync* on an unchanged source does **not** spend a call
+      (the spend panel shows no new `Notebook digests` row)
+- [ ] With no endpoint configured, adding a source still works and its digest reads as an outline
+      of headings, words and size
+
 ## Robustness
 
 - [ ] Open devtools, run `localStorage.setItem("deskseek.crash", "1")`, then reload: an error
