@@ -144,12 +144,42 @@ export interface NotebookOutputRow {
   createdAt: number;
 }
 
+/**
+ * One item of a study set. `options` is what makes it a quiz item: present, the
+ * item is answered by choosing one of them, and `answer` is spelled exactly as the
+ * option it is — the app marks a choice by comparing the two. Absent, the item is
+ * a flashcard and `answer` is the back of it.
+ *
+ * `source` is the label it came from, kept as the model wrote it and resolved where
+ * it is shown, the same way a citation chip is.
+ */
+export interface StudyItem {
+  prompt: string;
+  answer: string;
+  options: string[];
+  why: string;
+  source: string;
+}
+
+/** A quiz or a set of flashcards the model made, as the rail lists it. */
+export interface StudySetRow {
+  id: string;
+  notebookId: string;
+  /** `quiz` | `flashcards` */
+  kind: string;
+  title: string;
+  items: StudyItem[];
+  createdAt: number;
+}
+
 /** Everything one notebook shows, in one read. */
 export interface NotebookView {
   notebook: NotebookRow;
   sources: SourceView[];
   messages: NotebookMessageRow[];
   outputs: NotebookOutputRow[];
+  /** What the model has made with `make_study_set`, newest first. */
+  sets: StudySetRow[];
 }
 
 /** One question, its answer, and the citations that named nothing. */

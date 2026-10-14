@@ -59,7 +59,10 @@ When the list above is not enough, `source_search` finds the passages that bear 
 `read_source` reads one whole source. Those two, and reading the public web through \
 `fetch_url`/`web_search`, are the only ways you have of finding anything out — and when an answer \
 comes from the web rather than from a source, say so, because that is the difference between a \
-source you were given and something you looked up.";
+source you were given and something you looked up.\n\n\
+When the reader asks for something to *study from* — flashcards, a quiz — call `make_study_set` \
+with the items themselves rather than describing them in your answer. What it makes is then handed \
+to them to take, one item at a time, so writing the questions out as well is the same work twice.";
 
 /// The instruction the digest call runs under.
 const DIGEST_SYSTEM: &str = "\
@@ -372,6 +375,12 @@ async fn run_tool(
     match name {
         "source_search" => source_search(state, notebook_id, args).await,
         "read_source" => read_source(state, notebook_id, args),
+        // The one call a notebook may make that leaves anything behind — and it
+        // leaves it in the notebook's own store rather than on the disk, because a
+        // study set is a thing the window draws rather than a file. That is exactly
+        // what `ToolClass::Internal` means, and it is why this loop still needs no
+        // approval path: nothing here can touch the machine.
+        "make_study_set" => make_study_set(state, notebook_id, args),
         // The internet tools read the public web rather than a folder, and the
         // app already owns how they are run — settings, the browser, the search
         // provider — so this defers to that rather than a second copy.
@@ -383,6 +392,39 @@ async fn run_tool(
              read."
         )),
     }
+}
+
+/// Makes a study set from a `make_study_set` call, and stores it.
+///
+/// Everything that makes the set *usable* is checked before a row exists: a set
+/// stored with a question whose right option cannot be recognised would be a
+/// question nobody could get right, and the reader would have no way to tell it
+/// from their own mistake. A refusal costs the model one more call inside the same
+/// question, which is why the messages in `study_set` say what was wrong.
+fn make_study_set(
+    state: &AppState,
+    notebook_id: &str,
+    args: &serde_json::Value,
+) -> Result<String, String> {
+    let set = study_set(args)?;
+    let stored = {
+        let conn = state.db.lock().unwrap();
+        let row = db::add_notebook_set(&conn, notebook_id, &set.kind, &set.title, &set.items)
+            .map_err(|e| e.to_string())?;
+        db::touch_notebook(&conn, notebook_id).map_err(|e| e.to_string())?;
+        row
+    };
+    Ok(format!(
+        "Made \"{}\" — {} {}. It is in this notebook's Study list now, where the reader takes it \
+         one item at a time, so do not write the items out in your answer as well.",
+        stored.title,
+        stored.items.len(),
+        if set.kind == "quiz" {
+            "quiz questions"
+        } else {
+            "cards"
+        }
+    ))
 }
 
 /// The notebook's enabled sources.
@@ -594,6 +636,170 @@ Build a fact table across these sources. One row per fact that can be compared b
 a header row. The last column is the source each row came from, written as its name exactly as the \
 source list spells it. Where the sources disagree, add a row saying so rather than picking one; \
 where a number has a unit or a date, put it in the cell as the source states it.";
+
+/// What a study set may be. A closed set, for the same reason `ARTIFACT_KINDS` is
+/// one: a kind the window cannot draw is a set nobody can take, and the model
+/// would never learn why — so the tool's own schema reads *this* list rather than
+/// repeating it.
+pub const STUDY_KINDS: [&str; 2] = ["quiz", "flashcards"];
+
+/// How many items one set may hold. Long enough for a quiz over a chapter, and
+/// bounded so a model cannot spend the reader's money filling a list nobody will
+/// finish.
+pub const MAX_STUDY_ITEMS: usize = 40;
+
+/// How many options a quiz question may offer: two is the smallest question worth
+/// asking, and six is as many as a reader can hold in mind at once.
+const MIN_OPTIONS: usize = 2;
+const MAX_OPTIONS: usize = 6;
+
+/// A study set that has been checked, ready for the store to hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StudySet {
+    pub kind: String,
+    pub title: String,
+    pub items: Vec<db::StudyItem>,
+}
+
+/// One `make_study_set` call, checked and normalised — or the reason it is not a
+/// set the reader could take.
+///
+/// The rule worth its own sentence is that **options are what make a quiz**.
+/// Present, the item is answered by picking one, so the answer has to be one of
+/// them and is stored spelled exactly as that option is — because the window marks
+/// a choice by comparing the two, and anything looser would be a question whose
+/// right option is marked wrong. Absent, the item is a flashcard and the answer is
+/// the back of it. A refusal here is the model's to read inside the same question,
+/// which is why every message says what was wrong rather than only that something
+/// was.
+pub fn study_set(args: &serde_json::Value) -> Result<StudySet, String> {
+    let kind = crate::conversation::agent::argument(args, "kind");
+    if !STUDY_KINDS.contains(&kind.as_str()) {
+        return Err(format!(
+            "'{kind}' is not a kind of study set — it is one of {}.",
+            STUDY_KINDS.join(" or ")
+        ));
+    }
+    let title = crate::conversation::agent::argument(args, "title");
+    if title.is_empty() {
+        return Err("a study set needs a title — it is the line the reader picks it out by".to_string());
+    }
+    let raws = args
+        .get("items")
+        .and_then(|value| value.as_array())
+        .ok_or("a study set needs `items`: one object per question or card")?;
+    if raws.is_empty() {
+        return Err("that set has no items in it".to_string());
+    }
+    if raws.len() > MAX_STUDY_ITEMS {
+        return Err(format!(
+            "a set holds at most {MAX_STUDY_ITEMS} items, and that one has {}.",
+            raws.len()
+        ));
+    }
+    let mut items = Vec::with_capacity(raws.len());
+    for raw in raws {
+        items.push(study_item(&kind, raw)?);
+    }
+    Ok(StudySet {
+        kind,
+        title,
+        items,
+    })
+}
+
+/// One item, held to the kind of set it is in.
+fn study_item(kind: &str, raw: &serde_json::Value) -> Result<db::StudyItem, String> {
+    let prompt = crate::conversation::agent::argument(raw, "prompt");
+    let answer = crate::conversation::agent::argument(raw, "answer");
+    if prompt.is_empty() {
+        return Err("an item has no question in it".to_string());
+    }
+    if answer.is_empty() {
+        return Err(format!("the item \"{prompt}\" has no answer"));
+    }
+    let options = strings_of(raw, "options");
+    let why = crate::conversation::agent::argument(raw, "why");
+    // The label the answer came from, kept as it was written: whether the notebook
+    // still holds a source by that name is decided where every other citation is
+    // decided — by the reader, against the source list — so nothing is resolved
+    // here and nothing is thrown away either.
+    let source = crate::conversation::agent::argument(raw, "source");
+
+    if kind != "quiz" {
+        if !options.is_empty() {
+            return Err(format!(
+                "a flashcard has no options, and \"{prompt}\" has {} — a card is answered by \
+                 knowing it rather than by picking one",
+                options.len()
+            ));
+        }
+        return Ok(db::StudyItem {
+            prompt,
+            answer,
+            options,
+            why,
+            source,
+        });
+    }
+
+    if options.len() < MIN_OPTIONS {
+        return Err(format!(
+            "the quiz question \"{prompt}\" offers {} options, and a question answered by \
+             picking one needs at least {MIN_OPTIONS}",
+            options.len()
+        ));
+    }
+    if options.len() > MAX_OPTIONS {
+        return Err(format!(
+            "the quiz question \"{prompt}\" offers {} options, and {MAX_OPTIONS} is as many as a \
+             reader can hold at once",
+            options.len()
+        ));
+    }
+    for (index, option) in options.iter().enumerate() {
+        if options[..index]
+            .iter()
+            .any(|seen| seen.eq_ignore_ascii_case(option))
+        {
+            return Err(format!(
+                "the quiz question \"{prompt}\" offers \"{option}\" twice, and two options that \
+                 read the same cannot be told apart"
+            ));
+        }
+    }
+    let answer = options
+        .iter()
+        .find(|option| option.eq_ignore_ascii_case(&answer))
+        .cloned()
+        .ok_or_else(|| {
+            format!(
+                "the answer to \"{prompt}\" is not one of its options — it has to be spelled as \
+                 one of them, so that the right choice can be recognised: {}",
+                options.join(", ")
+            )
+        })?;
+    Ok(db::StudyItem {
+        prompt,
+        answer,
+        options,
+        why,
+        source,
+    })
+}
+
+/// The non-empty strings of an array field, trimmed.
+fn strings_of(raw: &serde_json::Value, key: &str) -> Vec<String> {
+    raw.get(key)
+        .and_then(|value| value.as_array())
+        .map(|list| {
+            list.iter()
+                .map(|value| value.as_str().unwrap_or_default().trim().to_string())
+                .filter(|text| !text.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
 
 /// The first table in an answer, as its rows of cells.
 ///
@@ -925,6 +1131,123 @@ That is everything the sources settle.";
         // An id from the window that is not one of these is refused, not guessed.
         assert!(generator("flashcards").is_some());
         assert!(generator("nonsense").is_none());
+    }
+
+    /// The call shape the two tests below are about, so that they are tests of the
+    /// rules rather than of JSON plumbing.
+    fn quiz_args() -> serde_json::Value {
+        serde_json::json!({
+            "kind": "quiz",
+            "title": "Revenue quiz",
+            "items": [{
+                "prompt": "How much did revenue rise?",
+                "options": ["9%", "12%", "15%"],
+                "answer": "9%",
+                "why": "The summary states it.",
+                "source": "q3.pdf"
+            }]
+        })
+    }
+
+    #[test]
+    fn a_quiz_question_is_only_usable_when_its_answer_is_one_of_its_options() {
+        // The one that works, first: every refusal below refuses a shape that is
+        // otherwise fine, so a passing call is what says the *rule* is being tested
+        // rather than the plumbing.
+        let ok = study_set(&quiz_args()).expect("a well-formed quiz is a set");
+        assert_eq!(ok.kind, "quiz");
+        assert_eq!(ok.title, "Revenue quiz");
+        assert_eq!(ok.items.len(), 1);
+        assert_eq!(ok.items[0].options.len(), 3);
+        assert_eq!(ok.items[0].source, "q3.pdf");
+
+        // An answer that is not one of the options is a question nobody could get
+        // right, because the window marks a choice against the answer. The refusal
+        // names the options, so the model can repair it inside the same question.
+        let mut outside = quiz_args();
+        outside["items"][0]["answer"] = serde_json::json!("fifteen percent");
+        let reason = study_set(&outside).expect_err("an answer outside the options is refused");
+        assert!(reason.contains("not one of its options"), "{reason}");
+        assert!(reason.contains("9%, 12%, 15%"), "{reason}");
+
+        // And it is stored spelled as the option is — the same rule seen from the
+        // other side: a model that got the case wrong would otherwise ship a
+        // question whose right option is marked wrong.
+        let mut cased = quiz_args();
+        cased["items"][0]["options"] = serde_json::json!(["GDP", "9%"]);
+        cased["items"][0]["answer"] = serde_json::json!("gdp");
+        assert_eq!(study_set(&cased).unwrap().items[0].answer, "GDP");
+
+        // Two options that read the same cannot be told apart.
+        let mut twins = quiz_args();
+        twins["items"][0]["options"] = serde_json::json!(["9%", "9%"]);
+        let reason = study_set(&twins).expect_err("two identical options are refused");
+        assert!(reason.contains("twice"), "{reason}");
+
+        // One option is not a question, and seven is a list nobody reads to the end.
+        let mut thin = quiz_args();
+        thin["items"][0]["options"] = serde_json::json!(["9%"]);
+        assert!(study_set(&thin).is_err(), "one option is not a quiz question");
+        let mut wide = quiz_args();
+        wide["items"][0]["options"] = serde_json::json!(["a", "b", "c", "d", "e", "f", "g"]);
+        assert!(study_set(&wide).is_err(), "seven options is not a question");
+
+        // A flashcard carrying options is a quiz that says it is a card: the kind is
+        // what decides how the window draws the set, so it decides what an item may
+        // hold.
+        let mut card = quiz_args();
+        card["kind"] = serde_json::json!("flashcards");
+        let reason = study_set(&card).expect_err("a flashcard may not carry options");
+        assert!(reason.contains("no options"), "{reason}");
+
+        // And the shape of the call itself: an unknown kind, no title, an empty
+        // title, no items, no items field, and a list past the cap.
+        let refused = |args: serde_json::Value| study_set(&args).is_err();
+        assert!(refused(serde_json::json!({
+            "kind": "crossword", "title": "x", "items": []
+        })));
+        assert!(refused(serde_json::json!({"kind": "quiz", "items": []})));
+        assert!(refused(serde_json::json!({"kind": "quiz", "title": "  ", "items": []})));
+        assert!(refused(serde_json::json!({"kind": "quiz", "title": "x"})));
+        assert!(refused(serde_json::json!({"kind": "quiz", "title": "x", "items": []})));
+        let too_many: Vec<serde_json::Value> = (0..=MAX_STUDY_ITEMS)
+            .map(|i| serde_json::json!({"prompt": format!("question {i}"), "answer": "a"}))
+            .collect();
+        assert!(
+            refused(serde_json::json!({
+                "kind": "flashcards", "title": "All of them", "items": too_many
+            })),
+            "a set past the cap is refused"
+        );
+    }
+
+    #[test]
+    fn a_flashcard_holds_a_front_and_a_back_and_nothing_more() {
+        let args = serde_json::json!({
+            "kind": "flashcards",
+            "title": "Key numbers",
+            "items": [
+                {"prompt": "Revenue", "answer": "9% year on year", "source": "q3.pdf"},
+                {"prompt": "Margin", "answer": "41%"}
+            ]
+        });
+        let set = study_set(&args).expect("cards with no options are a set");
+        assert_eq!(set.kind, "flashcards");
+        assert_eq!(set.items.len(), 2);
+        assert!(set.items[0].options.is_empty(), "a card has no options");
+        assert_eq!(set.items[0].why, "", "a card does not have to explain itself");
+        assert_eq!(set.items[1].source, "", "and it does not have to name a source");
+
+        // A card with no back is a prompt with nothing to reveal, and an item with
+        // no front is not a question at all. Both refusals name the item, because
+        // the model has to know which one to repair.
+        let mut headless = args.clone();
+        headless["items"][0]["answer"] = serde_json::json!("   ");
+        let reason = study_set(&headless).expect_err("a card with no answer is refused");
+        assert!(reason.contains("Revenue"), "{reason}");
+        let mut frontless = args.clone();
+        frontless["items"][1]["prompt"] = serde_json::json!("");
+        assert!(study_set(&frontless).is_err(), "an item with no question is refused");
     }
 
     #[test]

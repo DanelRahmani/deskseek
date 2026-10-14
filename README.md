@@ -311,7 +311,14 @@ Both sections are functional:
     guide and a mind map, each one a grounded question in that shape, written into the notebook's
     folder as a `.md` or `.docx`. The list is Rust rather than TypeScript, so the menu and the
     prompts are one list; a mind map is a `mermaid` fence inside the document rather than a second
-    renderer, and a quiz ships with its key rather than marking itself
+    renderer, and a quiz ships with its key rather than marking itself — the one that marks itself is
+    the *set* below, which is a tool call rather than a document
+  - **A set you can take**: ask for a quiz or flashcards and the model writes the questions through a
+    tool call instead of into its reply, so the app receives items rather than prose. A quiz is marked
+    a question at a time — the option that was right, the one that was chosen, the line saying why, and
+    a score at the end naming what to look at again — and flashcards turn over one at a time. Each item
+    names the source it came from, marked as gone when that source has since been removed. Unlike the
+    outputs above, a set is not a file anywhere: the questions themselves are what is stored
   - **Fact table**: the same idea across sources rather than within one — a row per comparable fact,
     the source it came from in the last column, exported as a `.xlsx`. **Nothing is written unless
     every row names a source the notebook holds**, and a cell that begins with `=` is written as

@@ -428,6 +428,14 @@ the parts only a person can see.
       much was read out of it and when it was described. Escape and a click on the backdrop both close
       it, a source with no description yet has no *Read* to press, and a source added from a URL reads
       the same way
+- [ ] Asking for a quiz or flashcards ("make me flashcards on chapter 3") puts a set under *Study*
+      rather than writing the questions into the answer, and the reply says it did and where it went
+- [ ] Taking that quiz marks the option chosen *and* the one that was right, shows the line explaining
+      it, and ends with a score that names the questions to look at again
+- [ ] A flashcard set shows a front, turns over to its back, goes through to the end, and can be gone
+      through again; removing a set takes only that set
+- [ ] A quiz item whose source has since been removed shows the source as gone rather than naming a
+      file that is not there
       (the spend panel shows no new `Notebook digests` row)
 - [ ] With no endpoint configured, adding a source still works and its digest reads as an outline
       of headings, words and size

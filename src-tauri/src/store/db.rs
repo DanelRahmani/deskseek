@@ -523,6 +523,27 @@ CREATE TABLE IF NOT EXISTS notebook_outputs (
 
 CREATE INDEX IF NOT EXISTS idx_notebook_outputs ON notebook_outputs(notebook_id, created_at);
 
+-- A set of questions a notebook made: a quiz the reader can take or a stack of
+-- cards they can flip.
+--
+-- Unlike `notebook_outputs`, this is not a file anywhere — the set *is* the
+-- structured thing, and the window draws it — so the items are held here as JSON
+-- rather than as a path to something written. The shape is the `make_study_set`
+-- tool's schema and nothing else, because a set the window could not draw would be
+-- a set nobody could use: one description of what a set is, in `notebook.rs`,
+-- which is also where it is validated before it is ever stored.
+CREATE TABLE IF NOT EXISTS notebook_sets (
+    id          TEXT PRIMARY KEY,
+    notebook_id TEXT NOT NULL REFERENCES notebooks(id) ON DELETE CASCADE,
+    -- `quiz` | `flashcards`
+    kind        TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    items_json  TEXT NOT NULL DEFAULT '[]',
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_notebook_sets ON notebook_sets(notebook_id, created_at);
+
 -- One chunk of one document, so a question can be answered from the part that
 -- bears on it rather than from everything in the folder.
 --
@@ -3306,11 +3327,48 @@ pub struct NotebookOutputRow {
     pub created_at: i64,
 }
 
+/// One question of a study set: a quiz item when `options` is not empty, a
+/// flashcard when it is.
+///
+/// Every key is one word, so there is no `rename_all` to get wrong — and the
+/// camel-case walk in the tests does not care either way, because it checks the
+/// names rather than the attribute.
+///
+/// `source` is the label the item came from, kept **as the model wrote it** and
+/// deliberately not resolved here: whether this notebook still holds a source by
+/// that name is the same comparison the rail's citation chips make, and a store
+/// that decided it would be a second answer to one question.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StudyItem {
+    pub prompt: String,
+    pub answer: String,
+    #[serde(default)]
+    pub options: Vec<String>,
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub source: String,
+}
+
+/// A study set as the window reads it: the row, with its items parsed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudySetRow {
+    pub id: String,
+    pub notebook_id: String,
+    /// `quiz` | `flashcards`
+    pub kind: String,
+    pub title: String,
+    pub items: Vec<StudyItem>,
+    pub created_at: i64,
+}
+
 const NOTEBOOK_COLS: &str = "id, title, instructions, model, created_at, updated_at";
 const SOURCE_COLS: &str = "id, notebook_id, name, kind, origin, path, enabled, extract, digest, \
      digest_at, fingerprint, created_at";
 const NOTEBOOK_MESSAGE_COLS: &str = "id, notebook_id, seq, role, content, citations_json, created_at";
 const NOTEBOOK_OUTPUT_COLS: &str = "id, notebook_id, kind, title, target, created_at";
+const NOTEBOOK_SET_COLS: &str = "id, notebook_id, kind, title, items_json, created_at";
 
 fn notebook_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookRow> {
     // A malformed blob reads as "no rules" rather than failing the whole list,
@@ -3365,6 +3423,21 @@ fn notebook_output_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<NotebookOutput
         kind: r.get(2)?,
         title: r.get(3)?,
         target: r.get(4)?,
+        created_at: r.get(5)?,
+    })
+}
+
+fn notebook_set_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<StudySetRow> {
+    // A malformed blob reads as *no items* rather than failing the whole list, the
+    // same way a notebook's rules do — and no items draws as nothing, which is the
+    // one honest way for a broken row to behave.
+    let raw: String = r.get(4)?;
+    Ok(StudySetRow {
+        id: r.get(0)?,
+        notebook_id: r.get(1)?,
+        kind: r.get(2)?,
+        title: r.get(3)?,
+        items: serde_json::from_str(&raw).unwrap_or_default(),
         created_at: r.get(5)?,
     })
 }
@@ -3650,6 +3723,53 @@ pub fn remove_notebook_output(conn: &Connection, id: &str) -> rusqlite::Result<(
     Ok(())
 }
 
+/// Stores a study set that has already been validated.
+///
+/// The store owns *where a set goes*; `notebook::study_set` owns what one is. A
+/// second check here would be a second answer to the same question, and the
+/// interesting case — an item whose answer is not one of its options — is not a
+/// thing a column can decide.
+pub fn add_notebook_set(
+    conn: &Connection,
+    notebook_id: &str,
+    kind: &str,
+    title: &str,
+    items: &[StudyItem],
+) -> rusqlite::Result<StudySetRow> {
+    let id = uuid::Uuid::new_v4().to_string();
+    let ts = now_ts();
+    let items_json = serde_json::to_string(items).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "INSERT INTO notebook_sets (id, notebook_id, kind, title, items_json, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![id, notebook_id, kind, title, items_json, ts],
+    )?;
+    Ok(StudySetRow {
+        id,
+        notebook_id: notebook_id.to_string(),
+        kind: kind.to_string(),
+        title: title.to_string(),
+        items: items.to_vec(),
+        created_at: ts,
+    })
+}
+
+/// Newest first, like the outputs beside it: what a notebook has just made is
+/// what a reader is looking for.
+pub fn list_notebook_sets(conn: &Connection, notebook_id: &str) -> rusqlite::Result<Vec<StudySetRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTEBOOK_SET_COLS} FROM notebook_sets WHERE notebook_id = ?1 \
+         ORDER BY created_at DESC, rowid DESC"
+    ))?;
+    let rows = stmt.query_map([notebook_id], notebook_set_row)?;
+    rows.collect()
+}
+
+pub fn remove_notebook_set(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM notebook_sets WHERE id = ?1", [id])?;
+    Ok(())
+}
+
 /// Fills an empty notebook from another one: its rules, its model, its sources
 /// and what it produced — **not** its questions.
 ///
@@ -3699,6 +3819,12 @@ pub fn fill_notebook_copy(
     }
     for output in list_notebook_outputs(conn, from_id)? {
         add_notebook_output(conn, to_id, &output.kind, &output.title, &moved(&output.target))?;
+    }
+    // A set comes too: it is something the notebook *made*, like an output. Its
+    // items name sources by label rather than by path, so there is nothing to
+    // rewrite here and nothing for the copy to point at wrongly.
+    for set in list_notebook_sets(conn, from_id)? {
+        add_notebook_set(conn, to_id, &set.kind, &set.title, &set.items)?;
     }
     Ok(())
 }
@@ -4036,9 +4162,17 @@ mod tests {    use super::*;
 
         // The notebook tables arrived whole in Phase 13, so there is nothing to
         // carry over — but a database written before them must still open, and the
-        // four tables must really be there afterwards rather than the batch having
-        // silently skipped them.
-        for table in ["notebooks", "sources", "notebook_messages", "notebook_outputs"] {
+        // five tables must really be there afterwards rather than the batch having
+        // silently skipped them. `notebook_sets` arrived in Phase 14 and is the
+        // same question asked again: a table the batch skipped is a feature that
+        // works on a fresh profile and nowhere else.
+        for table in [
+            "notebooks",
+            "sources",
+            "notebook_messages",
+            "notebook_outputs",
+            "notebook_sets",
+        ] {
             assert!(
                 !table_columns(&conn, table).is_empty(),
                 "an upgraded database has no {table} table"
@@ -5690,6 +5824,20 @@ mod tests {    use super::*;
             "C:/profile/notebooks/old/briefing.md",
         )
         .unwrap();
+        add_notebook_set(
+            &conn,
+            &original.id,
+            "quiz",
+            "Revenue quiz",
+            &[StudyItem {
+                prompt: "How much did revenue rise?".into(),
+                answer: "9%".into(),
+                options: vec!["9%".into(), "12%".into()],
+                why: "The summary states it.".into(),
+                source: "q3.pdf".into(),
+            }],
+        )
+        .unwrap();
         append_notebook_message(&conn, &original.id, "user", "what changed?", &[]).unwrap();
         append_notebook_message(
             &conn,
@@ -5738,6 +5886,16 @@ mod tests {    use super::*;
         let outputs = list_notebook_outputs(&conn, &copy.id).unwrap();
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].target, "C:/profile/notebooks/new/briefing.md");
+
+        // A set comes too — it is something the notebook made, like an output —
+        // and its items are the same items, because an item names a source by
+        // label rather than by path and there is nothing to rewrite.
+        let sets = list_notebook_sets(&conn, &copy.id).unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets[0].title, "Revenue quiz");
+        assert_eq!(sets[0].kind, "quiz");
+        assert_eq!(sets[0].items[0].answer, "9%");
+        assert_eq!(sets[0].items[0].source, "q3.pdf");
 
         // And the questions do not: that is the line this copy draws, and the one
         // case where the absence *is* the feature.
@@ -5803,6 +5961,33 @@ mod tests {    use super::*;
         assert_eq!(answer.citations, vec!["a.pdf".to_string()]);
         add_notebook_output(&conn, &notebook.id, "markdown", "Cards", "C:/copy/cards.md").unwrap();
 
+        // A study set round-trips with its items, which is the whole point of it:
+        // the window draws what was stored rather than re-reading prose.
+        let set = add_notebook_set(
+            &conn,
+            &notebook.id,
+            "flashcards",
+            "Key numbers",
+            &[StudyItem {
+                prompt: "Revenue".into(),
+                answer: "9% year on year".into(),
+                options: Vec::new(),
+                why: String::new(),
+                source: "a.pdf".into(),
+            }],
+        )
+        .unwrap();
+        let stored = list_notebook_sets(&conn, &notebook.id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].id, set.id);
+        assert_eq!(stored[0].kind, "flashcards");
+        assert_eq!(stored[0].items[0].prompt, "Revenue");
+        assert_eq!(stored[0].items[0].answer, "9% year on year");
+        assert!(
+            stored[0].items[0].options.is_empty(),
+            "a card has no options — that is what makes it a card"
+        );
+
         // The text and the fingerprint the digest describes are two facts, and
         // both round-trip — the second is what says whether the digest is stale.
         set_source_extract(&conn, &sources[0].id, "new body", "11-9").unwrap();
@@ -5817,12 +6002,20 @@ mod tests {    use super::*;
         remove_source(&conn, &sources[2].id).unwrap();
         assert_eq!(list_sources(&conn, &notebook.id).unwrap().len(), 2);
 
+        // Removing a set takes only itself too — and one is put back afterwards so
+        // that the cascade below is checking something rather than passing on a
+        // list that was already empty.
+        remove_notebook_set(&conn, &set.id).unwrap();
+        assert!(list_notebook_sets(&conn, &notebook.id).unwrap().is_empty());
+        add_notebook_set(&conn, &notebook.id, "quiz", "Again", &set.items).unwrap();
+
         // The notebook's own rows go together, by the foreign keys rather than by
         // a sweep somebody has to remember to write.
         delete_notebook(&conn, &notebook.id).unwrap();
         assert!(list_sources(&conn, &notebook.id).unwrap().is_empty());
         assert!(list_notebook_messages(&conn, &notebook.id).unwrap().is_empty());
         assert!(list_notebook_outputs(&conn, &notebook.id).unwrap().is_empty());
+        assert!(list_notebook_sets(&conn, &notebook.id).unwrap().is_empty());
         assert!(get_notebook(&conn, &notebook.id).unwrap().is_none());
     }
 
@@ -5852,12 +6045,27 @@ mod tests {    use super::*;
         let output =
             add_notebook_output(&conn, &notebook.id, "markdown", "Cards", "C:/copy/cards.md")
                 .unwrap();
+        let set = add_notebook_set(
+            &conn,
+            &notebook.id,
+            "quiz",
+            "Revenue quiz",
+            &[StudyItem {
+                prompt: "How much?".into(),
+                answer: "9%".into(),
+                options: vec!["9%".into(), "12%".into()],
+                why: "The summary says so.".into(),
+                source: "a.pdf".into(),
+            }],
+        )
+        .unwrap();
 
         for (label, value) in [
             ("notebook", serde_json::to_value(&notebook).unwrap()),
             ("source", serde_json::to_value(&source).unwrap()),
             ("message", serde_json::to_value(&answer).unwrap()),
             ("output", serde_json::to_value(&output).unwrap()),
+            ("set", serde_json::to_value(&set).unwrap()),
         ] {
             assert_camel_case_keys(&value, label);
         }
@@ -5874,6 +6082,15 @@ mod tests {    use super::*;
         // The citations a notebook's answer resolved ride with it, as a list.
         let answered = serde_json::to_value(&answer).unwrap();
         assert_eq!(answered["citations"], serde_json::json!(["a.pdf"]));
+        // A set's items are objects on the wire rather than a string the window
+        // would have to take apart — the format is the tool's own schema, and this
+        // is what says the two have not drifted.
+        let made = serde_json::to_value(&set).unwrap();
+        assert!(made["notebookId"].is_string());
+        assert_eq!(made["kind"], serde_json::json!("quiz"));
+        assert_eq!(made["items"][0]["prompt"], serde_json::json!("How much?"));
+        assert_eq!(made["items"][0]["options"], serde_json::json!(["9%", "12%"]));
+        assert_eq!(made["items"][0]["source"], serde_json::json!("a.pdf"));
     }
 
     #[test]

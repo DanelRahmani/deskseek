@@ -347,6 +347,10 @@ export const api = {
   addNotebookOutput: (notebookId: string, kind: string, title: string, target: string) =>
     invoke<NotebookOutputRow>("add_notebook_output", { notebookId, kind, title, target }),
   removeNotebookOutput: (id: string) => invoke<void>("remove_notebook_output", { id }),
+  /** Throws a study set away. There is no matching *add*: only the model's own
+   *  `make_study_set` call makes one, because a set is questions and a button
+   *  cannot write them. */
+  removeNotebookSet: (id: string) => invoke<void>("remove_notebook_set", { id }),
   /** Writes something the notebook produced into its own folder, with the writers
    *  a chat already has. */
   saveNotebookOutput: (notebookId: string, title: string, format: string, content: string) =>

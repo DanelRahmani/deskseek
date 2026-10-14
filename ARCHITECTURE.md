@@ -118,6 +118,8 @@ Changing behaviour in this app is usually changing one of these.
 | Which tools a notebook's question may use, as opposed to a chat's | `tools/mod.rs` |
 | What a notebook can be asked to produce, and which formats a document writer really takes | `conversation/notebook.rs`, `tools/docs.rs` |
 | What makes a row of a fact table a fact — a source that exists in the last cell — and why a cell beginning with `=` is text | `conversation/notebook.rs` |
+| What a study set is and what makes one usable — a quiz item's answer spelled exactly as one of its options, so the choice can be marked — and where the items live | `conversation/notebook.rs`, `store/db.rs` |
+| Which choice is right and what a half-finished set has scored: the window's half of the same feature, and nothing of its vocabulary | `src/lib/quiz.ts` |
 | Whether a finish becomes an OS toast | `notify.rs` |
 | Standing a local SearXNG up: the image, the port, the config it runs on, and when it counts as up | `searxng.rs` |
 | When a scheduled task next runs — strictly after now, advanced before the run | `schedule.rs` |

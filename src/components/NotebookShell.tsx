@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 import { citations } from "../lib/citation";
+import { quantities } from "../lib/quiz";
 import { when } from "../lib/time";
 import { Icon, IconButton } from "./Icon";
 import { Markdown } from "./Markdown";
+import { StudySetDialog } from "./StudySetDialog";
 import type {
   Generator,
   Instruction,
@@ -11,6 +13,7 @@ import type {
   NotebookRow,
   NotebookView,
   SourceView,
+  StudySetRow,
 } from "../types";
 
 interface Props {
@@ -68,11 +71,17 @@ export function NotebookShell({
   const [generators, setGenerators] = useState<Generator[]>([]);
   /** The source whose full entry is open, if one is. */
   const [reading, setReading] = useState<SourceView | null>(null);
+  /** The study set being taken, if one is. */
+  const [taking, setTaking] = useState<StudySetRow | null>(null);
 
   const load = useCallback(async () => {
     const next = await api.openNotebook(notebookId);
     setView(next);
     setTitle(next.notebook.title);
+    // Returned as well as stored, so a caller can see what changed: an answer that
+    // made a study set is the one thing here the reader has to be *told* about,
+    // because it appears in a list rather than in the reply.
+    return next;
   }, [notebookId]);
 
   useEffect(() => {
@@ -122,13 +131,18 @@ export function NotebookShell({
     setBusy(true);
     setStatus(null);
     try {
+      const before = view?.sets.length ?? 0;
       const asked = await api.askNotebook(notebookId, text);
       setQuestion("");
-      await load();
-      // A citation that names something the notebook does not hold is the one
-      // failure this feature is supposed to make visible rather than hide.
-      if (asked.unresolved.length > 0) {
-        setStatus(`The answer cited ${asked.unresolved.join(", ")}, which this notebook does not hold.`);
+      const next = await load();
+      if (next.sets.length > before) {
+        setStatus(`Made "${next.sets[0].title}" — it is in the Study list, where you take it.`);
+      } else if (asked.unresolved.length > 0) {
+        // A citation that names something the notebook does not hold is the one
+        // failure this feature is supposed to make visible rather than hide.
+        setStatus(
+          `The answer cited ${asked.unresolved.join(", ")}, which this notebook does not hold.`,
+        );
       }
     } catch (e) {
       setStatus(String(e));
@@ -475,6 +489,39 @@ export function NotebookShell({
             </button>
           </div>
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
+            Study
+          </div>
+          <div className="max-h-44 shrink-0 overflow-y-auto border-b border-neutral-800/60 p-2">
+            {view.sets.length === 0 && (
+              <p className="px-1 py-2 text-[12px] leading-relaxed text-neutral-500">
+                Ask for a quiz or a set of flashcards and the model makes one through a tool call.
+                It lands here rather than in the answer, and this is where you take it.
+              </p>
+            )}
+            {view.sets.map((set) => (
+              <div
+                key={set.id}
+                className="mb-1 flex items-center gap-1 rounded-lg bg-neutral-900/60 px-2 py-1.5"
+              >
+                <button
+                  onClick={() => setTaking(set)}
+                  title={`Take "${set.title}"`}
+                  className="min-w-0 flex-1 truncate text-left text-[12px] text-neutral-200"
+                >
+                  {set.title}
+                  <span className="ml-1 text-[11px] text-neutral-500">
+                    {quantities(set.items.length, set.kind)}
+                  </span>
+                </button>
+                <IconButton
+                  icon="close"
+                  label={`Remove ${set.title}`}
+                  onClick={() => void act(() => api.removeNotebookSet(set.id))}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Outputs
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -505,6 +552,9 @@ export function NotebookShell({
         onSave={(instructions) => act(() => api.setNotebookInstructions(notebookId, instructions))}
       />
       {reading && <SourceRead source={reading} onClose={() => setReading(null)} />}
+      {taking && (
+        <StudySetDialog set={taking} sources={sourceNames} onClose={() => setTaking(null)} />
+      )}
     </div>
   );
 }

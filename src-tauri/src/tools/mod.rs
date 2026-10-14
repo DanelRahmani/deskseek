@@ -1196,21 +1196,54 @@ pub fn builtin_tools() -> Vec<(Tool, ToolClass)> {
             ),
             ToolClass::Read,
         ),
+        (
+            Tool::function(
+                "make_study_set",
+                "Turn what the reader asked for into a set they can study from — flashcards, or a multiple-choice quiz. The app runs it: a quiz is answered a question at a time and marked, flashcards are flipped one by one, and the set stays in the notebook to come back to. Send the items themselves, in this shape, rather than writing the questions into your answer as well — the set is the answer. Every item that came from a source names it, exactly as the source list spells it. Questions the sources cannot settle are left out rather than invented.",
+                params(
+                    json!({
+                        "kind": {"type": "string", "enum": crate::conversation::notebook::STUDY_KINDS, "description": "quiz: a question with two to six options, one of which is right. flashcards: a front and a back."},
+                        "title": {"type": "string", "description": "Short name for the set, e.g. \"Q3 revenue quiz\"."},
+                        "items": {
+                            "type": "array",
+                            "description": "The questions or cards, in the order they should be asked.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "prompt": {"type": "string", "description": "The question, or the front of a card."},
+                                    "answer": {"type": "string", "description": "The right answer, or the back of a card. For a quiz, spell it exactly as one of the options is spelled."},
+                                    "options": {"type": "array", "items": {"type": "string"}, "description": "Quiz only: two to six choices, none of them the same as another. Leave it out for a flashcard."},
+                                    "why": {"type": "string", "description": "Optional for a quiz: one line on why that answer is right."},
+                                    "source": {"type": "string", "description": "The source this came from, exactly as the source list spells it — `name`, or `name#Heading` for one part of it. Leave it out if the item is not from one of them."}
+                                },
+                                "required": ["prompt", "answer"],
+                                "additionalProperties": false
+                            }
+                        }
+                    }),
+                    &["kind", "title", "items"],
+                ),
+            ),
+            ToolClass::Internal,
+        ),
     ]
 }
 
-/// The two tools a notebook's own questions may use. Nothing else does: they
+/// The three tools a notebook's own questions may use. Nothing else does: they
 /// name a source set, and a chat has no source set — it has a folder, which its
 /// own file tools already read.
 pub fn is_notebook_tool(name: &str) -> bool {
-    matches!(name, "source_search" | "read_source")
+    matches!(name, "source_search" | "read_source" | "make_study_set")
 }
 
-/// The toolset for a notebook's question: its own two tools, and the internet
+/// The toolset for a notebook's question: its own three tools, and the internet
 /// ones so a fact can be checked against the web.
 ///
-/// Read-only by construction, which is what makes the notebook's loop need no
-/// approval path at all — there is nothing here that can change anything.
+/// Nothing here touches the machine, which is what makes the notebook's loop need
+/// no approval path at all. `make_study_set` is the one call that leaves anything
+/// behind, and what it leaves is a row in the notebook's own store that the window
+/// draws — the app handling it itself, which is the `Internal` class rather than
+/// the `Write` one, the same way an artifact or a kept fact is.
 pub fn tools_for_notebook() -> Vec<(Tool, ToolClass)> {
     builtin_tools()
         .into_iter()
@@ -1278,7 +1311,7 @@ mod tests {
                     .iter()
                     .map(|(t, _)| t.function.name.as_str())
                     .collect();
-                for tool in ["source_search", "read_source"] {
+                for tool in ["source_search", "read_source", "make_study_set"] {
                     assert!(
                         !names.contains(&tool),
                         "{section}/{mode:?} was offered {tool}"
@@ -1286,21 +1319,79 @@ mod tests {
                 }
             }
         }
-        // A notebook gets its two, and the web ones, and nothing that can write.
+        // A notebook gets its three, and the web ones, and nothing that can change
+        // the machine — which is what the loop's missing approval path rests on.
         let notebook = tools_for_notebook();
         let names: Vec<&str> = notebook.iter().map(|(t, _)| t.function.name.as_str()).collect();
-        for tool in ["source_search", "read_source", "fetch_url", "web_search"] {
+        for tool in [
+            "source_search",
+            "read_source",
+            "make_study_set",
+            "fetch_url",
+            "web_search",
+        ] {
             assert!(names.contains(&tool), "a notebook needs {tool}");
         }
         assert!(
-            notebook.iter().all(|(_, class)| *class == ToolClass::Read),
-            "a notebook must be offered nothing that can change anything"
+            notebook
+                .iter()
+                .all(|(_, class)| matches!(class, ToolClass::Read | ToolClass::Internal)),
+            "a notebook must be offered nothing that writes to the machine or runs anything"
         );
+        // The one call a notebook makes something with, and its class says what
+        // kind of thing: the app stores it and the window draws it, which is the
+        // class an artifact is already in.
+        assert_eq!(class_of("make_study_set"), ToolClass::Internal);
         // And every one of them is a real declaration rather than a name in a
-        // list: `class_of` would answer `Command` for a tool nobody declared.
-        for (tool, _) in &notebook {
-            assert_eq!(class_of(&tool.function.name), ToolClass::Read);
+        // list: `class_of` would answer `Command` for a tool nobody declared, so
+        // this catches a name that has drifted away from its declaration.
+        for (tool, class) in &notebook {
+            assert_eq!(
+                class_of(&tool.function.name),
+                *class,
+                "{} is not declared with the class the list gives it",
+                tool.function.name
+            );
         }
+    }
+
+    #[test]
+    fn the_study_set_schema_and_its_validator_are_one_list() {
+        // The model learns what a set may be from the schema; the set it sends is
+        // judged by `notebook::study_set`. A kind the schema offers and the
+        // validator does not know would be a call that cannot succeed, and one the
+        // validator knows and the schema hides would be a feature nobody could
+        // reach — so the schema reads the validator's own list rather than a copy
+        // of it, and this is what says the two are still the same list.
+        let (declared, class) = builtin_tools()
+            .into_iter()
+            .find(|(tool, _)| tool.function.name == "make_study_set")
+            .expect("make_study_set is declared");
+        assert_eq!(class, ToolClass::Internal);
+        let args = &declared.function.parameters;
+        assert_eq!(
+            args["properties"]["kind"]["enum"],
+            serde_json::json!(crate::conversation::notebook::STUDY_KINDS)
+        );
+
+        // The fields the validator refuses a call for want are the fields the schema
+        // makes required, and the item's two halves are the two it insists on.
+        let required = args["required"].as_array().expect("required is a list");
+        for key in ["kind", "title", "items"] {
+            assert!(required.contains(&serde_json::json!(key)), "{key} is not required");
+        }
+        let item = &args["properties"]["items"]["items"];
+        for key in ["prompt", "answer"] {
+            assert!(
+                item["properties"].get(key).is_some(),
+                "{key} is not in the item's properties"
+            );
+        }
+        assert_eq!(
+            item["additionalProperties"],
+            serde_json::json!(false),
+            "an item the schema allows and the validator drops is a field nobody reads"
+        );
     }
 
     #[test]

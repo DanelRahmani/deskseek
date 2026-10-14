@@ -1520,6 +1520,11 @@ pub struct NotebookView {
     sources: Vec<crate::conversation::notebook::SourceView>,
     messages: Vec<db::NotebookMessageRow>,
     outputs: Vec<db::NotebookOutputRow>,
+    /// The quizzes and card sets the model has made, for the Study list. Here
+    /// rather than behind a second command for the same reason the other four are:
+    /// the shell draws all five at once, and a list that arrived a frame late would
+    /// draw a notebook whose sets had vanished.
+    sets: Vec<db::StudySetRow>,
 }
 
 /// The folder a notebook's own copies live in, created on demand.
@@ -1648,11 +1653,13 @@ pub fn open_notebook(state: State<'_, AppState>, id: String) -> Result<NotebookV
     let sources = db::list_sources(&conn, &id).map_err(|e| e.to_string())?;
     let messages = db::list_notebook_messages(&conn, &id).map_err(|e| e.to_string())?;
     let outputs = db::list_notebook_outputs(&conn, &id).map_err(|e| e.to_string())?;
+    let sets = db::list_notebook_sets(&conn, &id).map_err(|e| e.to_string())?;
     Ok(NotebookView {
         notebook,
         sources: crate::conversation::notebook::views(&sources),
         messages,
         outputs,
+        sets,
     })
 }
 
@@ -1863,6 +1870,19 @@ pub fn add_notebook_output(
 pub fn remove_notebook_output(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let conn = state.db.lock().unwrap();
     db::remove_notebook_output(&conn, &id).map_err(|e| e.to_string())
+}
+
+/// Throws a study set away.
+///
+/// The only way a set is ever removed, and it is the reader's: a set is the model's
+/// work but the reader's list, and a quiz they have taken and do not want is exactly
+/// the thing a list needs to be able to lose. There is no command that *adds* one —
+/// only `make_study_set` does that, because a set with no questions in it is not
+/// something a button could honestly produce.
+#[tauri::command]
+pub fn remove_notebook_set(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let conn = state.db.lock().unwrap();
+    db::remove_notebook_set(&conn, &id).map_err(|e| e.to_string())
 }
 
 /// Writes an answer out as a document in the notebook's own folder, and remembers

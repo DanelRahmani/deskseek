@@ -419,6 +419,7 @@ pub fn run() {
             commands::ask_notebook,
             commands::add_notebook_output,
             commands::remove_notebook_output,
+            commands::remove_notebook_set,
             commands::save_notebook_output,
             commands::notebook_generators,
             commands::run_notebook_generator,

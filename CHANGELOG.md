@@ -14,6 +14,8 @@ one.
 
 ## 0.6.0 — unreleased
 
+- A notebook can be asked for a **quiz or a set of flashcards and get one it can take**: the model writes the items through a *tool call* rather than into its answer, so the window runs them — a quiz is marked a question at a time with the line explaining each answer and a score at the end naming what to look at again; flashcards turn over one by one. Every item names the source it came from, and an item whose source has since been removed says so rather than naming something that is not there
+
 - A source's description can be read in full: *Read* on a card opens the whole thing beside the facts the rail has no room for — where the file came from, the copy the notebook keeps, how much text was read out of it, and when it was described
 
 ## 0.5.0 — 2026-10-14

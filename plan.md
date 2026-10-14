@@ -2554,7 +2554,7 @@ block's Stop is met and its Test runs in the gate.
 
 ---
 
-## Phase 14: The notebook, followed through — two things using it made obvious (14.1 built, 14.2 not yet)
+## Phase 14: The notebook, followed through — two things using it made obvious ✅ done
 
 Planned 2026-10-14, the same day Phase 13 was, out of the owner's first hour with 0.5.0 running. Not
 from the archive — the archive's phase plan ends at 13 and this file has taken all of
@@ -2581,9 +2581,9 @@ adds the interactive sets *beside* the Make column rather than converting its Qu
 entries, which keep writing printable files. Neither adds a dependency. The order is 14.1 then 14.2
 and they do not touch each other.
 
-**14.1 is built; 14.2 is not.** The rule at the top of this file is that a ✅ means the Stop is met
-and the Test runs in the gate, so 14.1 carries one and 14.2 does not — 14.2's Test and Falsified lines
-still say what a check *will* be rather than what it found.
+**Both items are built, and each was ticked only once its own Stop was met** — the rule at the top of
+this file is that a ✅ means the Test runs in the gate, so neither carries one before its gate was
+green and its own falsification had failed the right check on purpose.
 
 ### 14.1 [S] A source's description can be read in full ✅
 - **Why**: the digest is clamped, the file name is truncated, and both are the rail's whole account of
@@ -2626,7 +2626,7 @@ the app already has, and a script asserting a `<p>` is not a test. Its end-to-en
   **untouched**: this item adds a surface and no mechanism, so its table has no new rule to hold.
 - **Stop**: the whole description of a source can be read without leaving the app.
 
-### 14.2 [M] The model can make a study set, and the window runs it
+### 14.2 [M] The model can make a study set, and the window runs it ✅
 - **Why**: the Make column's quiz is a document and cannot be taken; a set that can be taken has to be
   structured, and the model is the only thing in the app that has read the sources. So the set is made
   by a tool call in a shape the app declares, stored, and run by the window — question, options, the
@@ -2636,7 +2636,8 @@ the app already has, and a script asserting a `<p>` is not a test. Its end-to-en
   `tools/mod.rs` (`make_study_set` and its schema); `commands.rs` (`remove_notebook_set`, and `sets` in
   `NotebookView`); `lib.rs`; `src/types.ts`, `src/api.ts`; new `src/lib/quiz.ts` and
   `quiz.check.ts` (the 19th check script); new `src/components/StudySetDialog.tsx`;
-  `NotebookShell.tsx` (the list); `package.json` (the chain); `docs/E2E-CHECKLIST.md`.
+  `NotebookShell.tsx` (the list); `package.json` (the chain); `docs/E2E-CHECKLIST.md`, `CHANGELOG.md`,
+  `README.md` and `ARCHITECTURE.md` (the line each one owes it); `plan.md`.
 - **Shape**: one tool, `make_study_set`, three arguments — `kind` (`quiz` | `flashcards`), `title`, and
   `items`, each `{prompt, answer, options, why, source}`. **Options are what make it a quiz**: present,
   there are 2–6 of them, no two the same, and `answer` has to be one of them (normalised to the option
@@ -2653,18 +2654,61 @@ the app already has, and a script asserting a `<p>` is not a test. Its end-to-en
   The tool is `Internal` rather than `Read`, which is the class the app already uses for a call it
   handles itself and stores itself: it is not a write to the disk, it needs no approval, and the
   notebook's loop stays what 5.4 says it is — nothing in it can touch the machine.
-- **Test**: `cargo test` (475 today; the new cases are the delta) — `conversation::notebook::tests`:
-  the validator refuses a quiz whose answer is not one of its options, a flashcard that carries
-  options, two identical options and an empty set, and returns a good set normalised; `store::db::tests`:
-  the set's round trip, its place in a notebook copy, and the table asserted present on a database
-  written before it; `tools::tests`: the schema's contract (the kind is an enum, the items are objects,
-  what the validator needs is required) and that a notebook is still offered nothing that can change
-  the machine. `npm run check` — `quiz.check.ts` is new and asserts what the window decides: which
-  option is right, that an unanswered question is not a wrong one, the score over a partly-answered
-  quiz, and that every item of a sample set has its answer among its options.
-  **The falsification it needs**: inverting the answer check in the validator (`answer` must be one of
-  the options → must not be) must fail the validator test with the option list in the message, and
-  restoring must pass.
+- **Test**: `cargo test` 475 → **478**, no warnings. `conversation::notebook::tests` —
+  `a_quiz_question_is_only_usable_when_its_answer_is_one_of_its_options` (a well-formed quiz is a set,
+  and then: an answer outside the options is refused *with the options named*, so the model can repair
+  the call; the answer is stored as the option is spelled, `gdp` → `GDP`; two identical options are
+  refused; one option and seven options are both refused; a flashcard carrying options is refused; an
+  unknown kind, a missing title, an empty title, a missing `items` field, an empty list and a list one
+  past `MAX_STUDY_ITEMS` are every one of them refused), and
+  `a_flashcard_holds_a_front_and_a_back_and_nothing_more` (two cards, no options, no explanation and no
+  source required; a card with no back and an item with no front are refused, each naming the item).
+  `store::db::tests` — `a_notebook_keeps_what_it_holds_and_a_delete_takes_it_all` stores a set, reads
+  its items back, removes it alone (and puts one back so the cascade below is checking something), then
+  asserts the delete takes it; `a_copy_carries_the_sources_and_the_outputs_but_not_the_questions`
+  asserts the set comes across with its items and its labels intact;
+  `the_notebook_payloads_are_camel_case_and_never_carry_a_documents_text` walks the set's payload with
+  the others and pins `notebookId`, `items[0].prompt`, `items[0].options` and `items[0].source`;
+  `an_older_database_upgrades_instead_of_refusing_to_open` asserts **five** notebook tables now,
+  `notebook_sets` among them, so the table is not one that exists on a fresh profile and nowhere else.
+  `tools::tests` — the notebook's test became *its three, and the web ones*: neither section in any
+  mode is offered any of the three, everything a notebook is offered is `Read` or `Internal` (so the
+  loop still has nothing that touches the machine), and every name in the list is a declaration whose
+  class agrees with the list's; the new `the_study_set_schema_and_its_validator_are_one_list` holds the
+  schema's `kind` enum to `notebook::STUDY_KINDS` itself rather than to a copy of it, holds the required
+  fields to the ones the validator refuses for, and holds an item closed with
+  `additionalProperties: false`.
+  `npm run check` — `quiz.check.ts` is the **19th** script, one past `citation.check.ts`: the right
+  choice is the one spelled as the
+  answer and a near miss is not; an untouched set has asked nothing and has nothing wrong in it; one
+  answered of two gives *1 asked, 0 right, wrong `[0]`*; every answered item is exactly one of right or
+  wrong; the boundary with Rust, that marking is by text so duplicate options are invisible here; and
+  the wording (`1 card`, `2 cards`, `1 question`, `9 questions`). `a11y.check.ts` walks **40**
+  components now, the new dialog among them. `npm run typecheck` and `npm run build` are clean.
+  **Falsified**: inverting the validator's answer rule
+  (`.find(|option| option.eq_ignore_ascii_case(&answer))` → `!option.eq_ignore_ascii_case(&answer)`), a
+  one-line needle confirmed on disk and restored afterwards, fails
+  `a_quiz_question_is_only_usable_when_its_answer_is_one_of_its_options`:
+  `MUT=101`, `test result: FAILED. 0 passed; 1 failed`, `panicked at src\conversation\notebook.rs:1169:42:
+  an answer outside the options is refused: StudySet { kind: "quiz", title: "Revenue quiz", items:
+  [StudyItem { prompt: "How much did revenue rise?", answer: "9%", options: ["9%", "12%", "15%"],
+  why: "The summary states it.", source: "q3.pdf" }] }` — and after restoring, the whole suite is green
+  at **478 passed; 0 failed**.
+  **Six deviations, said out loud**: the `1 card`/`9 questions` wording lives in `lib/quiz.ts` rather
+  than in the dialog, because the rail and the dialog both count the same set and two copies of a
+  wording is how they come to disagree — and `quiz.check.ts` pins it, since pluralising with an `s` is a
+  bug this app has already shipped once; `load()` now returns the view it stored and `ask` compares the
+  set count, so an answer that made a set **says so** (`Made "X" — it is in the Study list`) instead of
+  the reader having to notice a new row: the model's own sentence is a promise, not a notification;
+  `MAX_STUDY_ITEMS = 40` is a cap the plan did not name, because the plan bounded the options and left
+  the list unbounded and "a model filling a list forever" is a real way to spend someone's money;
+  there is a `remove_notebook_set` command and deliberately **no** `add_notebook_set` one — a set is
+  questions, and a button cannot write them, so the tool call is the only door in; the dialog draws an
+  empty set as "ask for it again" rather than as a blank panel, which is only reachable from a row
+  damaged between writes because the validator refuses an empty set; and **`README.md` was corrected
+  rather than extended** — its *What it can make* bullet ended "a quiz ships with its key rather than
+  marking itself", which the set that *does* mark itself made half-false, so the sentence now says which
+  of the two it is describing.
 - **Stop**: asking a notebook for a quiz gives one you can take, and the score is the one the answers
   earned.
 
