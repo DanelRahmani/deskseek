@@ -2714,6 +2714,146 @@ the app already has, and a script asserting a `<p>` is not a test. Its end-to-en
 
 ---
 
+## Phase 15: The Make column can be asked for something specific (15.1 built, 15.2–15.4 not yet)
+
+Asked for by the owner straight after using 0.6.0's study sets, and three things were plain the moment a
+real quiz came back:
+
+**The label was lying.** *Quiz .md* and *Flashcards .docx* still name a format, because they are the old
+fixed-prompt path that writes a file — while the thing the model makes through `make_study_set` is a set
+the window runs. A menu where two entries promise a document and their neighbours in the same feature
+are interactive is a menu nobody can aim at.
+
+**Nothing about a generation was the reader's.** Every entry was one fixed prompt: ten questions, every
+enabled source, whatever the model decided to ask about. What anyone wants from a generator is *how
+many*, *from which documents*, and *a line saying what to aim at* — and the screenshot that prompted this
+shows the model itself offering exactly those as a follow-up question, which is a job for a form rather
+than for a second turn.
+
+**A quiz whose right answer is always the first option is not a quiz.** Order is the one thing a model
+cannot be trusted to randomise, because it writes the options in the order it thought of them. Asking it
+more firmly in prose does not fix that; shuffling where the shuffle is real does.
+
+The two choices the owner was asked about and was away for, recorded here for confirmation: **Quiz and
+Flashcards become the interactive set with no file at all** (a printable version stays one sentence away
+in the ask box, and the exam below *is* the printed path), and **the exam's open questions are a number
+defaulting to 0** rather than a checkbox that adds a fixed block. Neither adds a dependency.
+
+**15.1 is built and 15.2–15.4 are not.** The rule at the top of this file is that a ✅ means the Stop
+is met and the Test runs in the gate, so 15.1 carries one and the other three do not — their Test lines
+still say what a check *will* be.
+
+### 15.1 [M] Every entry can be asked for something specific ✅
+- **Why**: the reader should not have to start a whole second turn to say "twenty questions, only the
+  chapter 3 notes, and nothing about the 1970s".
+- **Files**: `conversation/notebook.rs` (the entry's shape, `Options`, `Plan`, the question builder,
+  `scoped_sources`/`in_scope`/`no_sources`); `commands.rs` (`run_notebook_entry` replacing
+  `run_notebook_generator` and `run_notebook_table`, and `write_table`); `lib.rs` (one handler in, two
+  out); new `src/components/MakeDialog.tsx`; `src/components/NotebookShell.tsx`; `src/types.ts`,
+  `src/api.ts`; `docs/E2E-CHECKLIST.md`, `CHANGELOG.md`, `README.md` and `ARCHITECTURE.md` (the line
+  each one owes it); `plan.md`.
+- **Shape**: an entry declares what it can be asked for, and the window draws a field per declaration
+  rather than a form per entry: `count: Option<Count>` (a noun, a default and a ceiling), `open:
+  Option<Count>` for the one entry that takes a second list, and `format: Option<&'static str>` — which
+  is now optional, so "this entry writes no file" is said by the data instead of by a label. A source
+  checkbox per source, and a line to steer with, for every entry.
+  The question is built in one function from the entry and the options, so the count is phrased once and
+  cannot be phrased twice by a prompt that also hardcodes it. The source scope is **real rather than
+  wording**: `ask` takes the chosen names, and the catalogue, the citable labels, the two source tools
+  and the fact table's citation check all read one `scoped_sources`, which is `enabled_sources` with one
+  more filter in the same place — because "switched off" and "not asked for this time" are the same rule
+  applied twice, and a second copy of it is how a source stays in the prompt after being ticked out.
+- **Test**: `cargo test` 478 → **480**, no warnings. `conversation::notebook::tests` —
+  `every_menu_entry_writes_something_the_writer_takes` holds the menu to itself: a document entry names
+  only formats `DOC_FORMATS` accepts and asks for a citation, the table entry names `xlsx` and says how
+  a row names its source, every declared count has a noun and a default inside its own bounds, and no
+  id is listed twice. `what_the_reader_asked_for_is_what_gets_asked` is the item's own rule end to end:
+  an untouched form sends the entry's default count **said once** and claims no scope at all; a form
+  that asked for 25 says 25 and not the default; the chosen source is named exactly; the reader's own
+  line goes last, where it reads as the ask rather than as background; the fact table takes a scope and
+  a line with no number; a number sent to an entry with no field for it is dropped rather than refused;
+  and five refusals each say what to change — 999 questions, 0 questions, `docx` for the Markdown quiz,
+  and a source the notebook does not hold, which names what it does hold.
+  `a_source_out_of_scope_is_not_read_and_the_others_still_are` is the scope rule itself: an empty scope
+  is everything switched on; a named source is the only one in the catalogue and the only one citable;
+  naming is case-insensitive; naming a **switched-off** source cannot bring it back, because the two
+  filters are one rule and the second cannot undo the first; and an empty scope says which of the two
+  situations it is instead of sending the reader to the wrong switch. `npm run check` —
+  `a11y.check.ts` walks **41** components, `MakeDialog.tsx` among them. `npm run typecheck` and
+  `npm run build` are clean.
+  **Falsified**: putting the entry's default back into the count sentence
+  (`Make exactly {count}` → `Make exactly {slot.default}`), a one-line needle confirmed on disk and
+  restored afterwards, fails `what_the_reader_asked_for_is_what_gets_asked` — `MUT=101`,
+  `test result: FAILED. 0 passed; 1 failed`, `panicked at src\conversation\notebook.rs:1458` — which is
+  the assertion that the question says 25, i.e. a form that asks for twenty-five and silently means
+  ten. Restoring passes with the whole suite green at **480 passed; 0 failed**.
+  **Five deviations, said out loud**: `Plan` carries **no counts** — they are in the question, which is
+  the only thing that reads them, because a field written and never read is a warning and this repo
+  treats a warning as a failure (the set and the exam add them back where something reads them);
+  `Action` has only `Document | Table` so far, since `Set` and `Exam` arrive with the entries that
+  construct them for the same reason; `TABLE_PROMPT` is **gone**, inlined into the entry that now takes
+  the same options as everything else; the shell's `act()` returns whether the work finished, so a
+  refused entry **keeps the form open** with the reason in the status line rather than closing on the
+  failure; and the form sends an **empty** source list when every source is ticked, because the wire's
+  rule is "empty is everything switched on" — with the form refusing an empty tick list, since that
+  would otherwise mean the opposite of what it looks like.
+- **Stop**: pressing any entry opens a form, and what the form says is what the model is asked and all it
+  may read.
+
+### 15.2 [S] Quiz and Flashcards in Make make a set, not a file
+- **Why**: the label is the symptom; the entry was the cause.
+- **Files**: `conversation/notebook.rs` (the two entries' action, and the count rule);
+  `tools/mod.rs` (`count` on the schema); `commands.rs` (the set command); `src/api.ts`;
+  `src/components/NotebookShell.tsx`.
+- **Shape**: those two entries' action is `set`, their `format` is `None`, and pressing one asks the
+  notebook a question whose only job is to make the model call `make_study_set` with exactly the number
+  asked for. **The count becomes enforceable**: the tool takes an optional `count` and refuses a set whose
+  item count differs from it, naming the difference — the same "refuse with the reason so the model can
+  repair its own call inside the same question" rule the options and the answers already go through, and
+  the difference between "the reader asked for ten" and "the reader hopes for ten". Nothing is written to
+  the notebook's folder, so nothing appears under *Outputs*: the set is the output, under *Study*.
+- **Test**: the validator's count rule (a set that is not the number asked for is refused and says by how
+  much; the same set with the count left out is accepted), and the menu invariant rewritten — an entry
+  may name **no** format only when it makes a set, and a document entry may not.
+- **Stop**: pressing Quiz or Flashcards gives a set to take, and no file.
+
+### 15.3 [S] A set is dealt fresh every time it is taken
+- **Why**: order is not something a model does randomly, and a quiz whose right answer is always the
+  first option teaches the wrong thing.
+- **Files**: `src/lib/quiz.ts`, `src/lib/quiz.check.ts`, `src/components/StudySetDialog.tsx`,
+  `conversation/notebook.rs` (one instruction in the document prompts).
+- **Shape**: `shuffled(values, random)` and `sitting(items, random)` — the items' order and each item's
+  options, with the answer riding on its option's **text**, so marking is untouched by the shuffle (which
+  is the whole reason 14.2 normalised the answer to the option it belongs to). The dialog deals a new
+  sitting every time it opens and every time the reader starts again, from `Math.random`. A document's
+  options cannot be shuffled by the app — they are prose in a file — so there the one thing that works is
+  an instruction in the prompt, and it goes in.
+- **Test**: `quiz.check.ts` — with a seeded generator the order really changes; every item survives as a
+  multiset with its options and its answer; a *constant* generator gives a deterministic permutation, so
+  "shuffled" cannot pass by being a no-op; and marking a sitting scores exactly what marking the set it
+  came from scored.
+- **Stop**: taking the same set twice does not ask it in the same order.
+
+### 15.4 [M] An exam, as a paper and a key
+- **Why**: the owner's actual need — forty multiple-choice questions to print, with the answers on a
+  separate sheet so the paper can be handed out.
+- **Files**: `conversation/notebook.rs` (the entry, the two questions, the two documents);
+  `commands.rs`; `src/api.ts`, `src/types.ts`; `src/components/NotebookShell.tsx`.
+- **Shape**: a seventh entry, `exam`, whose defaults are the ones asked for — **40 questions, 0 open,
+  `.docx`** (`.pdf` offered beside it). Pressing it runs **two asks rather than one**: the paper, whose
+  prompt says there are no answers anywhere in it, and then the key, whose question is short because the
+  paper is the *previous turn of the notebook's own conversation* — which is what that conversation is
+  for. Two documents land under *Outputs*, the second named so the two can be told apart at a glance.
+  Open questions are added to the paper and answered in the key only when their number is not zero. Both
+  counts are stated in one place, so they cannot be stated twice.
+- **Test**: the two questions come from one function and the test holds them (the paper asks for no
+  answers; the key's refers to the paper just written and asks for no new questions; both carry the right
+  numbers; no open-questions wording appears when the count is 0), plus the entry's own defaults, because
+  "40 by standard" is the whole request.
+- **Stop**: pressing Exam produces a paper and its key as two documents.
+
+---
+
 ## Not yet in this plan (still proposals in the archive)
 
 The archive's phase plan runs **8 to 13**, and this file has now taken all six of them. What is left

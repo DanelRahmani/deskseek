@@ -28,6 +28,7 @@ import type {
   Instruction,
   InterruptedRun,
   Maintenance,
+  MakeOptions,
   MemoryCategoryView,
   MemoryImport,
   MemoryEntryView,
@@ -355,15 +356,14 @@ export const api = {
    *  a chat already has. */
   saveNotebookOutput: (notebookId: string, title: string, format: string, content: string) =>
     invoke<NotebookOutputRow>("save_notebook_output", { notebookId, title, format, content }),
-  /** The outputs a notebook can be asked for — one list, in Rust, so the menu and
-   *  the prompts cannot drift apart. */
+  /** The outputs a notebook can be asked for — one list, in Rust, so the menu, the
+   *  prompts and the form a press opens cannot drift apart. */
   notebookGenerators: () => invoke<Generator[]>("notebook_generators"),
-  /** Runs one: a grounded question in that shape, saved as a document. */
-  runNotebookGenerator: (notebookId: string, generator: string) =>
-    invoke<NotebookOutputRow>("run_notebook_generator", { notebookId, generator }),
-  /** Builds a fact table across the sources and exports it as a workbook. */
-  runNotebookTable: (notebookId: string) =>
-    invoke<NotebookOutputRow>("run_notebook_table", { notebookId }),
+  /** Runs one with what the reader asked for, and returns what it produced: a
+   *  document, a workbook, or nothing at all for an entry that stores what it made
+   *  instead of writing it. */
+  runMakeEntry: (notebookId: string, entry: string, options: MakeOptions) =>
+    invoke<NotebookOutputRow[]>("run_notebook_entry", { notebookId, entry, options }),
   /** Carries the sources and the outputs, and deliberately not the questions. */
   copyNotebook: (id: string) => invoke<NotebookRow>("copy_notebook", { id }),
 

@@ -1848,7 +1848,7 @@ pub async fn ask_notebook(
     notebook_id: String,
     question: String,
 ) -> Result<crate::conversation::notebook::Asked, String> {
-    crate::conversation::notebook::ask(&state, &notebook_id, &question).await
+    crate::conversation::notebook::ask(&state, &notebook_id, &question, &[]).await
 }
 
 /// What a notebook has produced. `target` is a written file's path or an
@@ -1942,70 +1942,100 @@ pub fn notebook_generators() -> Vec<crate::conversation::notebook::Generator> {
     crate::conversation::notebook::GENERATORS.to_vec()
 }
 
-/// Runs a generator: one grounded question in the shape the entry asks for, and
-/// the answer saved as a document in the notebook's folder.
+/// Runs one entry from the notebook's menu: a grounded question in the shape the
+/// entry asks for, with what the reader asked for added, written out in the form
+/// the entry declares.
 ///
-/// The generation **is** an ask — it lands in the notebook's conversation with
-/// its citations like any other question, because a generated output whose
-/// sources were not written down would be the one answer nobody could check —
-/// and the file is what makes it something to keep rather than read once.
+/// The generation **is** an ask — it lands in the notebook's conversation with its
+/// citations like any other question, because a generated output whose sources
+/// were not written down would be the one answer nobody could check. What comes
+/// back is the list of what pressing it produced: one document, one workbook, or
+/// nothing at all for an entry that *stores* what it makes instead of writing it.
+/// A list rather than an optional row because the exam this grows into makes two.
+///
+/// Everything the reader chose is checked before the model is paid: the counts
+/// against the entry's own bounds, the format against what that entry writes, and
+/// the source names against the notebook's — that last one because the names
+/// arrive from the window, and a name nobody holds would be a scope that quietly
+/// reads everything instead of the documents that were ticked.
 #[tauri::command]
-pub async fn run_notebook_generator(
+pub async fn run_notebook_entry(
     state: State<'_, AppState>,
     notebook_id: String,
-    generator: String,
-) -> Result<db::NotebookOutputRow, String> {
-    let entry = crate::conversation::notebook::generator(&generator)
-        .ok_or_else(|| format!("'{generator}' is not something a notebook makes"))?;
-    let asked = crate::conversation::notebook::ask(&state, &notebook_id, entry.prompt).await?;
-    write_output(
-        &state,
-        &notebook_id,
-        entry.title,
-        entry.format,
-        &asked.answer.content,
-    )
-    .await
+    entry: String,
+    options: crate::conversation::notebook::Options,
+) -> Result<Vec<db::NotebookOutputRow>, String> {
+    use crate::conversation::notebook::{self, Action};
+
+    let found = notebook::generator(&entry)
+        .ok_or_else(|| format!("'{entry}' is not something a notebook makes"))?;
+    let held: Vec<String> = {
+        let conn = state.db.lock().unwrap();
+        db::list_sources(&conn, &notebook_id)
+            .map_err(|e| e.to_string())?
+            .into_iter()
+            .map(|source| source.name)
+            .collect()
+    };
+    let plan = notebook::plan(found, &options, &held)?;
+    // The scope the question is asked under, and the same scope its citations are
+    // held against — one read, used twice, so the two cannot disagree about what
+    // this generation was allowed to read.
+    let given: Vec<String> = notebook::scoped_sources(&state, &notebook_id, &plan.sources)?
+        .into_iter()
+        .map(|source| source.name)
+        .collect();
+    if given.is_empty() {
+        return Err(notebook::no_sources(&plan.sources));
+    }
+
+    let asked = notebook::ask(&state, &notebook_id, &plan.question, &plan.sources).await?;
+
+    match plan.entry.action {
+        Action::Document => {
+            let row = write_output(
+                &state,
+                &notebook_id,
+                plan.entry.title,
+                &plan.format,
+                &asked.answer.content,
+            )
+            .await?;
+            Ok(vec![row])
+        }
+        Action::Table => Ok(vec![write_table(&state, &notebook_id, &asked, &given).await?]),
+    }
 }
 
-/// Builds a fact table across a notebook's sources and exports it.
+/// Reads an answer as *rows* and exports them as a workbook.
 ///
-/// The answer is asked for as a Markdown table and then read as *rows* — the same
-/// block parser the document writer uses — because a spreadsheet is rows, and
-/// pasting prose into one would be a table nobody could filter. Two rules decide
-/// whether it is written at all: every row has to name a source the notebook
-/// holds, and a cell that begins with `=` is written as text, since a fact out of
-/// a document is never something the workbook should evaluate.
-#[tauri::command]
-pub async fn run_notebook_table(
-    state: State<'_, AppState>,
-    notebook_id: String,
+/// The reader is the document writer's own block parser, because a spreadsheet is
+/// rows and pasting prose into one would be a table nobody could filter. Two rules
+/// decide whether it is written at all: every row has to name one of the sources
+/// the question was given, and a cell that begins with `=` is written as text,
+/// since a fact out of a document is never something the workbook should evaluate.
+async fn write_table(
+    state: &State<'_, AppState>,
+    notebook_id: &str,
+    asked: &crate::conversation::notebook::Asked,
+    given: &[String],
 ) -> Result<db::NotebookOutputRow, String> {
     let notebook = {
         let conn = state.db.lock().unwrap();
-        db::get_notebook(&conn, &notebook_id)
+        db::get_notebook(&conn, notebook_id)
             .map_err(|e| e.to_string())?
             .ok_or("That notebook has been deleted.")?
     };
-    let names: Vec<String> = crate::conversation::notebook::enabled_sources(&state, &notebook_id)?
-        .into_iter()
-        .map(|s| s.name)
-        .collect();
-    if names.is_empty() {
-        return Err("This notebook has no sources switched on.".to_string());
-    }
-
-    let asked = crate::conversation::notebook::ask(&state, &notebook_id, crate::conversation::notebook::TABLE_PROMPT).await?;
     let rows = crate::conversation::notebook::table_rows(&asked.answer.content)
         .ok_or("The answer came back without a table — try again.")?;
     let (header, body) = rows.split_first().ok_or("That table was empty.")?;
-    let unlabelled = crate::conversation::notebook::unlabelled_rows(body, &names);
+    let unlabelled = crate::conversation::notebook::unlabelled_rows(body, given);
     if !unlabelled.is_empty() {
         let rows: Vec<String> = unlabelled.iter().map(|i| (i + 1).to_string()).collect();
         // Counted from the first *data* row, because the header is not a row a
         // reader counts when they are looking for the one that is wrong.
         return Err(format!(
-            "Nothing was written: data row {} does not name a source this notebook holds.",
+            "Nothing was written: data row {} does not name a source this question was given.",
             rows.join(" and ")
         ));
     }
@@ -2023,7 +2053,7 @@ pub async fn run_notebook_table(
             )
         })
         .collect();
-    let dir = state.paths.notebook_dir(&notebook_id);
+    let dir = state.paths.notebook_dir(notebook_id);
     let browser = state.settings.lock().unwrap().browser_path.clone();
     let args = serde_json::json!({
         "name": format!("{} facts", notebook.title),
@@ -2033,8 +2063,14 @@ pub async fn run_notebook_table(
     let (_, path) = crate::tools::docs::execute("sheet_create", &args, &dir, &browser).await?;
     let path = path.ok_or("the spreadsheet writer did not say where it wrote")?;
     let conn = state.db.lock().unwrap();
-    db::add_notebook_output(&conn, &notebook_id, "xlsx", "Fact table", &path.display().to_string())
-        .map_err(|e| e.to_string())
+    db::add_notebook_output(
+        &conn,
+        notebook_id,
+        "xlsx",
+        "Fact table",
+        &path.display().to_string(),
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Copies a notebook: its rules, its model, its sources and what it produced —

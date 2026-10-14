@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::api::client::Client;
 use crate::api::types::{ChatMessage, ChatRequest, Content, StreamOptions, Usage};
@@ -371,10 +371,11 @@ async fn run_tool(
     notebook_id: &str,
     name: &str,
     args: &serde_json::Value,
+    scope: &[String],
 ) -> Result<String, String> {
     match name {
-        "source_search" => source_search(state, notebook_id, args).await,
-        "read_source" => read_source(state, notebook_id, args),
+        "source_search" => source_search(state, notebook_id, args, scope).await,
+        "read_source" => read_source(state, notebook_id, args, scope),
         // The one call a notebook may make that leaves anything behind — and it
         // leaves it in the notebook's own store rather than on the disk, because a
         // study set is a thing the window draws rather than a file. That is exactly
@@ -427,19 +428,53 @@ fn make_study_set(
     ))
 }
 
-/// The notebook's enabled sources.
+/// The sources a question may read: the ones switched on, and — when the reader
+/// named some — only those.
 ///
-/// The filter is applied where the search happens as well as where the catalogue
-/// is built, because a switch that took a source out of the prompt but left it
-/// answering tool calls would not be a switch. Shared with the fact table, which
-/// has to hold every row's citation against the same set.
-pub fn enabled_sources(
+/// One function, because "switched off" and "not asked for this time" are the same
+/// rule applied twice, and it has to hold where the search happens as well as where
+/// the catalogue is built: a source ticked out of the form but still answering a
+/// tool call would not be out of scope, it would be hidden. Shared with the fact
+/// table, which has to hold every row's citation against the same set the question
+/// was given.
+pub fn scoped_sources(
     state: &AppState,
     notebook_id: &str,
+    scope: &[String],
 ) -> Result<Vec<db::SourceRow>, String> {
     let conn = state.db.lock().unwrap();
     let rows = db::list_sources(&conn, notebook_id).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().filter(|s| s.enabled).collect())
+    Ok(in_scope(rows, scope))
+}
+
+/// The rule itself, without a database in the way — so it can be tested on its own
+/// rather than only through a call that happens to reach one.
+pub fn in_scope(rows: Vec<db::SourceRow>, scope: &[String]) -> Vec<db::SourceRow> {
+    rows.into_iter()
+        .filter(|source| source.enabled)
+        .filter(|source| {
+            scope.is_empty()
+                || scope
+                    .iter()
+                    .any(|name| name.eq_ignore_ascii_case(&source.name))
+        })
+        .collect()
+}
+
+/// What to say when a question has nothing it may read.
+///
+/// Two different situations wear the same empty list — nothing is switched on, and
+/// none of the ones this question asked for is — and saying the first when it is
+/// the second sends the reader to the wrong switch.
+pub fn no_sources(scope: &[String]) -> String {
+    if scope.is_empty() {
+        "This notebook has no sources switched on.".to_string()
+    } else {
+        format!(
+            "None of the sources this was asked for is switched on: {}.",
+            scope.join(", ")
+        )
+    }
 }
 
 /// The passages of this notebook's sources that match a query.
@@ -447,14 +482,15 @@ async fn source_search(
     state: &AppState,
     notebook_id: &str,
     args: &serde_json::Value,
+    scope: &[String],
 ) -> Result<String, String> {
     let query = crate::conversation::agent::argument(args, "query");
     if query.is_empty() {
         return Err("source_search needs a query".to_string());
     }
-    let sources = enabled_sources(state, notebook_id)?;
+    let sources = scoped_sources(state, notebook_id, scope)?;
     if sources.is_empty() {
-        return Err("This notebook has no sources switched on.".to_string());
+        return Err(no_sources(scope));
     }
     let root = state.paths.notebook_sources_dir(notebook_id);
     let roots = [root];
@@ -490,12 +526,13 @@ fn read_source(
     state: &AppState,
     notebook_id: &str,
     args: &serde_json::Value,
+    scope: &[String],
 ) -> Result<String, String> {
     let wanted = crate::conversation::agent::argument(args, "name");
     if wanted.is_empty() {
         return Err("read_source needs a name".to_string());
     }
-    let sources = enabled_sources(state, notebook_id)?;
+    let sources = scoped_sources(state, notebook_id, scope)?;
     let found = sources
         .iter()
         .find(|s| s.name.eq_ignore_ascii_case(&wanted))
@@ -543,80 +580,170 @@ fn plain(role: &str, content: &str) -> ChatMessage {
     }
 }
 
+/// What pressing a menu entry does.
+///
+/// The menu is one list and its entries do different work, so *what* an entry
+/// makes is data rather than something the window has to work out from an id: a
+/// document is written and listed, a workbook is built out of rows, and a set is
+/// stored and taken.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Action {
+    Document,
+    Table,
+}
+
+/// How many of something an entry can be asked for.
+///
+/// The noun travels with the numbers so a form can label the field without a
+/// second list saying which entry wants which word, and so "40" cannot end up
+/// under a heading that says "cards".
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Count {
+    pub noun: &'static str,
+    pub default: u32,
+    /// Zero here means "none is a real answer", which is what makes an optional
+    /// second list expressible without a second kind of field.
+    pub min: u32,
+    /// The ceiling, stated once — so the form can refuse a number the builder
+    /// would refuse anyway, rather than the model discovering it.
+    pub max: u32,
+}
+
 /// One thing a notebook can be asked to produce.
 ///
-/// Data rather than code, and deliberately: a generator is a title, the format
-/// the writer takes, and the instruction that turns a question into that shape.
-/// Everything else a generation needs — the catalogue, the two source tools, the
-/// citation rule, the price — is the ask the notebook already does, so a seventh
-/// generator is one more entry here and nothing anywhere else.
+/// Data rather than code, and deliberately: an entry is a title, what it makes,
+/// what it may be asked for, and the instruction that turns a question into that
+/// shape. Everything else a generation needs — the catalogue, the source tools,
+/// the citation rule, the price — is the ask the notebook already does, so a new
+/// entry is one more entry here and nothing anywhere else.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Generator {
     pub id: &'static str,
     pub title: &'static str,
-    /// A format `tools::docs::DOC_FORMATS` accepts. Asserted against that list
-    /// rather than trusted, because a menu entry naming a format nothing writes
-    /// is invisible until somebody presses it.
-    pub format: &'static str,
-    /// The question. It is asked through the same path a hand-typed one is, so a
-    /// generated output has citations like any other answer.
+    pub action: Action,
+    /// The formats it will write, the first being the default — **empty** for an
+    /// entry that writes no file, which is how the menu stops claiming a format an
+    /// entry does not produce. Every one of these is asserted against the writer
+    /// that would have to take it, because a format nothing writes is invisible
+    /// until somebody presses it.
+    pub formats: &'static [&'static str],
+    /// The question, before the reader's own numbers and their own line are added.
+    /// It is asked through the same path a hand-typed one is, so a generated
+    /// output has citations like any other answer.
     pub prompt: &'static str,
+    /// What this entry can be asked to count, or `None` when a number means
+    /// nothing to it.
+    pub count: Option<Count>,
+    /// A second list of its own — the exam's open questions are the one that will
+    /// fill this — so a form is drawn from what the entry declares rather than
+    /// from a table of special cases in the window.
+    pub open: Option<Count>,
 }
 
-/// What the menu offers, in the order a reader wants it: the study shapes, then
-/// the summary shapes.
-pub const GENERATORS: [Generator; 6] = [
+/// What the menu offers, in the order a reader wants it: the study shapes, the
+/// summary shapes, and the table.
+pub const GENERATORS: [Generator; 7] = [
     Generator {
         id: "flashcards",
         title: "Flashcards",
+        action: Action::Document,
         // Word rather than Markdown: a card set is something you print and cut.
-        format: "docx",
+        formats: &["docx"],
         prompt: "Turn these sources into flashcards. One card is `Q:` on a line, `A:` on the next, \
                  then a blank line. Cover the facts that matter rather than every sentence, and \
                  after each answer cite the source it came from, as `[name#Heading]`.",
+        count: Some(Count {
+            noun: "cards",
+            default: 20,
+            min: 1,
+            max: MAX_STUDY_ITEMS as u32,
+        }),
+        open: None,
     },
     Generator {
         id: "quiz",
         title: "Quiz",
-        format: "md",
-        prompt: "Write a quiz over these sources: ten questions, four options each, then an answer \
-                 key at the end saying which option is right and why. Every answer in the key cites \
-                 the source it came from as `[name#Heading]`, and a question the sources cannot \
-                 settle is left out rather than invented.",
+        action: Action::Document,
+        formats: &["md"],
+        // No number in the instruction itself: the count is added once, by
+        // `question_for`, from what the reader asked for — a prompt that also
+        // said "ten questions" would be asked for forty and mean ten.
+        prompt: "Write a quiz over these sources: four options each, then an answer key at the end \
+                 saying which option is right and why. Spread the right answers across the \
+                 options rather than letting one letter be the answer most of the time, and every \
+                 answer in the key cites the source it came from as `[name#Heading]`. A question \
+                 the sources cannot settle is left out rather than invented.",
+        count: Some(Count {
+            noun: "questions",
+            default: 10,
+            min: 1,
+            max: MAX_STUDY_ITEMS as u32,
+        }),
+        open: None,
     },
     Generator {
         id: "briefing",
         title: "Briefing",
-        format: "docx",
+        action: Action::Document,
+        formats: &["docx"],
         prompt: "Write a one-page briefing on these sources: what they are, the five things that \
                  matter most, and what they do not settle. Cite each claim as `[name#Heading]`, and \
                  say plainly where the sources disagree rather than picking one.",
+        count: None,
+        open: None,
     },
     Generator {
         id: "timeline",
         title: "Timeline",
-        format: "md",
+        action: Action::Document,
+        formats: &["md"],
         prompt: "Build a timeline of what these sources describe, earliest first, as a Markdown \
                  table with the columns when, what happened, and the source. Where a date is \
                  relative or uncertain, say so in the cell rather than tidying it into a year. \
                  Cite the source of each row as `[name#Heading]`.",
+        count: None,
+        open: None,
     },
     Generator {
         id: "study-guide",
         title: "Study guide",
-        format: "md",
+        action: Action::Document,
+        formats: &["md"],
         prompt: "Write a study guide for these sources: what to know, what to practise, and the \
                  questions a reader should be able to answer afterwards. Cite the source of each \
                  section as `[name#Heading]`.",
+        count: None,
+        open: None,
     },
     Generator {
         id: "mind-map",
         title: "Mind map",
-        format: "md",
+        action: Action::Document,
+        formats: &["md"],
         prompt: "Draw the structure of these sources as a mind map: a fenced ```mermaid mindmap \
                  block, then a short note under it on each branch, citing the source each branch \
                  comes from as `[name#Heading]`.",
+        count: None,
+        open: None,
+    },
+    Generator {
+        id: "fact-table",
+        title: "Fact table",
+        // In the menu like everything else now that every entry takes the same
+        // options — it was a button of its own only while an entry was a fixed
+        // prompt and a format, which is exactly what it is not.
+        action: Action::Table,
+        formats: &["xlsx"],
+        prompt: "Build a fact table across these sources. One row per fact that can be compared \
+                 between them, under a header row. The last column is the source each row came \
+                 from, written as its name exactly as the source list spells it. Where the sources \
+                 disagree, add a row saying so rather than picking one; where a number has a unit \
+                 or a date, put it in the cell as the source states it.",
+        count: None,
+        open: None,
     },
 ];
 
@@ -626,16 +753,145 @@ pub fn generator(id: &str) -> Option<&'static Generator> {
     GENERATORS.iter().find(|g| g.id == id)
 }
 
-/// The question that builds a fact table across a notebook's sources.
+/// What the reader asked for, as the window sends it.
 ///
-/// Its own constant rather than a seventh entry in `GENERATORS`, because its
-/// answer is not a document: it is read as rows and written as a workbook, and
-/// that is a different path through the writers.
-pub const TABLE_PROMPT: &str = "\
-Build a fact table across these sources. One row per fact that can be compared between them, under \
-a header row. The last column is the source each row came from, written as its name exactly as the \
-source list spells it. Where the sources disagree, add a row saying so rather than picking one; \
-where a number has a unit or a date, put it in the cell as the source states it.";
+/// Every field optional, because the form draws only the ones an entry declares —
+/// and `Default` so a caller that asks for nothing at all is the plain question
+/// the entry's own prompt describes.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Options {
+    pub count: Option<u32>,
+    pub open: Option<u32>,
+    pub format: Option<String>,
+    /// The sources it may read, by name. Empty means every source that is switched
+    /// on, which is what a question typed into the box gets.
+    pub sources: Vec<String>,
+    /// One line to steer with, appended as typed and never interpreted.
+    pub steer: String,
+}
+
+/// A checked request: what to ask, what to write it as, and what may be read.
+///
+/// The numbers the reader asked for are not fields here: they are in the question,
+/// which is the only thing that reads them. An entry that needs them back — a set,
+/// whose count is held against what was really made — adds them when it has
+/// somewhere to use them, rather than carrying a value nothing looks at.
+#[derive(Debug, Clone)]
+pub struct Plan {
+    pub entry: &'static Generator,
+    /// The format to write, or empty for an entry that writes no file.
+    pub format: String,
+    /// The sources it may read, by name — empty for "everything switched on".
+    pub sources: Vec<String>,
+    pub question: String,
+}
+
+/// One entry's request, checked against the notebook — or the reason it is not.
+///
+/// The one place a question is built, so a count is phrased once. The source names
+/// are checked against the notebook because they arrive from the window *as
+/// names*: a name nobody holds would otherwise be a scope that quietly reads
+/// everything, which is the opposite of what the reader asked for.
+pub fn plan(entry: &'static Generator, options: &Options, held: &[String]) -> Result<Plan, String> {
+    let count = number(entry.count, options.count, &entry.title)?;
+    let open = number(entry.open, options.open, &entry.title)?;
+    let format = if entry.formats.is_empty() {
+        String::new()
+    } else {
+        let wanted = options.format.as_deref().unwrap_or(entry.formats[0]);
+        if !entry.formats.contains(&wanted) {
+            return Err(format!(
+                "{} is written as {} rather than as {wanted}.",
+                entry.title,
+                entry.formats.join(" or ")
+            ));
+        }
+        wanted.to_string()
+    };
+    let mut sources = Vec::new();
+    for name in &options.sources {
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let found = held
+            .iter()
+            .find(|held| held.eq_ignore_ascii_case(name))
+            .ok_or_else(|| {
+                format!(
+                    "This notebook has no source called '{name}'. Its sources are: {}.",
+                    held.join(", ")
+                )
+            })?;
+        sources.push(found.clone());
+    }
+    let question = question_for(entry, count, open, &sources, &options.steer);
+    Ok(Plan {
+        entry,
+        format,
+        sources,
+        question,
+    })
+}
+
+/// A number an entry declares a field for, inside that field's own bounds.
+///
+/// Zero is `None` rather than a refusal: "none of them" is a real answer for a
+/// list that may be empty, and the entry says so by declaring a minimum of zero.
+fn number(slot: Option<Count>, asked: Option<u32>, what: &str) -> Result<Option<u32>, String> {
+    let Some(slot) = slot else {
+        // A number for an entry with no field for it is dropped rather than
+        // refused: the form cannot send one, so refusing would only ever be
+        // reached by a caller that built its own options.
+        return Ok(None);
+    };
+    let value = asked.unwrap_or(slot.default);
+    if value < slot.min || value > slot.max {
+        return Err(format!(
+            "{what} takes between {} and {} {}.",
+            slot.min, slot.max, slot.noun
+        ));
+    }
+    Ok(if value == 0 { None } else { Some(value) })
+}
+
+/// The question: the entry's instruction, then what the reader asked for.
+///
+/// Sentences rather than placeholders, because the entry's prompt is written prose
+/// and a template language is a second way to write an instruction badly. Order
+/// matters and is deliberate: how many, what else, from which sources, and then
+/// the reader's own line last, where the model reads it as the thing being asked
+/// for rather than as background.
+fn question_for(
+    entry: &Generator,
+    count: Option<u32>,
+    open: Option<u32>,
+    sources: &[String],
+    steer: &str,
+) -> String {
+    let mut out = String::from(entry.prompt);
+    if let (Some(count), Some(slot)) = (count, entry.count) {
+        out.push_str(&format!("\n\nMake exactly {count} {}.", slot.noun));
+    }
+    if let (Some(open), Some(slot)) = (open, entry.open) {
+        out.push_str(&format!(
+            "\n\nThen add exactly {open} {}. Each one is answered in full rather than by choosing, \
+             and each answer is worth a mark of its own.",
+            slot.noun
+        ));
+    }
+    if !sources.is_empty() {
+        out.push_str(&format!(
+            "\n\nUse only these sources, and leave anything they do not contain out: {}.",
+            sources.join(", ")
+        ));
+    }
+    if !steer.trim().is_empty() {
+        out.push_str(&format!("\n\n{}", steer.trim()));
+    }
+    out
+}
 
 /// What a study set may be. A closed set, for the same reason `ARTIFACT_KINDS` is
 /// one: a kind the window cannot draw is a set nobody can take, and the model
@@ -867,6 +1123,7 @@ pub async fn ask(
     state: &AppState,
     notebook_id: &str,
     question: &str,
+    scope: &[String],
 ) -> Result<Asked, String> {
     let question = question.trim();
     if question.is_empty() {
@@ -880,9 +1137,9 @@ pub async fn ask(
         let sources = db::list_sources(&conn, notebook_id).map_err(|e| e.to_string())?;
         (notebook, sources)
     };
-    let enabled: Vec<db::SourceRow> = sources.into_iter().filter(|s| s.enabled).collect();
+    let enabled = in_scope(sources, scope);
     if enabled.is_empty() {
-        return Err("This notebook has no sources switched on.".to_string());
+        return Err(no_sources(scope));
     }
 
     let settings: Settings = state.settings.lock().unwrap().clone();
@@ -956,7 +1213,7 @@ pub async fn ask(
         for call in calls {
             let args: serde_json::Value =
                 serde_json::from_str(&call.function.arguments).unwrap_or(serde_json::Value::Null);
-            let result = match run_tool(state, notebook_id, &call.function.name, &args).await {
+            let result = match run_tool(state, notebook_id, &call.function.name, &args, scope).await {
                 Ok(text) => text,
                 // A refused or failed call is the model's to read and recover
                 // from, not an error that loses the question.
@@ -1105,32 +1362,231 @@ That is everything the sources settle.";
     }
 
     #[test]
-    fn every_generator_names_a_format_the_writer_takes() {
-        for generator in GENERATORS {
-            // The failure this exists for: a menu entry naming a format nothing
-            // writes, which is invisible until somebody presses it.
-            assert!(
-                crate::tools::docs::DOC_FORMATS.contains(&generator.format),
-                "{} names the format {}",
-                generator.id,
-                generator.format
-            );
-            assert!(!generator.title.trim().is_empty(), "{} has no title", generator.id);
-            assert!(!generator.prompt.trim().is_empty(), "{} asks for nothing", generator.id);
-            // Every prompt has to ask for citations, because an output that cites
-            // nothing is the one thing the notebook's prompt promises it will not
-            // produce.
-            assert!(
-                generator.prompt.contains("[name#Heading]"),
-                "{} does not ask for a citation",
-                generator.id
-            );
-            let duplicates = GENERATORS.iter().filter(|g| g.id == generator.id).count();
-            assert_eq!(duplicates, 1, "{} is listed {duplicates} times", generator.id);
+    fn every_menu_entry_writes_something_the_writer_takes() {
+        for entry in GENERATORS {
+            match entry.action {
+                Action::Document => {
+                    assert!(!entry.formats.is_empty(), "{} writes nothing at all", entry.id);
+                    // The failure this exists for: a menu entry naming a format
+                    // nothing writes, which is invisible until somebody presses it.
+                    for format in entry.formats {
+                        assert!(
+                            crate::tools::docs::DOC_FORMATS.contains(format),
+                            "{} names the format {format}",
+                            entry.id
+                        );
+                    }
+                    // A document that cites nothing is the one thing the notebook's
+                    // prompt promises it will not produce.
+                    assert!(
+                        entry.prompt.contains("[name#Heading]"),
+                        "{} does not ask for a citation",
+                        entry.id
+                    );
+                }
+                // The workbook writer is the one that makes a spreadsheet, and it is
+                // not in `DOC_FORMATS` because it is not a document — so its format
+                // is named here rather than agreed with a list, and the source column
+                // is what takes the place of a citation.
+                Action::Table => {
+                    assert_eq!(entry.formats, &["xlsx"], "{} writes no workbook", entry.id);
+                    assert!(
+                        entry.prompt.contains("source list spells it"),
+                        "{} does not say how a row names its source",
+                        entry.id
+                    );
+                }
+            }
+            assert!(!entry.title.trim().is_empty(), "{} has no title", entry.id);
+            assert!(!entry.prompt.trim().is_empty(), "{} asks for nothing", entry.id);
+            // A count the form cannot draw a field for, or a default outside its own
+            // bounds, is a number nobody could ever ask for — and the default is what
+            // an untouched form sends.
+            for slot in [entry.count, entry.open].into_iter().flatten() {
+                assert!(!slot.noun.trim().is_empty(), "{} counts nothing", entry.id);
+                assert!(
+                    slot.default >= slot.min && slot.default <= slot.max,
+                    "{} defaults to {} {} outside {}..={}",
+                    entry.id,
+                    slot.default,
+                    slot.noun,
+                    slot.min,
+                    slot.max
+                );
+            }
+            let duplicates = GENERATORS.iter().filter(|other| other.id == entry.id).count();
+            assert_eq!(duplicates, 1, "{} is listed {duplicates} times", entry.id);
         }
         // An id from the window that is not one of these is refused, not guessed.
         assert!(generator("flashcards").is_some());
+        assert!(generator("fact-table").is_some(), "the table is an entry too");
         assert!(generator("nonsense").is_none());
+    }
+
+    #[test]
+    fn what_the_reader_asked_for_is_what_gets_asked() {
+        let held = vec!["Macro I.docx".to_string(), "Macro II.docx".to_string()];
+        let quiz = generator("quiz").unwrap();
+
+        // Nothing touched: the question is the entry's own prompt with its own
+        // default count, phrased exactly once, and no claim about a scope nobody
+        // set.
+        let plain = plan(quiz, &Options::default(), &held).unwrap();
+        assert_eq!(plain.format, "md");
+        assert_eq!(plain.question.matches("Make exactly").count(), 1, "{}", plain.question);
+        assert!(plain.question.contains("Make exactly 10 questions"), "{}", plain.question);
+        assert!(
+            !plain.question.contains("Use only these sources"),
+            "an unscoped question must not claim a scope: {}",
+            plain.question
+        );
+
+        // The three things that were impossible before: how many, from which
+        // documents, and a line of the reader's own.
+        let asked = plan(
+            quiz,
+            &Options {
+                count: Some(25),
+                sources: vec!["Macro II.docx".to_string()],
+                steer: "Only the national-accounts material.".to_string(),
+                ..Default::default()
+            },
+            &held,
+        )
+        .unwrap();
+        assert_eq!(asked.sources, vec!["Macro II.docx".to_string()]);
+        assert!(asked.question.contains("Make exactly 25 questions"), "{}", asked.question);
+        assert!(
+            asked.question.contains(
+                "Use only these sources, and leave anything they do not contain out: Macro II.docx."
+            ),
+            "{}",
+            asked.question
+        );
+        assert!(
+            asked.question.ends_with("Only the national-accounts material."),
+            "the reader's own line goes last, where it reads as the ask: {}",
+            asked.question
+        );
+        // And the count is not the default: a prompt that also said "ten questions"
+        // would be asked for twenty-five and mean ten.
+        assert!(!asked.question.contains("ten questions"), "{}", asked.question);
+
+        // The fact table takes a scope and a steer with no numbers at all, and its
+        // format is the one the workbook writer makes.
+        let table = plan(
+            generator("fact-table").unwrap(),
+            &Options {
+                sources: vec!["Macro I.docx".to_string()],
+                steer: "One row per country.".to_string(),
+                ..Default::default()
+            },
+            &held,
+        )
+        .unwrap();
+        assert_eq!(table.format, "xlsx");
+        assert!(!table.question.contains("Make exactly"), "{}", table.question);
+
+        // A number for an entry with no field for it is dropped rather than refused:
+        // the form cannot send one, so a refusal would only ever be reachable from a
+        // caller that built its own options.
+        let briefing = plan(
+            generator("briefing").unwrap(),
+            &Options {
+                count: Some(9),
+                ..Default::default()
+            },
+            &held,
+        )
+        .unwrap();
+        assert!(!briefing.question.contains("Make exactly"), "{}", briefing.question);
+
+        // Bounds, format and names, each refused with something the reader can act
+        // on — the last of them because a name nobody holds would otherwise be a
+        // scope that quietly reads everything.
+        let too_many = plan(
+            quiz,
+            &Options {
+                count: Some(999),
+                ..Default::default()
+            },
+            &held,
+        )
+        .expect_err("a count past the ceiling is refused");
+        assert!(too_many.contains("between 1 and 40 questions"), "{too_many}");
+        let none_at_all = plan(
+            quiz,
+            &Options {
+                count: Some(0),
+                ..Default::default()
+            },
+            &held,
+        )
+        .expect_err("no questions at all is not a quiz");
+        assert!(none_at_all.contains("between 1 and 40 questions"), "{none_at_all}");
+        let wrong_format = plan(
+            quiz,
+            &Options {
+                format: Some("docx".to_string()),
+                ..Default::default()
+            },
+            &held,
+        )
+        .expect_err("a format the entry does not write is refused");
+        assert!(wrong_format.contains("written as md"), "{wrong_format}");
+        let unknown = plan(
+            quiz,
+            &Options {
+                sources: vec!["Nope.docx".to_string()],
+                ..Default::default()
+            },
+            &held,
+        )
+        .expect_err("a source the notebook does not hold is refused");
+        assert!(unknown.contains("no source called 'Nope.docx'"), "{unknown}");
+        assert!(
+            unknown.contains("Macro I.docx"),
+            "the refusal names what it does hold: {unknown}"
+        );
+    }
+
+    #[test]
+    fn a_source_out_of_scope_is_not_read_and_the_others_still_are() {
+        let all = vec![
+            source("a.pdf", "Numbers.", true),
+            source("b.pdf", "Words.", true),
+            source("c.pdf", "Off.", false),
+        ];
+
+        // Nothing named: everything switched on, which is what a typed question gets.
+        let everything = in_scope(all.clone(), &[]);
+        assert_eq!(everything.len(), 2, "the switched-off one is not in it");
+        assert!(catalogue(&everything).contains("a.pdf"));
+        assert_eq!(labels(&everything).len(), 2);
+
+        // One named: only that one — and the catalogue, which is what the model is
+        // *told* it may read, describes that one and not the others.
+        let scoped = in_scope(all.clone(), &["b.pdf".to_string()]);
+        assert_eq!(scoped.len(), 1);
+        assert!(catalogue(&scoped).contains("b.pdf"));
+        assert!(
+            !catalogue(&scoped).contains("a.pdf"),
+            "an out-of-scope source must not be described: {}",
+            catalogue(&scoped)
+        );
+        assert_eq!(labels(&scoped).len(), 1, "and it is not citable either");
+
+        // Case is not the point, the same way it is not anywhere else here.
+        assert_eq!(in_scope(all.clone(), &["B.PDF".to_string()]).len(), 1);
+
+        // A switched-off source cannot be brought back by naming it: the two filters
+        // are one rule, and the second cannot undo the first.
+        assert!(in_scope(all, &["c.pdf".to_string()]).is_empty());
+
+        // And the message for an empty scope says which of the two situations it is,
+        // because a reader sent to the wrong switch has been told nothing.
+        assert_eq!(no_sources(&[]), "This notebook has no sources switched on.");
+        assert!(no_sources(&["c.pdf".to_string()]).contains("switched on: c.pdf"));
     }
 
     /// The call shape the two tests below are about, so that they are tests of the

@@ -397,6 +397,15 @@ the parts only a person can see.
 - [ ] Each entry in *Make* produces something: flashcards, a quiz with a key, a briefing, a
       timeline, a study guide and a mind map, and each lands under *Outputs* as a `.md` or `.docx`
       that opens
+- [ ] Every entry in *Make* opens a form first: changing the count changes how many come back, a
+      count past the entry's ceiling is refused **before** the model is called, and the number the
+      entry declares is what the form starts with
+- [ ] Unticking a source really takes it out of scope: ask for something only that document covers
+      and the answer says the sources do not settle it rather than answering anyway
+- [ ] The line you steer with arrives as the last thing asked — "only the national-accounts
+      material" narrows the output to it, and an empty box changes nothing
+- [ ] *Fact table* is an entry in that list now rather than a button of its own, and it takes the
+      same form (sources and a line, no count)
 - [ ] The mind map's output contains a `mermaid` block, and the answer it was made from is in the
       notebook's conversation with its citations
 - [ ] A source that is switched off is not used by anything the notebook makes, and the model is

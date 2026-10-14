@@ -113,12 +113,46 @@ export interface SourceView {
   createdAt: number;
 }
 
-/** One thing a notebook can be asked to produce, from the Rust list. */
+/**
+ * How many of something a menu entry can be asked for. The noun travels with the
+ * numbers, so the form labels the field from the entry rather than from a rule in
+ * the window about which entry wants which word.
+ */
+export interface Count {
+  noun: string;
+  default: number;
+  /** Zero means "none is a real answer", as it does for open questions. */
+  min: number;
+  max: number;
+}
+
+/**
+ * One thing a notebook can be asked to produce, from the Rust list. What an entry
+ * *is* — what pressing it does, what it may be asked for, and whether it writes a
+ * file at all — is declared here rather than worked out from its id, so the form is
+ * drawn from the entry and nothing in the window knows the entries by name.
+ */
 export interface Generator {
   id: string;
   title: string;
-  /** A format the document writer takes. */
-  format: string;
+  /** `document` | `table` */
+  action: string;
+  /** The formats it writes, the first being the default — empty when it writes no
+   *  file, which is how the menu stops claiming a format it does not produce. */
+  formats: string[];
+  count: Count | null;
+  open: Count | null;
+}
+
+/** What the form sends with an entry: how many, from what, and the reader's own
+ *  line. */
+export interface MakeOptions {
+  count: number | null;
+  open: number | null;
+  format: string | null;
+  /** Empty means every source that is switched on. */
+  sources: string[];
+  steer: string;
 }
 
 /** One question asked of a notebook, and the answer it got. */

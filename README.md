@@ -313,6 +313,12 @@ Both sections are functional:
     prompts are one list; a mind map is a `mermaid` fence inside the document rather than a second
     renderer, and a quiz ships with its key rather than marking itself — the one that marks itself is
     the *set* below, which is a tool call rather than a document
+  - **Every entry takes a form first**: how many (the entry declares the count, its
+    noun and its ceiling), which sources to read, and a line of your own to steer it with — "only the
+    national-accounts material". The sources you untick are out of scope for the question *and* for
+    the tools it may reach for, so a document you left out cannot come back through a search. The
+    fact table is one of these entries now rather than a button of its own, because it wanted the
+    same form
   - **A set you can take**: ask for a quiz or flashcards and the model writes the questions through a
     tool call instead of into its reply, so the app receives items rather than prose. A quiz is marked
     a question at a time — the option that was right, the one that was chosen, the line saying why, and

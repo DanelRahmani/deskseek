@@ -4,11 +4,13 @@ import { citations } from "../lib/citation";
 import { quantities } from "../lib/quiz";
 import { when } from "../lib/time";
 import { Icon, IconButton } from "./Icon";
+import { MakeDialog } from "./MakeDialog";
 import { Markdown } from "./Markdown";
 import { StudySetDialog } from "./StudySetDialog";
 import type {
   Generator,
   Instruction,
+  MakeOptions,
   NotebookOutputRow,
   NotebookRow,
   NotebookView,
@@ -73,6 +75,8 @@ export function NotebookShell({
   const [reading, setReading] = useState<SourceView | null>(null);
   /** The study set being taken, if one is. */
   const [taking, setTaking] = useState<StudySetRow | null>(null);
+  /** The entry whose options are open, if one is. */
+  const [making, setMaking] = useState<Generator | null>(null);
 
   const load = useCallback(async () => {
     const next = await api.openNotebook(notebookId);
@@ -94,6 +98,8 @@ export function NotebookShell({
     api.notebookGenerators().then(setGenerators).catch(() => setGenerators([]));
   }, []);
 
+  /** True when the work finished, so a caller can decide what to do next — a form
+   *  that closed on a refusal would take the reason away with it. */
   const act = async (work: () => Promise<unknown>, note?: string) => {
     setBusy(true);
     setStatus(null);
@@ -101,11 +107,27 @@ export function NotebookShell({
       await work();
       await load();
       if (note) setStatus(note);
+      return true;
     } catch (e) {
       setStatus(String(e));
+      return false;
     } finally {
       setBusy(false);
     }
+  };
+
+  const runEntry = async (options: MakeOptions) => {
+    const entry = making;
+    if (!entry) return;
+    const done = await act(
+      () => api.runMakeEntry(notebookId, entry.id, options),
+      entry.action === "table"
+        ? `${entry.title} — every row cites a source, exported as a .${entry.formats[0]}.`
+        : `${entry.title} — written into the notebook's folder as a .${entry.formats[0]}.`,
+    );
+    // Closed only on success: a refusal is something to read and adjust the form
+    // against, and it lands in the status line where it stays visible.
+    if (done) setMaking(null);
   };
 
   const addFile = async () => {
@@ -457,36 +479,25 @@ export function NotebookShell({
             </span>
           </div>
           <div className="border-b border-neutral-800/60 p-2">
-            {generators.map((generator) => (
+            {generators.map((entry) => (
               <button
-                key={generator.id}
-                onClick={() =>
-                  void act(
-                    () => api.runNotebookGenerator(notebookId, generator.id),
-                    `${generator.title} — written into the notebook's folder as a .${generator.format}.`,
-                  )
-                }
+                key={entry.id}
+                onClick={() => setMaking(entry)}
                 disabled={busy}
-                className={`mb-0.5 w-full rounded-lg px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40`}
+                className="mb-0.5 w-full rounded-lg px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
               >
-                {generator.title}
-                <span className="ml-1 text-[11px] text-neutral-600">.{generator.format}</span>
+                {entry.title}
+                {entry.formats.length > 0 && (
+                  // The format the entry really writes rather than a promise about
+                  // it: an entry that writes no file has none to name.
+                  <span className="ml-1 text-[11px] text-neutral-600">.{entry.formats[0]}</span>
+                )}
               </button>
             ))}
-            {/* Not a generator: its answer is read as rows and written as a
-                workbook, which is a different path through the writers. */}
-            <button
-              onClick={() =>
-                void act(
-                  () => api.runNotebookTable(notebookId),
-                  "Fact table — every row cites a source, exported as a .xlsx.",
-                )
-              }
-              disabled={busy}
-              className="mt-1 w-full rounded-lg border-t border-neutral-800/60 px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40"
-            >
-              Fact table<span className="ml-1 text-[11px] text-neutral-600">.xlsx</span>
-            </button>
+            <p className="px-1 pt-1 text-[11px] leading-relaxed text-neutral-600">
+              Every entry opens a form first: how many, from which sources, and anything you want
+              it to aim at.
+            </p>
           </div>
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Study
@@ -554,6 +565,18 @@ export function NotebookShell({
       {reading && <SourceRead source={reading} onClose={() => setReading(null)} />}
       {taking && (
         <StudySetDialog set={taking} sources={sourceNames} onClose={() => setTaking(null)} />
+      )}
+      {making && (
+        <MakeDialog
+          entry={making}
+          // Only the sources that are switched on: one switched off cannot be read
+          // however it is ticked, so offering it here would be a box that does
+          // nothing.
+          sources={view.sources.filter((source) => source.enabled)}
+          busy={busy}
+          onRun={(options) => void runEntry(options)}
+          onClose={() => setMaking(null)}
+        />
       )}
     </div>
   );
