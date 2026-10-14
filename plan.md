@@ -1979,7 +1979,7 @@ it opens rather than replaying the whole time it was closed.
 
 ---
 
-## Phase 12: Providers, then everything they unblock
+## Phase 12: Providers, then everything they unblock ✅ done, not yet pushed
 
 Eight items in the archive's order, and the order is the argument: the two wire dialects first,
 because a half-migrated provider layer is worse than a single-provider app; then the three decisions
@@ -2246,14 +2246,11 @@ than a module.
   second copy of "how many characters is a minute" that could drift from the rate actually recorded.
 - **Stop**: an audio overview can be produced, with its price shown first.
 
-### 10.3 [M] Dictation
+### 10.3 [M] Dictation ✅
 - **Why**: talking is faster than typing for some inputs, and both vendors ship it.
-- **Files**: new `src-tauri/src/tools/speech.rs` (speech to text), a chord or a button in
-  `ChatView.tsx`, the composer.
-- **Shape**: push to talk, transcribe, and **insert into the composer rather than sending** —
-  matching the prompt-library rule that text goes into the box to edit. Which platform is supported
-  is said plainly rather than silently omitted.
-- **Test**: the composer receives text and no turn starts; the transcription call is E2E.
+- **Files**: `api/speech.rs` (`transcribe_url`, the hand-built `multipart` body, `transcribe` and its reply shape), `store/settings.rs` (the transcription model on the `Speech` block), `commands.rs` (`transcribe_audio`), `components/ChatView.tsx` (the 🎙 button and the recorder), `lib/audio.ts` + `lib/audio.check.ts` (`dictatedText`, `dictationName`, the cap), `lib/attachments.ts` (the one `readAsDataUrl`, widened to take a `Blob` — a recording has no name to satisfy a `File`), and the `types`/`api` pair.
+- **Shape**: as the plan said — record, transcribe, **insert into the composer rather than sending**. The words are appended to whatever is in the box, and nothing leaves until Send is pressed. Which platform is supported is said in the message the webview itself produces, not guessed at.
+- **Test**: `cargo test` — `the_multipart_body_is_the_shape_the_endpoint_reads` (byte-for-byte, because the body is hand-built) and `the_transcription_path_joins_once_and_keeps_the_version`, plus the settings test now covering `sttModel`; `npm run check` — `audio.check.ts` gained the two rules a dictation can get wrong (`dictatedText` never glues words together and never leads the box with a space; `dictationName` maps six MIME types — and an unknown one — onto the extension the endpoint sniffs, with a fallback so no part is ever nameless). `cargo test` 453 → 455. Falsified twice: dropping the CRLF that ends the file's part in `multipart` fails the byte-exact test (`left: 179, right: 181` — the two bytes, and the model field left inside the recording), and replacing the join rule with "always one space" fails `an empty box takes the words alone` — after checking each mutation reached the disk, and restoring passes. **Three deviations, said out loud**: **push-to-talk is a toggle**, because a control that needs a held mouse button cannot be used from the keyboard at all and the composer is where a keyboard user is; `multipart` is **hand-built** rather than taken from reqwest's `multipart` feature, which would compile another crate for one fixed two-field form — the shape is pinned byte-for-byte by a test instead of trusted; and **the transcription is not on the spend view**, which is the one place this app is quieter than usual: the endpoint reports no usage for it and it is billed by the minute of audio, so a row would carry a number this app cannot know — where the audio *overview* is priced, because that rate is one the user publishes in the settings. The cap (five minutes, recorder-stopped) lives in `lib/audio.ts` rather than in Rust because the recorder is what enforces it; what needs a real microphone and a real endpoint is on `docs/E2E-CHECKLIST.md`.
 - **Stop**: a spoken sentence lands in the composer, editable, and is not sent until the user says so.
 
 ---

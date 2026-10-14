@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ClipboardEvent, KeyboardEvent } from "react";
 import type {
   ApprovalEvent,
@@ -24,6 +24,8 @@ import { buildTranscript, windowTranscript, TRANSCRIPT_WINDOW } from "../lib/tra
 import { CopyButton, Markdown } from "./Markdown";
 import { IconButton } from "./Icon";
 import { formatTokens } from "../lib/context";
+import { readAsDataUrl } from "../lib/attachments";
+import { dictatedText, dictationName, MAX_DICTATION_SECONDS } from "../lib/audio";
 import { ThinkingBlock } from "./ThinkingBlock";
 import { ToolStepGroup } from "./ToolStepGroup";
 import { ApprovalPrompt } from "./ApprovalPrompt";
@@ -307,6 +309,103 @@ export function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  /**
+   * Dictation: record, transcribe, and put the words in the box.
+   *
+   * A toggle rather than a push-to-talk button, which is the one place this
+   * departs from the shape the plan described: a control that needs a held mouse
+   * button cannot be used from the keyboard at all, and the composer is exactly
+   * where a keyboard user is. It still never sends anything — the text lands in
+   * the draft to be edited, which is the rule every other insertion here keeps.
+   *
+   * The recording is capped and the recorder stops *itself* at the cap: a
+   * forgotten hold is a bill and a payload the window has to carry, and what was
+   * said up to that point is what gets transcribed.
+   */
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [dictationError, setDictationError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const startedAtRef = useRef(0);
+  // The draft as of the newest render. `startRecording`'s closure is built by a
+  // click and finished by a transcription, which is seconds later — a closure
+  // over `draft` would append to whatever the box held when the button was
+  // *first* clicked, and silently drop everything typed since.
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+
+  const stopRecording = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== "inactive") recorder.stop();
+    recorderRef.current = null;
+    setRecording(false);
+  }, []);
+
+  const startRecording = async () => {
+    setDictationError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setDictationError(
+        "This build cannot reach a microphone: the webview has no media capture. Dictation needs a Windows or macOS build of DeskSeek.",
+      );
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      // The webview's own words, because "Permission denied" and "there is no
+      // microphone" are different problems with different fixes.
+      setDictationError(`The microphone could not be opened: ${e}`);
+      return;
+    }
+    const recorder = new MediaRecorder(stream);
+    chunksRef.current = [];
+    startedAtRef.current = Date.now();
+    setSeconds(0);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunksRef.current.push(event.data);
+    };
+    recorder.onstop = () => {
+      // Released as soon as recording stops, so the recording indicator in the
+      // OS goes out rather than waiting for the transcription.
+      for (const track of stream.getTracks()) track.stop();
+      const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      chunksRef.current = [];
+      if (blob.size === 0) {
+        setDictationError("Nothing was recorded.");
+        return;
+      }
+      setTranscribing(true);
+      readAsDataUrl(blob)
+        .then((dataUrl) =>
+          api.transcribeAudio(dataUrl, blob.type || "audio/webm", dictationName(blob.type)),
+        )
+        .then((heard) => {
+          setDraft(dictatedText(draftRef.current, heard));
+          textareaRef.current?.focus();
+        })
+        .catch((e) => setDictationError(String(e)))
+        .finally(() => setTranscribing(false));
+    };
+    recorder.start();
+    recorderRef.current = recorder;
+    setRecording(true);
+  };
+
+  // The clock behind the button, and the stop at the cap. A ticking state is
+  // what makes an unbounded hold visible before it becomes five minutes long.
+  useEffect(() => {
+    if (!recording) return;
+    const tick = window.setInterval(() => {
+      const held = Math.floor((Date.now() - startedAtRef.current) / 1000);
+      setSeconds(held);
+      if (held >= MAX_DICTATION_SECONDS) stopRecording();
+    }, 500);
+    return () => window.clearInterval(tick);
+  }, [recording, stopRecording]);
 
   const offer = composerOffer(draft);
   const scope = offer?.scope ?? null;
@@ -880,6 +979,10 @@ export function ChatView({
 
           {notice && <div className="pb-1 text-[11px] text-sky-400">{notice}</div>}
 
+          {dictationError && (
+            <div className="mb-1 text-[11px] text-amber-400">{dictationError}</div>
+          )}
+
           {menuOpen && (
             <div className="mb-2 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-900">
               {filtered.map((command, index) => (
@@ -1033,6 +1136,26 @@ export function ChatView({
               title="Attach files or images"
             >
               📎
+            </button>
+            <button
+              onClick={() => (recording ? stopRecording() : void startRecording())}
+              disabled={transcribing}
+              aria-label={recording ? "Stop dictating" : "Dictate"}
+              aria-pressed={recording}
+              className={`rounded-lg px-2 py-1.5 transition duration-150 disabled:opacity-40 ${
+                recording
+                  ? "bg-red-500/15 text-red-300 hover:bg-red-500/25"
+                  : "text-neutral-500 hover:bg-neutral-800 hover:text-neutral-200"
+              }`}
+              title={
+                recording
+                  ? `Recording — click to stop and transcribe (stops itself at ${MAX_DICTATION_SECONDS / 60} minutes)`
+                  : transcribing
+                    ? "Transcribing…"
+                    : "Dictate: click to start, click again to stop — the words land in the box to edit, never sent"
+              }
+            >
+              {transcribing ? "…" : recording ? `${seconds}s ⏹` : "🎙"}
             </button>
             <textarea
               ref={textareaRef}

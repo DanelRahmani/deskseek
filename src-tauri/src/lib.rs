@@ -391,6 +391,7 @@ pub fn run() {
             commands::audio_script,
             commands::audio_estimate,
             commands::audio_overview,
+            commands::transcribe_audio,
             commands::list_projects,
             commands::create_project,
             commands::rename_project,

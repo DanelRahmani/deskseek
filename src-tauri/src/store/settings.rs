@@ -47,6 +47,9 @@ pub struct Speech {
     pub tts_model: String,
     #[serde(default = "default_voice")]
     pub voice: String,
+    /// The model that turns a recording back into words.
+    #[serde(default = "default_stt_model")]
+    pub stt_model: String,
     /// Published USD per minute of speech. 0 records the clip and reports its
     /// money as unknown rather than as free.
     #[serde(default)]
@@ -61,12 +64,18 @@ fn default_voice() -> String {
     "alloy".to_string()
 }
 
+/// The name every endpoint that copies this shape accepts for speech to text.
+fn default_stt_model() -> String {
+    "whisper-1".to_string()
+}
+
 impl Default for Speech {
     fn default() -> Self {
         Self {
             endpoint: String::new(),
             tts_model: default_tts_model(),
             voice: default_voice(),
+            stt_model: default_stt_model(),
             usd_per_minute: 0.0,
         }
     }
@@ -541,6 +550,7 @@ mod tests {
         assert!(s.speech_endpoint().is_none());
         assert_eq!(s.speech.tts_model, "tts-1");
         assert_eq!(s.speech.voice, "alloy");
+        assert_eq!(s.speech.stt_model, "whisper-1");
         assert_eq!(s.speech.usd_per_minute, 0.0);
 
         s.speech.endpoint = provider::SEED_ENDPOINT_ID.to_string();

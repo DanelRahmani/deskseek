@@ -10,11 +10,18 @@ import { refusalMessage, routeForAttachment } from "./filing";
 const MAX_DIMENSION = 1568;
 const RECOMPRESS_ABOVE_BYTES = 400_000;
 
-function readAsDataUrl(file: File): Promise<string> {
+/**
+ * A blob as a `data:` URL, which is how bytes leave the window.
+ *
+ * Takes a `Blob` rather than a `File` because the only two callers are a picked
+ * file and a recording: `MediaRecorder` hands back a `Blob` with no name, and a
+ * dictation has no business inventing one to satisfy a signature.
+ */
+export function readAsDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error(`could not read ${file.name}`));
+    reader.onerror = () => reject(new Error("could not read that file"));
     reader.readAsDataURL(file);
   });
 }

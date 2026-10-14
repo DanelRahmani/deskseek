@@ -29,6 +29,11 @@ pub fn speech_url(base: &str) -> String {
     join(base, "audio/speech")
 }
 
+/// The endpoint path for a transcription.
+pub fn transcribe_url(base: &str) -> String {
+    join(base, "audio/transcriptions")
+}
+
 /// How much text a spoken minute is worth.
 ///
 /// Around 150 words a minute, and a shade under six characters a word with the
@@ -100,8 +105,103 @@ pub fn tts_body(model: &str, voice: &str, text: &str) -> Value {
     })
 }
 
-/// What the script generator is told, before it is handed the conversation.
+/// The body for a transcription: one audio file, and the model to read it.
 ///
+/// Hand-built rather than taken from reqwest's `multipart` feature, which would
+/// pull another crate in for one fixed two-field form. The shape is pinned
+/// byte-for-byte by the test below instead of trusted, and the boundary is a
+/// parameter so the test can hold the bytes still.
+///
+/// The file's *name* is what the endpoint sniffs — a `.webm` that says it is
+/// audio tracks or it does not, and the extension is the only part of that a
+/// recorder in a browser can tell us.
+pub fn multipart(
+    boundary: &str,
+    model: &str,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(bytes.len() + 512);
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n\
+             Content-Type: {mime}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(bytes);
+    body.extend_from_slice(
+        format!(
+            "\r\n--{boundary}\r\n\
+             Content-Disposition: form-data; name=\"model\"\r\n\r\n\
+             {model}\r\n\
+             --{boundary}--\r\n"
+        )
+        .as_bytes(),
+    );
+    body
+}
+
+/// Turns a recording into words.
+///
+/// The same two rules as the other direction: the key is optional, and a failure
+/// carries the endpoint's own words — "no such model" and "unsupported format"
+/// are the user's to fix and nobody else can tell them which it was.
+pub async fn transcribe(
+    http: &reqwest::Client,
+    base_url: &str,
+    key: Option<&str>,
+    model: &str,
+    filename: &str,
+    mime: &str,
+    bytes: &[u8],
+) -> Result<String, String> {
+    let boundary = format!("----deskseekform{}", uuid::Uuid::new_v4().simple());
+    let body = multipart(&boundary, model, filename, mime, bytes);
+    let mut request = http
+        .post(transcribe_url(base_url))
+        .header(
+            "content-type",
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(body);
+    if let Some(key) = key.map(str::trim).filter(|key| !key.is_empty()) {
+        request = request.header("authorization", format!("Bearer {key}"));
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("The transcription request failed: {e}"))?;
+
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("The transcription could not be read back: {e}"))?;
+    if !status.is_success() {
+        return Err(format!("The speech endpoint answered {status}: {}", text.trim()));
+    }
+    let parsed: Transcription = serde_json::from_str(&text)
+        .map_err(|_| format!("The speech endpoint answered something unexpected: {}", text.trim()))?;
+    let heard = parsed.text.trim().to_string();
+    if heard.is_empty() {
+        // Silence is a real answer, and "nothing was said" is a better sentence
+        // than the empty string landing in the composer with no explanation.
+        return Err("Nothing was heard in that recording.".to_string());
+    }
+    Ok(heard)
+}
+
+/// The reply shape: one field, whatever else the endpoint adds beside it.
+#[derive(serde::Deserialize)]
+struct Transcription {
+    #[serde(default)]
+    text: String,
+}
+
+/// What the script generator is told, before it is handed the conversation.
 /// Every line here is a thing a spoken script does differently from a written
 /// one, and each is a defect somebody ships: markdown read out loud, a bullet
 /// list with no bullets, "see the table below" with no table.
@@ -221,6 +321,37 @@ mod tests {
         assert!(estimate(MAX_SCRIPT_CHARS, 0.0).fits());
         assert!(!estimate(MAX_SCRIPT_CHARS + 1, 0.0).fits());
         assert_eq!(estimate(10, 0.0).limit, MAX_SCRIPT_CHARS);
+    }
+
+    #[test]
+    fn the_multipart_body_is_the_shape_the_endpoint_reads() {
+        let audio = [0x1au8, 0x45, 0xdf];
+        let body = multipart("B", "whisper-1", "dictation.webm", "audio/webm", &audio);
+        let head = "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"dictation.webm\"\r\nContent-Type: audio/webm\r\n\r\n";
+        // The CRLF that opens the closing boundary is what ends the file's part:
+        // without it the model field would be read as more of the recording.
+        let tail = "\r\n--B\r\nContent-Disposition: form-data; name=\"model\"\r\n\r\nwhisper-1\r\n--B--\r\n";
+        assert_eq!(body.len(), head.len() + audio.len() + tail.len());
+        assert_eq!(&body[..head.len()], head.as_bytes());
+        // Byte-for-byte through the middle: the audio is the one part that is
+        // not text, so it is checked as bytes rather than as a lossy string.
+        assert_eq!(&body[head.len()..head.len() + audio.len()], &audio);
+        assert_eq!(
+            String::from_utf8_lossy(&body[head.len() + audio.len()..]),
+            tail
+        );
+    }
+
+    #[test]
+    fn the_transcription_path_joins_once_and_keeps_the_version() {
+        assert_eq!(
+            transcribe_url("https://api.groq.com/openai/v1"),
+            "https://api.groq.com/openai/v1/audio/transcriptions"
+        );
+        assert_eq!(
+            transcribe_url("https://api.openai.com/v1/"),
+            "https://api.openai.com/v1/audio/transcriptions"
+        );
     }
 
     #[test]

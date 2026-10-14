@@ -2948,6 +2948,40 @@ pub fn audio_estimate(state: State<'_, AppState>, script: String) -> Result<spee
     Ok(speech::estimate(script.chars().count(), speech.usd_per_minute))
 }
 
+/// Turns a recording into words.
+///
+/// The bytes arrive from the webview — it recorded them, so it holds them — and
+/// the *name* travels with them because the endpoint sniffs the extension rather
+/// than the `Content-Type` that a browser hands us. Nothing is written to disk:
+/// a dictation is text for the composer, not a file the chat keeps, and a
+/// transcript that lands in a folder nobody asked about is litter.
+#[tauri::command]
+pub async fn transcribe_audio(
+    state: State<'_, AppState>,
+    data_url: String,
+    mime: String,
+    name: String,
+) -> Result<String, String> {
+    let (endpoint, key, speech) = speech_target(&state)?;
+    // The mime is from the webview, so it is checked before it is put on the
+    // wire: the one thing this route exists for is audio, and an endpoint handed
+    // a `text/plain` body answers with a 400 that reads as a bad key.
+    if !mime.starts_with("audio/") {
+        return Err(format!("That is not a recording ({mime})."));
+    }
+    let bytes = decode_data_url(&data_url).ok_or("That recording could not be read.")?;
+    speech::transcribe(
+        &state.http,
+        &endpoint.base_url,
+        key.as_deref(),
+        &speech.stt_model,
+        &name,
+        &mime,
+        &bytes,
+    )
+    .await
+}
+
 /// A clip, and where it went.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

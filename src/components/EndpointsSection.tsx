@@ -492,6 +492,15 @@ export function EndpointsSection({
             />
           </div>
           <div>
+            <label className="block text-[10px] text-neutral-600">Transcribes with (model)</label>
+            <input
+              className={smallCls}
+              value={speech.sttModel}
+              placeholder="whisper-1"
+              onChange={(e) => onSpeechChange({ ...speech, sttModel: e.target.value })}
+            />
+          </div>
+          <div>
             <label className="block text-[10px] text-neutral-600">Published $ per minute</label>
             <input
               className={smallCls}

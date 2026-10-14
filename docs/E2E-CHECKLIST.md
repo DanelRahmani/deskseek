@@ -673,3 +673,16 @@ the parts only a person can see.
       failure
 - [ ] The dialog closes on Escape and on the backdrop, and focus goes back to the composer
 - [ ] `/help` and the composer's `/` menu both list `/audio`
+
+## Dictation
+
+- [ ] With no speech endpoint chosen, the 🎙 button says so and nothing is recorded or sent
+- [ ] Clicking 🎙 asks the OS for the microphone once, and the button shows the elapsed seconds
+      while the recording light is on
+- [ ] Clicking it again transcribes, and the words land in the box **appended to whatever was
+      already typed**, with the cursor still there
+- [ ] Nothing is sent: the text is still editable, and Send is still a separate press
+- [ ] A long hold stops itself at five minutes and transcribes what was said rather than refusing
+- [ ] A silent recording says nothing was heard instead of inserting an empty line
+- [ ] Denying the microphone reports the webview's own words rather than failing silently
+- [ ] A sentence spoken over background noise comes back as roughly the words that were said

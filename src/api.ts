@@ -246,6 +246,12 @@ export const api = {
   /** Read a script out loud and save the clip in the chat's folder. */
   audioOverview: (chatId: string, script: string) =>
     invoke<AudioClip>("audio_overview", { chatId, script }),
+  /**
+   * A recording as words. `name` carries the extension the endpoint sniffs; the
+   * bytes travel because the webview is where they were recorded.
+   */
+  transcribeAudio: (dataUrl: string, mime: string, name: string) =>
+    invoke<string>("transcribe_audio", { dataUrl, mime, name }),
   mcpStatus: () => invoke<McpStatus>("mcp_status"),
   mcpServers: () => invoke<McpServer[]>("mcp_servers"),
   mcpSaveServers: (servers: McpServer[]) => invoke<McpStatus>("mcp_save_servers", { servers }),

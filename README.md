@@ -198,7 +198,17 @@ Both sections are functional:
 - **Command palette** (`Ctrl+K`) — type to jump to a conversation in either section, most
   recently used first, or to run the same action a panel button does; every entry is a state
   change the UI already makes
-- **Quick entry** — a global chord (`Ctrl+Alt+Space` by default, changed in **Settings →
+- **Dictation** — the 🎙 button in the composer records and puts the words in the box, editable,
+  never sent: talking is faster than typing for some questions, and every insertion in this app
+  lands in the draft rather than being sent on your behalf. It is a click to start and a click to
+  stop rather than a held button, because a control that needs a held mouse button cannot be used
+  from the keyboard — and the recorder stops *itself* at five minutes, so a forgotten one is
+  neither a bill nor a payload the window has to carry. **Settings → Access → Voice** names the
+  model that transcribes; if this machine's microphone cannot be opened, the box says what the
+  webview said rather than failing quietly. Honest limit: **the transcription is not on the spend
+  view.** The endpoint reports no usage for it and it is billed by the minute of audio rather than
+  by the token, so a row here would be a number this app cannot know — where the audio *overview*
+  is priced, because there the rate is one you publish in the settings yourself- **Quick entry** — a global chord (`Ctrl+Alt+Space` by default, changed in **Settings →
   Commands**) raises a small always-on-top window over whatever you are doing, centred on the
   monitor your pointer is on, and pressing it again puts the window away. The question goes to
   your most recent conversation or to one of its own, whichever you choose; it is an ordinary
@@ -883,7 +893,7 @@ quietly leaving them broken:
 | --- | --- | --- |
 | DeepSeek API key | everything | **Yes** — stored in the OS keychain |
 | SearXNG instance | `web_search` | No — the setup screen can build one on Docker, and the other browsing tools work without it |
-| A speech endpoint (OpenAI, Groq, or a local server) | `/audio` | No — with none configured the audio overview says so and stops |
+| A speech endpoint (OpenAI, Groq, or a local server) | `/audio`, and dictation | No — with none configured both say so and stop |
 | Docker or WSL2 | running commands in a container instead of directly | No |
 | *The user's screen* toggle | reading and operating the desktop (`ui_snapshot`, `ui_screenshot`, `ui_windows`, `ui_click`, `ui_click_at`, `ui_type`) | No — off by default |
 

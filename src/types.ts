@@ -292,6 +292,8 @@ export interface Speech {
   endpoint: string;
   ttsModel: string;
   voice: string;
+  /** The model that turns a recording back into words. */
+  sttModel: string;
   /** Published USD per minute of speech. 0 records the clip and says "unknown". */
   usdPerMinute: number;
 }
