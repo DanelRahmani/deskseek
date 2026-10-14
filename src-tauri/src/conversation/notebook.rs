@@ -497,6 +497,89 @@ fn plain(role: &str, content: &str) -> ChatMessage {
     }
 }
 
+/// One thing a notebook can be asked to produce.
+///
+/// Data rather than code, and deliberately: a generator is a title, the format
+/// the writer takes, and the instruction that turns a question into that shape.
+/// Everything else a generation needs — the catalogue, the two source tools, the
+/// citation rule, the price — is the ask the notebook already does, so a seventh
+/// generator is one more entry here and nothing anywhere else.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Generator {
+    pub id: &'static str,
+    pub title: &'static str,
+    /// A format `tools::docs::DOC_FORMATS` accepts. Asserted against that list
+    /// rather than trusted, because a menu entry naming a format nothing writes
+    /// is invisible until somebody presses it.
+    pub format: &'static str,
+    /// The question. It is asked through the same path a hand-typed one is, so a
+    /// generated output has citations like any other answer.
+    pub prompt: &'static str,
+}
+
+/// What the menu offers, in the order a reader wants it: the study shapes, then
+/// the summary shapes.
+pub const GENERATORS: [Generator; 6] = [
+    Generator {
+        id: "flashcards",
+        title: "Flashcards",
+        // Word rather than Markdown: a card set is something you print and cut.
+        format: "docx",
+        prompt: "Turn these sources into flashcards. One card is `Q:` on a line, `A:` on the next, \
+                 then a blank line. Cover the facts that matter rather than every sentence, and \
+                 after each answer cite the source it came from, as `[name#Heading]`.",
+    },
+    Generator {
+        id: "quiz",
+        title: "Quiz",
+        format: "md",
+        prompt: "Write a quiz over these sources: ten questions, four options each, then an answer \
+                 key at the end saying which option is right and why. Every answer in the key cites \
+                 the source it came from as `[name#Heading]`, and a question the sources cannot \
+                 settle is left out rather than invented.",
+    },
+    Generator {
+        id: "briefing",
+        title: "Briefing",
+        format: "docx",
+        prompt: "Write a one-page briefing on these sources: what they are, the five things that \
+                 matter most, and what they do not settle. Cite each claim as `[name#Heading]`, and \
+                 say plainly where the sources disagree rather than picking one.",
+    },
+    Generator {
+        id: "timeline",
+        title: "Timeline",
+        format: "md",
+        prompt: "Build a timeline of what these sources describe, earliest first, as a Markdown \
+                 table with the columns when, what happened, and the source. Where a date is \
+                 relative or uncertain, say so in the cell rather than tidying it into a year. \
+                 Cite the source of each row as `[name#Heading]`.",
+    },
+    Generator {
+        id: "study-guide",
+        title: "Study guide",
+        format: "md",
+        prompt: "Write a study guide for these sources: what to know, what to practise, and the \
+                 questions a reader should be able to answer afterwards. Cite the source of each \
+                 section as `[name#Heading]`.",
+    },
+    Generator {
+        id: "mind-map",
+        title: "Mind map",
+        format: "md",
+        prompt: "Draw the structure of these sources as a mind map: a fenced ```mermaid mindmap \
+                 block, then a short note under it on each branch, citing the source each branch \
+                 comes from as `[name#Heading]`.",
+    },
+];
+
+/// One generator by id, or `None` — an unknown id from the window is refused
+/// rather than guessed at.
+pub fn generator(id: &str) -> Option<&'static Generator> {
+    GENERATORS.iter().find(|g| g.id == id)
+}
+
 /// Asks a notebook a question, from its enabled sources, and records both halves.
 ///
 /// A bounded read-only loop rather than a turn: the catalogue and the passages
@@ -693,6 +776,35 @@ mod tests {
         assert_eq!(state_of(Some(&file), &second), "missing");
         assert_eq!(state_of(None, &second), "missing");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn every_generator_names_a_format_the_writer_takes() {
+        for generator in GENERATORS {
+            // The failure this exists for: a menu entry naming a format nothing
+            // writes, which is invisible until somebody presses it.
+            assert!(
+                crate::tools::docs::DOC_FORMATS.contains(&generator.format),
+                "{} names the format {}",
+                generator.id,
+                generator.format
+            );
+            assert!(!generator.title.trim().is_empty(), "{} has no title", generator.id);
+            assert!(!generator.prompt.trim().is_empty(), "{} asks for nothing", generator.id);
+            // Every prompt has to ask for citations, because an output that cites
+            // nothing is the one thing the notebook's prompt promises it will not
+            // produce.
+            assert!(
+                generator.prompt.contains("[name#Heading]"),
+                "{} does not ask for a citation",
+                generator.id
+            );
+            let duplicates = GENERATORS.iter().filter(|g| g.id == generator.id).count();
+            assert_eq!(duplicates, 1, "{} is listed {duplicates} times", generator.id);
+        }
+        // An id from the window that is not one of these is refused, not guessed.
+        assert!(generator("flashcards").is_some());
+        assert!(generator("nonsense").is_none());
     }
 
     #[test]

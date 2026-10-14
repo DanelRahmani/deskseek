@@ -3,7 +3,7 @@ import { api } from "../api";
 import { citations } from "../lib/citation";
 import { Icon, IconButton } from "./Icon";
 import { Markdown } from "./Markdown";
-import type { Instruction, NotebookOutputRow, NotebookRow, NotebookView } from "../types";
+import type { Generator, Instruction, NotebookOutputRow, NotebookRow, NotebookView } from "../types";
 
 interface Props {
   /** The notebook this pane is showing. */
@@ -55,6 +55,9 @@ export function NotebookShell({
   const [question, setQuestion] = useState("");
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
+  /** The menu of things this notebook can make, read from Rust rather than
+   *  spelled again here. */
+  const [generators, setGenerators] = useState<Generator[]>([]);
 
   const load = useCallback(async () => {
     const next = await api.openNotebook(notebookId);
@@ -65,6 +68,12 @@ export function NotebookShell({
   useEffect(() => {
     load().catch((e) => setStatus(String(e)));
   }, [load]);
+
+  useEffect(() => {
+    // Read once: the list is a constant in Rust, and a menu that changed under a
+    // press would be a menu nobody could aim at.
+    api.notebookGenerators().then(setGenerators).catch(() => setGenerators([]));
+  }, []);
 
   const act = async (work: () => Promise<unknown>, note?: string) => {
     setBusy(true);
@@ -409,6 +418,29 @@ export function NotebookShell({
 
         {/* What it produced. */}
         <div className="flex w-56 shrink-0 flex-col border-l border-neutral-800/80">
+          <div className="flex items-center gap-1 border-b border-neutral-800/60 px-3 py-2">
+            <span className="flex-1 text-[12px] tracking-wide text-neutral-500 uppercase">
+              Make
+            </span>
+          </div>
+          <div className="border-b border-neutral-800/60 p-2">
+            {generators.map((generator) => (
+              <button
+                key={generator.id}
+                onClick={() =>
+                  void act(
+                    () => api.runNotebookGenerator(notebookId, generator.id),
+                    `${generator.title} — written into the notebook's folder as a .${generator.format}.`,
+                  )
+                }
+                disabled={busy}
+                className={`mb-0.5 w-full rounded-lg px-2 py-1 text-left text-[12px] text-neutral-300 transition duration-150 hover:bg-neutral-800 hover:text-neutral-100 disabled:opacity-40`}
+              >
+                {generator.title}
+                <span className="ml-1 text-[11px] text-neutral-600">.{generator.format}</span>
+              </button>
+            ))}
+          </div>
           <div className="border-b border-neutral-800/60 px-3 py-2 text-[12px] tracking-wide text-neutral-500 uppercase">
             Outputs
           </div>

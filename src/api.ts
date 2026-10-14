@@ -23,6 +23,7 @@ import type {
   EnvProbe,
   FilePreview,
   FsEvent,
+  Generator,
   GuardEvent,
   Instruction,
   InterruptedRun,
@@ -350,6 +351,12 @@ export const api = {
    *  a chat already has. */
   saveNotebookOutput: (notebookId: string, title: string, format: string, content: string) =>
     invoke<NotebookOutputRow>("save_notebook_output", { notebookId, title, format, content }),
+  /** The outputs a notebook can be asked for — one list, in Rust, so the menu and
+   *  the prompts cannot drift apart. */
+  notebookGenerators: () => invoke<Generator[]>("notebook_generators"),
+  /** Runs one: a grounded question in that shape, saved as a document. */
+  runNotebookGenerator: (notebookId: string, generator: string) =>
+    invoke<NotebookOutputRow>("run_notebook_generator", { notebookId, generator }),
   /** Carries the sources and the outputs, and deliberately not the questions. */
   copyNotebook: (id: string) => invoke<NotebookRow>("copy_notebook", { id }),
 

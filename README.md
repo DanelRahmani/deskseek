@@ -304,6 +304,11 @@ Both sections are functional:
     readable, because the notebook keeps its own copy. An output is a document in the notebook's
     folder rather than an artifact, because an artifact belongs to a chat and a notebook has none
     — a question asked of a source set is not a turn
+  - **What it can make**: flashcards, a quiz (with its answer key), a briefing, a timeline, a study
+    guide and a mind map, each one a grounded question in that shape, written into the notebook's
+    folder as a `.md` or `.docx`. The list is Rust rather than TypeScript, so the menu and the
+    prompts are one list; a mind map is a `mermaid` fence inside the document rather than a second
+    renderer, and a quiz ships with its key rather than marking itself
 - Approximate **context-window meter** in the header — and once a conversation passes 80% of the
   model's window, the same fact appears above the composer with a *Summarise it* button, so the
   fix is next to the warning rather than a command you have to remember. Past 90% a run folds the

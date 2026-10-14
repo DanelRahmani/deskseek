@@ -451,13 +451,17 @@ fn first_line(text: &str) -> String {
 
 // ---------------------------------------------------------------- the tools
 
-fn text_arg(args: &Value, key: &str) -> String {
-    args.get(key)
+fn text_arg(args: &Value, key: &str) -> String {    args.get(key)
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim()
         .to_string()
 }
+
+/// The formats `doc_create` writes. One list, so anything that *names* a format —
+/// a notebook's generator menu — can be held against the writer's own set rather
+/// than against a copy of it that could drift.
+pub const DOC_FORMATS: [&str; 3] = ["md", "docx", "pdf"];
 
 fn require_name(args: &Value) -> Result<String, String> {
     let name = text_arg(args, "name");
@@ -503,7 +507,7 @@ async fn doc_create(
         .filter(|c| !c.trim().is_empty())
         .ok_or("doc_create needs non-empty \"content\"")?;
     let format = text_arg(args, "format").to_ascii_lowercase();
-    if !matches!(format.as_str(), "md" | "docx" | "pdf") {
+    if !DOC_FORMATS.contains(&format.as_str()) {
         return Err("doc_create format must be md, docx or pdf".to_string());
     }
 

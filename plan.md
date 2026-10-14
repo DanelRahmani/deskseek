@@ -2471,20 +2471,33 @@ and 8.4 are independent of each other and sit on 8.2. **5.3 is deliberately not 
 - **Stop**: one source set supports several questions and several outputs, durably, and a notebook
   can sit beside a chat across a restart.
 
-### 8.3 [M] A study and briefing output set
+### 8.3 [M] A study and briefing output set ✅
 - **Why**: the generator menu is why a notebook is popular, and this app already has the writers and
   the chart engine.
-- **Files**: `conversation/notebook.rs` (the generator table), `src/components/NotebookShell.tsx`
-  (the menu), `src/types.ts`.
-- **Shape**: **reuse, and no new artifact kind.** A flashcard set, a quiz, a briefing and a study
-  guide are `markdown` artifacts; a timeline and a mind map are `mermaid`, which already exists; an
-  infographic is `html`. Each generator is a title, a prompt and the kind it writes, so the table is
-  data rather than code. A quiz that marks its own answers would need a renderer *and* a grader,
-  which is a feature rather than a kind, so a v1 quiz ships with its answer key and the archive's own
-  V2 rating stands.
-- **Test**: an invariant over the whole table — every generator names a kind the app actually
-  accepts — because a suggestion naming a kind that does not exist is the failure this repo has
-  already been bitten by, and it is invisible until somebody presses the button.
+- **Files**: `conversation/notebook.rs` (`Generator`, `GENERATORS`, `generator()`);
+  `tools/docs.rs` (`DOC_FORMATS`, one list, now used by `doc_create`'s own validation);
+  `commands.rs` (`write_output`, `notebook_generators`, `run_notebook_generator`); `lib.rs`;
+  `src/components/NotebookShell.tsx` (the rail's *Make* column); `src/api.ts`, `src/types.ts`.
+- **Shape**: **a table, not code.** A generator is an id, a title, the format the writer takes and
+  the question that asks for that shape — so a seventh generator is one entry and nothing anywhere
+  else, and the menu is sent to the window rather than written into it. Six entries: flashcards, a
+  quiz, a briefing, a timeline, a study guide and a mind map. **No new artifact kind**, and no
+  artifact at all: a notebook's output is a document, because an artifact's `chat_id` is a foreign
+  key to `chats` and a notebook has none — which is the same reason its question is not a turn. A
+  mind map is a `mermaid` fence inside Markdown and an infographic would be raw `html` in one, so the
+  diagram shapes this app already knows are carried by the document rather than by a second renderer.
+- **Test**: `cargo test` 472 → **473**. `conversation::notebook::tests::every_generator_names_a_format_the_writer_takes`
+  — every entry's format is held against `tools::docs::DOC_FORMATS` (**the writer's own list**,
+  which is the point: a copy of that list in the table is exactly what would drift), every entry has
+  a title and a prompt, every prompt asks for a citation in the one spine every generator shares
+  (`[name#Heading]`), and no id is listed twice. **Falsified**: giving the mind map a format nothing
+  writes (`format: "md",` → `format: "xlsx",`, in a three-line CRLF needle because `format: "md",`
+  appears four times in the table) fails that test with `mind-map names the format xlsx` — a menu
+  entry that only fails when somebody presses it — after checking the mutation reached the disk, and
+  restoring passes. **Two deviations, said out loud**: nothing new was invented to carry a mind map
+  or a quiz, so a quiz ships with its answer key rather than marking itself and the archive's own V2
+  rating stands; and `DOC_FORMATS` is new in `tools/docs.rs` because `doc_create` had its three
+  formats spelled inline, which meant a second list anywhere else could only ever be a copy.
 - **Stop**: a notebook produces a flashcard set, a quiz, a briefing, a timeline and a study guide,
   each from its sources.
 

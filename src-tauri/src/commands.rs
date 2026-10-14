@@ -1865,25 +1865,24 @@ pub fn remove_notebook_output(state: State<'_, AppState>, id: String) -> Result<
     db::remove_notebook_output(&conn, &id).map_err(|e| e.to_string())
 }
 
-/// Writes something the notebook produced into the notebook's own folder, and
-/// remembers where it went.
+/// Writes an answer out as a document in the notebook's own folder, and remembers
+/// where it went.
 ///
 /// The writers are the ones a chat already has — `doc_create` for Markdown, Word
 /// and PDF — so a notebook has no second way to make a document, and the file
 /// lands in the folder the sources rail and the file manager already show. The
 /// row keeps the path because that is what a person clicks tomorrow.
-#[tauri::command]
-pub async fn save_notebook_output(
-    state: State<'_, AppState>,
-    notebook_id: String,
-    title: String,
-    format: String,
-    content: String,
+async fn write_output(
+    state: &AppState,
+    notebook_id: &str,
+    title: &str,
+    format: &str,
+    content: &str,
 ) -> Result<db::NotebookOutputRow, String> {
     if content.trim().is_empty() {
         return Err("There is nothing to save yet.".to_string());
     }
-    let dir = state.paths.notebook_dir(&notebook_id);
+    let dir = state.paths.notebook_dir(notebook_id);
     let browser = state.settings.lock().unwrap().browser_path.clone();
     let args = serde_json::json!({
         "name": title.trim(),
@@ -1895,12 +1894,58 @@ pub async fn save_notebook_output(
     let conn = state.db.lock().unwrap();
     db::add_notebook_output(
         &conn,
-        &notebook_id,
-        &format,
+        notebook_id,
+        format,
         title.trim(),
         &path.display().to_string(),
     )
     .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn save_notebook_output(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    title: String,
+    format: String,
+    content: String,
+) -> Result<db::NotebookOutputRow, String> {
+    write_output(&state, &notebook_id, &title, &format, &content).await
+}
+
+/// What a notebook can be asked to produce.
+///
+/// Sent to the window rather than written into it, so the menu and the prompts
+/// are one list rather than two that agree until one of them is edited.
+#[tauri::command]
+pub fn notebook_generators() -> Vec<crate::conversation::notebook::Generator> {
+    crate::conversation::notebook::GENERATORS.to_vec()
+}
+
+/// Runs a generator: one grounded question in the shape the entry asks for, and
+/// the answer saved as a document in the notebook's folder.
+///
+/// The generation **is** an ask — it lands in the notebook's conversation with
+/// its citations like any other question, because a generated output whose
+/// sources were not written down would be the one answer nobody could check —
+/// and the file is what makes it something to keep rather than read once.
+#[tauri::command]
+pub async fn run_notebook_generator(
+    state: State<'_, AppState>,
+    notebook_id: String,
+    generator: String,
+) -> Result<db::NotebookOutputRow, String> {
+    let entry = crate::conversation::notebook::generator(&generator)
+        .ok_or_else(|| format!("'{generator}' is not something a notebook makes"))?;
+    let asked = crate::conversation::notebook::ask(&state, &notebook_id, entry.prompt).await?;
+    write_output(
+        &state,
+        &notebook_id,
+        entry.title,
+        entry.format,
+        &asked.answer.content,
+    )
+    .await
 }
 
 /// Copies a notebook: its rules, its model, its sources and what it produced —

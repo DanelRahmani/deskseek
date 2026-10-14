@@ -113,6 +113,14 @@ export interface SourceView {
   createdAt: number;
 }
 
+/** One thing a notebook can be asked to produce, from the Rust list. */
+export interface Generator {
+  id: string;
+  title: string;
+  /** A format the document writer takes. */
+  format: string;
+}
+
 /** One question asked of a notebook, and the answer it got. */
 export interface NotebookMessageRow {
   id: string;

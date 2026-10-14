@@ -390,6 +390,13 @@ the parts only a person can see.
 
 ## Notebooks
 
+- [ ] Each entry in *Make* produces something: flashcards, a quiz with a key, a briefing, a
+      timeline, a study guide and a mind map, and each lands under *Outputs* as a `.md` or `.docx`
+      that opens
+- [ ] The mind map's output contains a `mermaid` block, and the answer it was made from is in the
+      notebook's conversation with its citations
+- [ ] A source that is switched off is not used by anything the notebook makes, and the model is
+      told in the catalogue only about the ones that are on
 - [ ] *Notebooks* in the sidebar opens a notebook — a new one the first time — in the focused pane,
       and `/notebook` does the same
 - [ ] A notebook pane sits beside a chat (split), both answer, and both are still there after a
